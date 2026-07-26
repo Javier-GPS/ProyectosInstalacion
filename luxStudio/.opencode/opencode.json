@@ -1,0 +1,48 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "default_agent": "razonador",
+  "agent": {
+    "razonador": {
+      "description": "Orquestador de debate multi-agente con rondas iterativas de razonamiento",
+      "mode": "primary"
+    },
+    "analista": {
+      "description": "Analiza problemas en profundidad: requisitos, constraints, edge cases, riesgos",
+      "mode": "subagent",
+      "permission": { "edit": "deny", "bash": "deny", "read": "allow" }
+    },
+    "arquitecto": {
+      "description": "Diseña arquitectura de soluciones: patrones, tradeoffs, flujo de datos, componentes",
+      "mode": "subagent",
+      "permission": { "edit": "deny", "bash": "deny", "read": "allow" }
+    },
+    "implementador": {
+      "description": "Define el enfoque de implementación: algoritmos, estructura de ficheros, API, librerías",
+      "mode": "subagent",
+      "permission": { "edit": "deny", "bash": "deny", "read": "allow" }
+    },
+    "critico": {
+      "description": "Abogado del diablo: busca fallos, edge cases olvidados, riesgos, alternativas no consideradas",
+      "mode": "subagent",
+      "permission": { "edit": "deny", "bash": "deny", "read": "allow" }
+    },
+    "revisor": {
+      "description": "Revisa calidad: corrección, tests, estilo, documentación, completitud",
+      "mode": "subagent",
+      "permission": { "edit": "deny", "bash": "deny", "read": "allow" }
+    },
+    "explorador": {
+      "description": "Genera ideas disruptivas, pensamiento lateral, enfoques radicales sin filtros",
+      "mode": "subagent",
+      "permission": { "edit": "deny", "bash": "deny", "read": "allow" }
+    },
+    "saboteador": {
+      "description": "Cuestiona el problema, los supuestos y la viabilidad fundamental de las propuestas",
+      "mode": "subagent",
+      "permission": { "edit": "deny", "bash": "deny", "read": "allow" }
+    }
+  },
+  "skills": {
+    "paths": [".opencode/skills"]
+  }
+}

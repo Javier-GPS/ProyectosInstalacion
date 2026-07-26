@@ -1,0 +1,101 @@
+asyncapi: "2.6.0"
+info:
+  title: SALVI Event Bus
+  version: "1.0.0"
+  description: Eventos asíncronos entre servicios
+
+channels:
+  events.luxstudio:
+    publish:
+      message:
+        oneOf:
+          - $ref: '#/components/messages/CalculationCompleted'
+          - $ref: '#/components/messages/ProjectUpdated'
+
+  events.gis:
+    publish:
+      message:
+        oneOf:
+          - $ref: '#/components/messages/ZoneUpdated'
+          - $ref: '#/components/messages/LuminaireMoved'
+
+  events.auth:
+    publish:
+      message:
+        $ref: '#/components/messages/UserLoggedIn'
+
+components:
+  messages:
+    CalculationCompleted:
+      payload:
+        type: object
+        properties:
+          event_id: { type: string, format: uuid }
+          event_type: { type: string, enum: ['calculation.completed'] }
+          source: { type: string, enum: ['luxstudio'] }
+          timestamp: { type: string, format: date-time }
+          data:
+            type: object
+            properties:
+              project_id: { type: string }
+              tramo_id: { type: string }
+              luminaire_ref: { type: string }
+          _jti: { type: string, description: "ID único de evento (dedup)" }
+
+    ProjectUpdated:
+      payload:
+        type: object
+        properties:
+          event_id: { type: string, format: uuid }
+          event_type: { type: string, enum: ['project.updated'] }
+          source: { type: string, enum: ['luxstudio'] }
+          timestamp: { type: string, format: date-time }
+          data:
+            type: object
+            properties:
+              project_id: { type: string }
+          _jti: { type: string }
+
+    ZoneUpdated:
+      payload:
+        type: object
+        properties:
+          event_id: { type: string, format: uuid }
+          event_type: { type: string, enum: ['zone.updated'] }
+          source: { type: string, enum: ['gis'] }
+          timestamp: { type: string, format: date-time }
+          data:
+            type: object
+            properties:
+              zone_id: { type: string }
+          _jti: { type: string }
+
+    LuminaireMoved:
+      payload:
+        type: object
+        properties:
+          event_id: { type: string, format: uuid }
+          event_type: { type: string, enum: ['luminaire.moved'] }
+          source: { type: string, enum: ['gis'] }
+          timestamp: { type: string, format: date-time }
+          data:
+            type: object
+            properties:
+              luminaire_id: { type: string }
+              lat: { type: number }
+              lon: { type: number }
+          _jti: { type: string }
+
+    UserLoggedIn:
+      payload:
+        type: object
+        properties:
+          event_id: { type: string, format: uuid }
+          event_type: { type: string, enum: ['user.logged_in'] }
+          source: { type: string, enum: ['auth'] }
+          timestamp: { type: string, format: date-time }
+          data:
+            type: object
+            properties:
+              user_id: { type: string }
+          _jti: { type: string }

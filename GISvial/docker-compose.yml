@@ -1,0 +1,47 @@
+# GISVial standalone compose
+# Incluye infra + gisvial services
+
+include:
+  - ../infra/docker-compose.infra.yml
+
+services:
+  db:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-luxstudio}
+      POSTGRES_USER: ${POSTGRES_USER:-luxstudio}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-luxstudio-local-only}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    ports:
+      - "8733:8733"
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-luxstudio}:${POSTGRES_PASSWORD:-luxstudio-local-only}@db:5432/${POSTGRES_DB:-luxstudio}?options=-csearch_path%3Dgis,public
+      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:-lux-studio-local-dev-secret}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "5174:80"
+    depends_on:
+      backend:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

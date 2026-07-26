@@ -1,0 +1,18 @@
+/* ── SALVI Brand Font: Exposure by 205TF ── */
+@font-face { font-family:'Exposure'; src:url('/fonts/Exposure%20-%20%5B-70%5D-205TF.woff2') format('woff2'),url('/fonts/Exposure%20-%20%5B-70%5D-205TF.woff') format('woff'); font-weight:100; font-style:normal; font-display:swap; }
+@font-face { font-family:'Exposure'; src:url('/fonts/Exposure%20-%20%5B-70%5D%20Italic-205TF.woff2') format('woff2'),url('/fonts/Exposure%20-%20%5B-70%5D%20Italic-205TF.woff') format('woff'); font-weight:100; font-style:italic; font-display:swap; }
+@font-face { font-family:'Exposure'; src:url('/fonts/Exposure%20-%20%5B-50%5D-205TF.woff2') format('woff2'),url('/fonts/Exposure%20-%20%5B-50%5D-205TF.woff') format('woff'); font-weight:200; font-style:normal; font-display:swap; }
+@font-face { font-family:'Exposure'; src:url('/fonts/Exposure%20-%20%5B-50%5D%20Italic-205TF.woff2') format('woff2'),url('/fonts/Exposure%20-%20%5B-50%5D%20Italic-205TF.woff') format('woff'); font-weight:200; font-style:italic; font-display:swap; }
+@font-face { font-family:'Exposure'; src:url('/fonts/Exposure%20-%20%5B-30%5D-205TF.woff2') format('woff2'),url('/fonts/Exposure%20-%20%5B-30%5D-205TF.woff') format('woff'); font-weight:300; font-style:normal; font-display:swap; }
+@font-face { font-family:'Exposure'; src:url('/fonts/Exposure%20-%20%5B-30%5D%20Italic-205TF.woff2') format('woff2'),url('/fonts/Exposure%20-%20%5B-30%5D%20Italic-205TF.woff') format('woff'); font-weight:300; font-style:italic; font-display:swap; }
+@font-face { font-family:'Exposure'; src:url('/fonts/Exposure%20-%20%5B-10%5D-205TF.woff2') format('woff2'),url('/fonts/Exposure%20-%20%5B-10%5D-205TF.woff') format('woff'); font-weight:350; font-style:normal; font-display:swap; }
+@font-face { font-family:'Exposure'; src:url('/fonts/Exposure%20-%20%5B-10%5D%20Italic-205TF.woff2') format('woff2'),url('/fonts/Exposure%20-%20%5B-10%5D%20Italic-205TF.woff') format('woff'); font-weight:350; font-style:italic; font-display:swap; }
+@font-face { font-family:'Exposure'; src:url('/fonts/Exposure%20-%20%5B+10%5D-205TF.woff2') format('woff2'),url('/fonts/Exposure%20-%20%5B+10%5D-205TF.woff') format('woff'); font-weight:400; font-style:normal; font-display:swap; }
+@font-face { font-family:'Exposure'; src:url('/fonts/Exposure%20-%20%5B+10%5D%20Italic-205TF.woff2') format('woff2'),url('/fonts/Exposure%20-%20%5B+10%5D%20Italic-205TF.woff') format('woff'); font-weight:400; font-style:italic; font-display:swap; }
+@font-face { font-family:'Exposure'; src:url('/fonts/Exposure%20-%20%5B+30%5D-205TF.woff2') format('woff2'),url('/fonts/Exposure%20-%20%5B+30%5D-205TF.woff') format('woff'); font-weight:500; font-style:normal; font-display:swap; }
+@font-face { font-family:'Exposure'; src:url('/fonts/Exposure%20-%20%5B+50%5D-205TF.woff2') format('woff2'),url('/fonts/Exposure%20-%20%5B+50%5D-205TF.woff') format('woff'); font-weight:600; font-style:normal; font-display:swap; }
+@font-face { font-family:'Exposure'; src:url('/fonts/Exposure%20-%20%5B+70%5D-205TF.woff2') format('woff2'),url('/fonts/Exposure%20-%20%5B+70%5D-205TF.woff') format('woff'); font-weight:700; font-style:normal; font-display:swap; }
+@font-face { font-family:'Exposure'; src:url('/fonts/Exposure%20-%20%5B+90%5D-205TF.woff2') format('woff2'),url('/fonts/Exposure%20-%20%5B+90%5D-205TF.woff') format('woff'); font-weight:800; font-style:normal; font-display:swap; }
+
+/* ── UI fallback font ── */
+@font-face { font-family:'Exposure UI'; src:url('/fonts/Exposure%20-%20%5B+10%5D-205TF.woff2') format('woff2'),url('/fonts/Exposure%20-%20%5B+10%5D-205TF.woff') format('woff'); font-weight:400; font-style:normal; font-display:swap; }

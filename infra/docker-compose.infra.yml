@@ -1,0 +1,24 @@
+services:
+  redis-cache:
+    image: redis:7-alpine
+    command: redis-server /usr/local/etc/redis/redis.conf
+    ports:
+      - "6379:6379"
+    volumes:
+      - ./redis/cache/redis.conf:/usr/local/etc/redis/redis.conf
+      - redis-cache-data:/data
+    restart: unless-stopped
+
+  redis-streams:
+    image: redis:7-alpine
+    command: redis-server /usr/local/etc/redis/redis.conf
+    ports:
+      - "6380:6380"
+    volumes:
+      - ./redis/streams/redis.conf:/usr/local/etc/redis/redis.conf
+      - redis-streams-data:/data
+    restart: unless-stopped
+
+volumes:
+  redis-cache-data:
+  redis-streams-data:

@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=70", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lux-studio-backend"
+version = "0.1.0"
+description = "LUX Studio — Interactive road lighting design tool (backend)"
+requires-python = ">=3.9"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "jinja2",
+    "python-multipart",
+    "openpyxl>=3.1",
+    "sqlalchemy>=2.0",
+    "alembic>=1.13",
+    "psycopg[binary]>=3.2",
+    "passlib[bcrypt]>=1.7.4",
+    "bcrypt>=4.0,<4.1",
+    "ifcopenshell>=0.8",
+    "playwright>=1.40",
+    "pypdf>=5.0",
+]

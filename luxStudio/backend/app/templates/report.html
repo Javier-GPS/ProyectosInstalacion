@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="{{ language }}">
+<head>
+<meta charset="utf-8">
+<title>{{ title }}</title>
+<style>
+  @page {
+    size: A4;
+    margin: 0;
+  }
+
+  * { box-sizing: border-box; }
+  :root {
+    --ink: #111827;
+    --muted: #5b6472;
+    --line: #d7dde7;
+    --panel: #f6f8fb;
+    --panel-strong: #eef2f7;
+    --accent: #172554;
+    --accent-2: #2563eb;
+    --status: {{ compliant_color }};
+  }
+
+  body {
+    margin: 0;
+    font-family: "Arial", "Helvetica", sans-serif;
+    font-size: 8.6pt;
+    line-height: 1.34;
+    color: var(--ink);
+    background: #fff;
+  }
+  .page {
+    width: 210mm;
+    height: 285mm;
+    padding: 10mm 12mm 8mm;
+    position: relative;
+    overflow: hidden;
+  }
+  .header {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: start;
+    gap: 16px;
+    padding-bottom: 7px;
+    border-bottom: 1px solid #aeb8c8;
+    margin-bottom: 10px;
+  }
+  .brand {
+    font-size: 7pt;
+    font-weight: 900;
+    color: var(--accent);
+    letter-spacing: .3px;
+    text-transform: uppercase;
+  }
+  .logo-img { height: 28px; vertical-align: middle; margin-right: 8px; }
+  .subtitle {
+    margin-top: 2px;
+    color: var(--muted);
+    font-size: 8.7pt;
+  }
+  .badge-ok {
+    min-width: 80px;
+    display: inline-block;
+    padding: 5px 10px;
+    border-radius: 2px;
+    color: #fff;
+    text-align: center;
+    background: #10b981;
+    font-weight: 900;
+    letter-spacing: .65px;
+    text-transform: uppercase;
+  }
+  .badge-fail {
+    min-width: 80px;
+    display: inline-block;
+    padding: 5px 10px;
+    border-radius: 2px;
+    color: #92400e;
+    text-align: center;
+    background: #fef3c7;
+    font-weight: 800;
+    letter-spacing: .65px;
+    text-transform: uppercase;
+  }
+  .meta { margin-top: 5px; text-align: right; color: var(--muted); font-size: 7.6pt; }
+  .footer {
+    position: absolute;
+    left: 15mm;
+    right: 15mm;
+    bottom: 7mm;
+    display: flex;
+    justify-content: space-between;
+    color: #7d8796;
+    font-size: 7.2pt;
+    border-top: 1px solid var(--line);
+    padding-top: 5px;
+  }
+  h1, h2, h3 { margin: 0; color: var(--ink); }
+  .section-title {
+    font-size: 17pt;
+    font-weight: 900;
+    color: var(--accent);
+    padding-bottom: 6px;
+    border-bottom: 2px solid var(--accent);
+    margin: 0 0 12px;
+    letter-spacing: .2px;
+  }
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 13px;
+    align-items: start;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    table-layout: fixed;
+  }
+  th {
+    background: var(--accent);
+    color: #fff;
+    text-transform: uppercase;
+    letter-spacing: .42px;
+    font-size: 7.25pt;
+    padding: 6px 7px;
+    text-align: left;
+  }
+  td {
+    border-bottom: 1px solid var(--line);
+    padding: 5.5px 7px;
+    vertical-align: top;
+  }
+  tr:nth-child(even) td { background: var(--panel); }
+  tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .value { font-weight: 800; color: var(--ink); }
+  .ok { color: #059669; }
+  .fail { color: #d97706; }
+  .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; }
+  .dot.ok { background: #10b981; }
+  .dot.fail { background: #d97706; }
+  .verdict-line {
+    margin-top: 8px;
+    padding: 6px 10px;
+    font-size: 8pt;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: 3px;
+  }
+  .verdict-ok { background: #f0fdf4; color: #065f46; }
+  .verdict-fail { background: #fffbeb; color: #92400e; }
+  .verdict-line .dot { width: 7px; height: 7px; }
+  .table-note {
+    color: var(--muted);
+    font-size: 8pt;
+    margin: 4px 0 8px;
+  }
+  .point-table th,
+  .point-table td {
+    padding: 4px 5px;
+    text-align: center;
+    font-size: 7.1pt;
+  }
+  .technical-note {
+    margin-top: 4px;
+    color: var(--muted);
+    font-size: 7.8pt;
+  }
+  .planning-row-highlight td {
+    background: #eef2f7 !important;
+  }
+
+  /* ---------- modules & compact 2-page ---------- */
+  .report-module {
+    border: 1px solid var(--line);
+    background: linear-gradient(180deg, #fff 0%, #f8fafc 100%);
+    padding: 5px 7px 6px;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .module-title {
+    margin: 0 0 2px;
+    font-size: 9.5pt;
+    font-weight: 900;
+    color: #0f172a;
+  }
+  .module-kicker {
+    margin: 0 0 6px;
+    color: var(--muted);
+    font-size: 6.9pt;
+  }
+  .module-row-2col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+  .metric-grid-2col {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
+  }
+  .metric-box {
+    border: 1px solid var(--line);
+    border-left: 3px solid var(--accent);
+    padding: 5px 6px;
+    background: #fff;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .metric-box-label {
+    color: var(--muted);
+    font-size: 6.9pt;
+    text-transform: uppercase;
+    letter-spacing: .4px;
+  }
+  .metric-box-value {
+    font-size: 11pt;
+    font-weight: 900;
+    color: var(--ink);
+  }
+  .info-strip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 8px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    font-size: 7.6pt;
+    flex-wrap: wrap;
+  }
+  .info-item { color: var(--ink); }
+  .info-divider { color: #cbd5e1; }
+  .compact-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 7.5pt;
+  }
+  .compact-table td {
+    padding: 3px 6px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: top;
+  }
+  .compact-table td:first-child {
+    color: var(--muted);
+    width: 42%;
+  }
+  .drawing-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+    margin-top: 6px;
+  }
+  .drawing-half {
+    padding: 4px;
+  }
+  .drawing-half svg {
+    width: 100%;
+    max-height: 86mm;
+    display: block;
+  }
+  .isolines-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .isoline-half {
+    padding: 4px;
+  }
+  .isoline-half svg {
+    width: 100%;
+    max-height: 72mm;
+    display: block;
+  }
+  /* sidewalk-tables-row removed — stacked layout in template now */
+  .metric-box.metric-ok {
+    border-left-color: #10b981;
+    background: #f0fdf4;
+  }
+  .metric-box.metric-fail {
+    border-left-color: #d97706;
+    background: #fffbeb;
+  }
+  .metric-box-value.metric-ok { color: #059669; }
+  .metric-box-value.metric-fail { color: #d97706; }
+  .drawing-full svg {
+    width: 100%;
+    max-height: 78mm;
+    display: block;
+  }
+  .isoline-full svg {
+    width: 100%;
+    max-height: 52mm;
+    display: block;
+  }
+</style>
+</head>
+<body>
+
+  <!-- ===== PAGE 1 · DATOS DE PLANIFICACION ===== -->
+  <section class="page">
+    <header class="header">
+      <div>
+        <div class="brand">{% if logo_base64 %}<img class="logo-img" src="data:image/jpeg;base64,{{ logo_base64 }}" alt="">{% endif %}Estudio luminotécnico</div>
+        <div class="subtitle">{{ standard }} · {{ cfg.lighting_class }}</div>
+      </div>
+      <div>
+        <div class="{{ 'badge-ok' if compliant else 'badge-fail' }}">{{ compliant_label }}</div>
+        <div class="meta">{{ date }}</div>
+      </div>
+    </header>
+
+    <h1 class="section-title" style="font-size:15pt;margin-bottom:6px;">{{ tr["report.title"] }}</h1>
+    <div style="color:var(--muted);font-size:9.5pt;margin-bottom:8px;">{{ luminaire.luminaire_name }} · {{ cfg.arrangement }} · {{ "%.1f"|format(cfg.spacing) }} m</div>
+
+    <div class="module-row-2col">
+      <div class="report-module">
+        <div class="module-title">{{ tr["report.project_summary"] }}</div>
+        {% if project %}
+        <table class="compact-table">
+          <tr><td>Nombre del proyecto</td><td class="value">{{ project.project_name or "-" }}</td></tr>
+          <tr><td>Cliente final</td><td class="value">{{ project.client or "-" }}</td></tr>
+          <tr><td>Localizaci&oacute;n</td><td class="value">{{ project.location or "-" }}</td></tr>
+          <tr><td>{{ tr["report.luminaire"] }}</td><td class="value">{{ luminaire.luminaire_name }}</td></tr>
+          <tr><td>{{ tr["report.lighting_class"] }}</td><td class="value">{{ cfg.lighting_class }}</td></tr>
+          <tr><td>Norma aplicable</td><td class="value">{{ project.standard or "CIE 140 / EN 13201" }}</td></tr>
+        </table>
+        {% else %}
+        <table class="compact-table">
+          <tr><td>{{ tr["report.luminaire"] }}</td><td class="value">{{ luminaire.luminaire_name }}</td></tr>
+          <tr><td>{{ tr["report.lighting_class"] }}</td><td class="value">{{ cfg.lighting_class }}</td></tr>
+          <tr><td>{{ tr["report.arrangement"] }}</td><td class="value">{{ cfg.arrangement }}</td></tr>
+          <tr><td>{{ tr["report.road_height"] }}</td><td class="value">{{ "%.1f"|format(cfg.road_width) }} m / {{ "%.1f"|format(cfg.height) }} m</td></tr>
+          <tr><td>{{ tr["report.spacing"] }}</td><td class="value">{{ "%.2f"|format(cfg.spacing) }} m</td></tr>
+          <tr><td>{{ tr["report.pavement_cct_cri"] }}</td><td class="value">{{ cfg.pavement }} / {{ cfg.cct }} K / {{ cfg.cri }}</td></tr>
+          <tr><td>{{ tr["report.maintenance_factor"] }}</td><td class="value">{{ "%.2f"|format(mf_efectivo) }}</td></tr>
+        </table>
+        {% endif %}
+      </div>
+
+      <div class="report-module">
+        <div class="module-title">{{ tr["report.photometric_results"] }}</div>
+        <div class="metric-grid-2col">
+          {% set _lavg = criteria_map.get('Lavg', '') %}{% set _uo = criteria_map.get('Uo', '') %}{% set _ul = criteria_map.get('Ul', '') %}{% set _ti = criteria_map.get('TI', '') %}{% set _sr = criteria_map.get('SR', '') %}{% set _eavg = criteria_map.get('Eavg', '') %}
+          <div class="metric-box metric-{{ _lavg }}"><div class="metric-box-label">Lavg / Lm</div><div class="metric-box-value metric-{{ _lavg }}">{{ Lavg }}</div></div>
+          <div class="metric-box metric-{{ _uo }}"><div class="metric-box-label">Uo</div><div class="metric-box-value metric-{{ _uo }}">{{ Uo }}</div></div>
+          <div class="metric-box metric-{{ _ul }}"><div class="metric-box-label">Ul</div><div class="metric-box-value metric-{{ _ul }}">{{ Ul }}</div></div>
+          <div class="metric-box metric-{{ _ti }}"><div class="metric-box-label">TI</div><div class="metric-box-value metric-{{ _ti }}">{{ TI }}</div></div>
+          <div class="metric-box metric-{{ _sr }}"><div class="metric-box-label">SR</div><div class="metric-box-value metric-{{ _sr }}">{{ SR }}</div></div>
+          <div class="metric-box metric-{{ _eavg }}"><div class="metric-box-label">Em</div><div class="metric-box-value metric-{{ _eavg }}">{{ Eavg }}</div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="module-row-2col" style="margin-bottom:6px;">
+      <div class="report-module">
+        <div class="module-title">{{ tr["report.public_road_profile"] }}</div>
+        <table class="compact-table">
+          <tr><td>{{ tr["report.sidewalk_area_2"] }}</td><td>{{ tr["report.width"] }}: {{ "%.2f"|format(cfg.sidewalk_right) }} m</td></tr>
+          <tr class="planning-row-highlight"><td>{{ tr["report.roadway"] }}</td><td>{{ tr["report.width"] }}: {{ "%.2f"|format(cfg.road_width) }} m, {{ tr["report.traffic_lanes"] }}: {{ cfg.lanes }}, {{ tr["report.pavement"] }}: {{ cfg.pavement }}</td></tr>
+          <tr><td>{{ tr["report.sidewalk_area_1"] }}</td><td>{{ tr["report.width"] }}: {{ "%.2f"|format(cfg.sidewalk_left) }} m</td></tr>
+          <tr><td>{{ tr["report.maintenance_factor"] }}</td><td>{{ "%.2f"|format(mf_efectivo) }}</td></tr>
+        </table>
+        <div class="info-strip" style="margin-top:4px;">
+          <span class="info-item">{{ tr["report.pole_side"] }}: {{ tr["report.left_sidewalk"] if cfg.pole_side == "left" else tr["report.right_sidewalk"] }}</span>
+          <span class="info-divider">|</span>
+          <span class="info-item">Retranqueo: {{ "%.2f"|format(cfg.pole_offset) }} m</span>
+          <span class="info-divider">|</span>
+          <span class="info-item">Brazo: {{ "%.1f"|format(cfg.arm_length) }} m</span>
+          <span class="info-divider">|</span>
+          <span class="info-item">Inclinaci&oacute;n: {{ "%.0f"|format(cfg.tilt) }}&deg;</span>
+          <span class="info-divider">|</span>
+          <span class="info-item">Altura montaje: {{ "%.2f"|format(luminaire_mounting_height) }} m</span>
+        </div>
+      </div>
+      <div class="report-module">
+        <div class="module-title">{{ tr["report.luminaire"] }}</div>
+        <table class="compact-table">
+          <tr><td>Fabricante</td><td class="value">{{ luminaire.manufacturer }}</td></tr>
+          <tr><td>Luminaria</td><td class="value">{{ luminaire.luminaire_name }}</td></tr>
+          <tr><td>&Oacute;ptica</td><td class="value">{{ luminaire.optic_family }}</td></tr>
+          <tr><td>Potencia</td><td class="value">{{ "%.0f"|format(luminaire.power) }} W</td></tr>
+          <tr><td>Flujo</td><td class="value">{{ "{:,.0f}".format(luminaire.flux) }} lm</td></tr>
+          <tr><td>Eficacia</td><td class="value">{{ "%.1f"|format(luminaire.efficiency) }} lm/W</td></tr>
+          <tr><td>CRI</td><td class="value">{{ luminaire.cri }}</td></tr>
+          {% if cfg.cct %}<tr><td>CCT</td><td class="value">{{ cfg.cct }} K</td></tr>{% endif %}
+        </table>
+      </div>
+    </div>
+
+    <div class="module-row-2col">
+      <div class="report-module">
+        <div class="module-title">Vista en planta</div>
+        <div class="module-kicker">Calzada, aceras, luminarias y sentido de circulaci&oacute;n</div>
+        {{ road_plan_svg }}
+      </div>
+      <div class="report-module">
+        <div class="module-title">Secci&oacute;n transversal</div>
+        <div class="module-kicker">Altura de poste, brazo, inclinaci&oacute;n y secci&oacute;n vial</div>
+        {{ road_section_svg }}
+      </div>
+    </div>
+
+    {% if iso_luminance_svg %}
+    <div class="report-module isoline-full" style="margin-bottom:0;">
+      <div class="module-title">Luminancia</div>
+      {{ iso_luminance_svg }}
+    </div>
+    {% endif %}
+
+    <div class="footer"><span>{{ tr["report.footer_technical"] }}</span><span>1 / 2</span></div>
+  </section>
+
+  <!-- ===== PAGE 2 · RESULTADOS ===== -->
+  <section class="page">
+    <header class="header">
+      <div>
+        <div class="brand">{% if logo_base64 %}<img class="logo-img" src="data:image/jpeg;base64,{{ logo_base64 }}" alt="">{% endif %}Estudio luminotécnico</div>
+        <div class="subtitle">{{ tr["report.photometric_results"] }}</div>
+      </div>
+      <div>
+        <div class="{{ 'badge-ok' if compliant else 'badge-fail' }}">{{ compliant_label }}</div>
+        <div class="meta">{{ date }}</div>
+      </div>
+    </header>
+
+    <div class="verdict-line {{ 'verdict-ok' if compliant else 'verdict-fail' }}">
+      <span class="dot {{ 'ok' if compliant else 'fail' }}"></span>
+      <strong>{{ compliant_label }}</strong>
+      <span>&mdash;</span>
+      <span>{% if compliant %}{{ tr["report.all_checked_pass"] }}{% else %}{{ tr["report.criteria_fail"] }}{% endif %}</span>
+    </div>
+
+    {% if iso_illuminance_svg %}
+    <h2 class="section-title" style="font-size:11pt;margin-top:6px;margin-bottom:4px;">{{ tr["report.isolines_title"] }}</h2>
+    <div class="report-module isoline-full" style="margin-bottom:4px;">
+      <div class="module-title">Iluminancia</div>
+      {{ iso_illuminance_svg }}
+    </div>
+    <div class="technical-note" style="margin-top:4px;">{{ tr["report.isoline_note"] }}</div>
+    {% endif %}
+
+    <h2 class="section-title" style="font-size:11pt;margin-top:6px;margin-bottom:4px;">{{ tr["report.point_table"] }}</h2>
+    {% if sidewalk_left_point_table %}
+    <div class="report-module" style="margin-bottom:4px;">
+      <div class="module-title">Acera Izquierda</div>
+      {{ sidewalk_left_point_table }}
+    </div>
+    {% endif %}
+    {{ point_table }}
+    {% if sidewalk_right_point_table %}
+    <div class="report-module" style="margin-top:4px;">
+      <div class="module-title">Acera Derecha</div>
+      {{ sidewalk_right_point_table }}
+    </div>
+    {% endif %}
+    <div class="technical-note" style="margin-top:4px;">{{ tr["report.point_note"] }}</div>
+
+    <div class="footer"><span>{{ tr["report.footer_technical"] }}</span><span>2 / 2</span></div>
+  </section>
+
+</body>
+</html>

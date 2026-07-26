@@ -1,0 +1,47 @@
+{
+  "name": "lux-studio-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "test:3d": "node --test tests/visualization3d.test.mjs",
+    "test:driver": "node --test tests/driver-luminance.test.mjs",
+    "test:http": "node --test tests/http.test.mjs",
+    "test:lib": "node --test tests/configRequest.test.mjs tests/r_table.test.mjs tests/tramoRequest.test.mjs tests/roadPhotometryMath.test.mjs",
+    "test:e2e": "playwright test",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@react-three/drei": "^9.114.0",
+    "@react-three/fiber": "^8.17.10",
+    "@react-three/postprocessing": "^2.16.2",
+    "lucide-react": "^0.344.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.22.3",
+    "three": "^0.169.0",
+    "xlsx": "^0.18.5",
+    "zustand": "^4.4.7"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.2",
+    "@types/react": "^18.2.61",
+    "@types/react-dom": "^18.2.19",
+    "@types/three": "^0.169.0",
+    "@vitejs/plugin-react": "^4.2.1",
+    "@vitest/ui": "^4.1.10",
+    "autoprefixer": "^10.4.17",
+    "jsdom": "^29.1.1",
+    "postcss": "^8.4.35",
+    "tailwindcss": "^3.4.1",
+    "typescript": "^5.3.3",
+    "vite": "^5.1.4",
+    "vitest": "^4.1.10"
+  }
+}

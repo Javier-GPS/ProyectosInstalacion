@@ -1,0 +1,7 @@
+{
+  "embeddingProvider": "ollama",
+  "scope": "project",
+  "knowledgeBases": [
+    "docs"
+  ]
+}

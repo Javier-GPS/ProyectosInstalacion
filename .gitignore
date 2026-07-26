@@ -1,0 +1,50 @@
+# Dependencies
+**/node_modules/
+**/.venv/
+**/venv/
+**/env/
+
+# Build artifacts
+**/dist/
+
+# Python
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+
+# Environment files (but keep .env.example)
+**/.env
+**/.env.local
+**/.env.*.local
+!.env.example
+
+# Cache & temp
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+.coverage
+**/*.tsbuildinfo
+
+# IDE
+**/.idea/
+**/.vscode/
+
+# OS
+**/.DS_Store
+**/Thumbs.db
+
+# Logs
+**/*.log
+npm-debug.log*
+yarn-debug.log*
+
+# Large binary data (not source)
+**/*.sql.gz
+**/*.xlsx
+
+# Docker
+**/.docker/
+
+# opencode index cache (regeneratable)
+**/.opencode/index/
+**/.opencode/node_modules/

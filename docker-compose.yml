@@ -1,0 +1,147 @@
+# Master docker-compose — orquesta todos los microservicios
+# Incluye: infra, auth, gateway, luxStudio, gisvial
+
+include:
+  - infra/docker-compose.infra.yml
+  - auth/docker-compose.auth.yml
+
+services:
+  # Database compartida (PostgreSQL)
+  db:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-luxstudio}
+      POSTGRES_USER: ${POSTGRES_USER:-luxstudio}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-luxstudio-local-only}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/init-db.sql:/docker-entrypoint-initdb.d/01-init-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  # Gateway — nginx (reverse proxy + auth_request)
+  gateway:
+    build: ./gateway
+    ports:
+      - "80:80"
+    depends_on:
+      oauth2-proxy:
+        condition: service_started
+      portal:
+        condition: service_started
+    restart: unless-stopped
+
+  # OAuth2 Proxy — validación JWT OIDC
+  oauth2-proxy:
+    image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
+    ports:
+      - "4180:4180"
+    command:
+      - "--upstream=http://gateway:80"
+      - "--http-address=0.0.0.0:4180"
+      - "--provider=oidc"
+      - "--oidc-issuer-url=http://keycloak:8080/realms/salvi"
+      - "--insecure-oidc-skip-issuer-verification=true"
+      - "--oidc-audience-claim="
+      - "--client-id=gateway"
+      - "--client-secret=gateway-secret"
+      - "--cookie-secret=salvi-gis-cookie-secret-32chars!"
+      - "--redirect-url=http://localhost:4180/oauth2/callback"
+      - "--email-domain=*"
+      - "--skip-auth-regex=^/api/auth/login$|^/api/auth/setup$|^/api/health$"
+      - "--cookie-secure=false"
+      - "--cookie-httponly=true"
+      - "--cookie-samesite=lax"
+      - "--session-store-type=redis"
+      - "--redis-connection-url=redis://redis-cache:6379"
+      - "--skip-jwt-bearer-tokens=true"
+      - "--pass-access-token=true"
+      - "--set-xauthrequest=true"
+      - "--set-authorization-header=true"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      redis-cache:
+        condition: service_started
+    restart: unless-stopped
+
+  # LuxStudio backend
+  luxstudio-backend:
+    build: ./luxStudio/backend
+    ports:
+      - "8750:8750"
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-luxstudio}:${POSTGRES_PASSWORD:-luxstudio-local-only}@db:5432/${POSTGRES_DB:-luxstudio}?options=-csearch_path%3Dluxstudio,public
+      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:-lux-studio-local-dev-secret}
+      OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-http://keycloak:8080/realms/salvi}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # LuxStudio frontend
+  luxstudio-frontend:
+    build:
+      context: ./luxStudio/frontend
+      args:
+        VITE_PORTAL_ORIGINS: ${PUBLIC_PORTAL_ORIGINS:-http://localhost:3000,http://localhost,http://127.0.0.1:3000,http://127.0.0.1}
+    ports:
+      - "5173:80"
+    depends_on:
+      luxstudio-backend:
+        condition: service_started
+    restart: unless-stopped
+
+  # GISVial backend
+  gisvial-backend:
+    build: ./gisvial/backend
+    ports:
+      - "8733:8733"
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-luxstudio}:${POSTGRES_PASSWORD:-luxstudio-local-only}@db:5432/${POSTGRES_DB:-luxstudio}?options=-csearch_path%3Dgis,public
+      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:-lux-studio-local-dev-secret}
+      OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-http://keycloak:8080/realms/salvi}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # GISVial frontend
+  gisvial-frontend:
+    build:
+      context: ./gisvial/frontend
+      args:
+        VITE_PORTAL_ORIGINS: ${PUBLIC_PORTAL_ORIGINS:-http://localhost:3000,http://localhost,http://127.0.0.1:3000,http://127.0.0.1}
+    ports:
+      - "5174:80"
+    depends_on:
+      gisvial-backend:
+        condition: service_started
+    restart: unless-stopped
+
+  # Portal común: login único y acceso embebido a los dos servicios
+  portal:
+    build:
+      context: ./portal
+      args:
+        VITE_KEYCLOAK_URL: ${PUBLIC_KEYCLOAK_URL:-/keycloak}
+        VITE_KEYCLOAK_CLIENT_ID: ${PUBLIC_KEYCLOAK_CLIENT_ID:-portal}
+        VITE_LUXSTUDIO_URL: ${PUBLIC_LUXSTUDIO_URL:-http://localhost:5173}
+        VITE_GISVIAL_URL: ${PUBLIC_GISVIAL_URL:-http://localhost:5174}
+    ports:
+      - "3000:80"
+    depends_on:
+      luxstudio-backend:
+        condition: service_started
+      keycloak:
+        condition: service_started
+    restart: unless-stopped
+
+volumes:
+  postgres_data:

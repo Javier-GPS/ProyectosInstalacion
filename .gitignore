@@ -45,6 +45,9 @@ yarn-debug.log*
 # Docker
 **/.docker/
 
+# Legacy GIS database files (too large for GitHub)
+GIS_legacy/db/
+
 # opencode index cache (regeneratable)
 **/.opencode/index/
 **/.opencode/node_modules/

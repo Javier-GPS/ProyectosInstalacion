@@ -21,10 +21,11 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["ETag"],
 )
 
 # Routers
-app.include_router(auth.router, tags=["Auth & Users"])
+app.include_router(auth.router, tags=["Auth"])
 app.include_router(zones.router, tags=["Zones, OSM, Nominatim"])
 app.include_router(luminaires.router, tags=["Luminaires & Inventory"])
 app.include_router(photometric.router, tags=["Photometric"])
@@ -40,8 +41,3 @@ async def startup():
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "service": "gis-backend"}
-
-
-@app.get("/api/gis/health")
-async def gis_health():
-    return {"status": "ok", "service": "gis-backend", "version": settings.app_version}

@@ -21,8 +21,8 @@ from app.models import (
     GisLuminaire, GisInventoryLuminaire, GisPhotometricResult,
     GisProjectUiConfig, ensure_gis_tables,
 )
-from app.services.auth import hash_password
-
+# Note: hash_password was in services/auth.py which is now removed.
+# Password migration is no longer needed — auth goes through OIDC.
 GIS_DB_PATH = Path(__file__).resolve().parent.parent.parent / "GIS" / "db" / "salvi_gis.db"
 
 
@@ -59,7 +59,7 @@ def migrate_users(sl, pg):
         u = User(
             name=d.get("username", "unknown").strip(),
             email=(d.get("email") or f"{d.get('username','user')}@salvi.lighting").lower().strip(),
-            password_hash=d.get("password_hash", "") or hash_password("SalviGis2024!"),
+            password_hash=d.get("password_hash", "") or "oidc",
             role="ADMIN" if d.get("role", "").lower() == "admin" else "USER",
             is_active=bool(d.get("active", 1)),
         )

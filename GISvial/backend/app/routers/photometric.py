@@ -6,26 +6,20 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from ..core.database import get_db
-from ..models import GisPhotometricResult, User, ensure_gis_tables
+from ..core.helpers import fval, sval
+from ..models import GisPhotometricResult, User
 from .deps import current_user
 
 router = APIRouter()
 
 
-def _fval(v):
-    try:
-        return float(v) if v is not None else None
-    except (ValueError, TypeError):
-        return None
 
-
-def _sval(v):
+def sval(v):
     return str(v).strip() if v is not None else None
 
 
 @router.get("/api/zones/{zone_id}/photometric")
 async def gis_zone_photometric(zone_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    ensure_gis_tables()
     rows = db.query(GisPhotometricResult).filter(
         GisPhotometricResult.zone_id == zone_id
     ).order_by(GisPhotometricResult.id).all()
@@ -44,7 +38,6 @@ async def gis_zone_photometric(zone_id: str, user: User = Depends(current_user),
 @router.post("/api/import/photometric")
 async def gis_import_photometric(request: Request, db: Session = Depends(get_db)):
     import openpyxl
-    ensure_gis_tables()
     raw = await request.body()
     zone_id = request.query_params.get("zone_id", "")
     if not zone_id:
@@ -85,10 +78,10 @@ async def gis_import_photometric(request: Request, db: Session = Depends(get_db)
         def g(k):
             idx = ci.get(k)
             return row[idx] if idx is not None and idx < len(row) else None
-        road_w = _fval(g("road_width"))
-        sp_val = _fval(g("spacing"))
-        lc = _sval(g("lighting_class"))
-        mk = _sval(g("match_key")) or (f"{road_w}|{sp_val}|{lc}" if road_w and sp_val and lc else None)
+        road_w = fval(g("road_width"))
+        sp_val = fval(g("spacing"))
+        lc = sval(g("lighting_class"))
+        mk = sval(g("match_key")) or (f"{road_w}|{sp_val}|{lc}" if road_w and sp_val and lc else None)
         if not mk:
             continue
         existing = db.query(GisPhotometricResult).filter(
@@ -96,13 +89,13 @@ async def gis_import_photometric(request: Request, db: Session = Depends(get_db)
             GisPhotometricResult.match_key == mk,
         ).first()
         data = {
-            "segment_name": _sval(g("segment_name")), "match_key": mk,
+            "segment_name": sval(g("segment_name")), "match_key": mk,
             "road_width": road_w, "spacing": sp_val, "lighting_class": lc,
-            "power_w": _fval(g("power_w")), "lm_em": _fval(g("lm_em")),
-            "uo": _fval(g("uo")), "ui": _fval(g("ui")), "ti": _fval(g("ti")), "sr": _fval(g("sr")),
-            "model": _sval(g("model")), "lente": _sval(g("lente")),
-            "tilt": _fval(g("tilt")), "phi_lm": _fval(g("phi_lm")),
-            "cumple": _sval(g("cumple")), "notes": _sval(g("notes")),
+            "power_w": fval(g("power_w")), "lm_em": fval(g("lm_em")),
+            "uo": fval(g("uo")), "ui": fval(g("ui")), "ti": fval(g("ti")), "sr": fval(g("sr")),
+            "model": sval(g("model")), "lente": sval(g("lente")),
+            "tilt": fval(g("tilt")), "phi_lm": fval(g("phi_lm")),
+            "cumple": sval(g("cumple")), "notes": sval(g("notes")),
         }
         if existing:
             for k, v in data.items():
@@ -113,3 +106,5 @@ async def gis_import_photometric(request: Request, db: Session = Depends(get_db)
         imported += 1
     db.commit()
     return {"imported": imported, "rows": rows_out}
+
+

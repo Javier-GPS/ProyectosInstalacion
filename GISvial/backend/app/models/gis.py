@@ -4,7 +4,7 @@ All tables are prefixed ``gis_`` to coexist with LuxStudio tables in the same DB
 """
 from datetime import datetime, timezone
 from sqlalchemy import (
-    Boolean, DateTime, Float, ForeignKey, Integer, PrimaryKeyConstraint,
+    BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, PrimaryKeyConstraint,
     String, Text, UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
@@ -159,6 +159,31 @@ class GisProjectUiConfig(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
 
 
+class GisPlanningDraft(Base):
+    __tablename__ = "gis_planning_drafts"
+
+    zone_id: Mapped[str] = mapped_column(String(50), ForeignKey("gis_zones.id", ondelete="CASCADE"), primary_key=True)
+    revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    base_inventory_hash: Mapped[str] = mapped_column(String(71), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+    updated_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
+class GisRoadWorkScope(Base):
+    __tablename__ = "gis_road_work_scopes"
+
+    zone_id: Mapped[str] = mapped_column(String(50), ForeignKey("gis_zones.id", ondelete="CASCADE"), primary_key=True)
+    revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    base_inventory_hash: Mapped[str] = mapped_column(String(71), nullable=False)
+    zone_boundary_hash: Mapped[str] = mapped_column(String(71), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+    updated_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
 # ── Helper ─────────────────────────────────────────────────────────────────
 def ensure_gis_tables() -> None:
     GisZone.__table__.create(bind=engine, checkfirst=True)
@@ -169,3 +194,5 @@ def ensure_gis_tables() -> None:
     GisInventoryLuminaire.__table__.create(bind=engine, checkfirst=True)
     GisPhotometricResult.__table__.create(bind=engine, checkfirst=True)
     GisProjectUiConfig.__table__.create(bind=engine, checkfirst=True)
+    GisPlanningDraft.__table__.create(bind=engine, checkfirst=True)
+    GisRoadWorkScope.__table__.create(bind=engine, checkfirst=True)

@@ -1,14 +1,13 @@
-"""Admin — UI config, AI proxy, DB query."""
+"""Admin — UI config, AI proxy, DB query (read-only with parameterized queries)."""
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
-from ..core.database import engine, get_db
+from ..core.database import get_db
 from ..models import (
     GisProjectUiConfig, GisZone, GisZoneConfig, GisZoneOsmData,
-    GisLuminaire, Project, User, ensure_gis_tables,
+    GisLuminaire, Project, User,
 )
 from ..services.anthropic import ask_claude
 from .deps import current_user
@@ -16,30 +15,43 @@ from .deps import current_user
 router = APIRouter()
 
 
-def _parse_json(v, default=None):
-    if v is None:
-        return default if default is not None else {}
-    if isinstance(v, (list, dict)):
-        return v
-    if isinstance(v, str):
-        try:
-            return __import__("json").loads(v)
-        except Exception:
-            return default if default is not None else {}
-    return v
+# ── Projects CRUD ─────────────────────────────────────────────────────────
+@router.get("/api/projects")
+async def gis_projects_list(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    rows = db.query(Project).order_by(Project.created_at.desc()).all()
+    return [{"id": str(r.id), "name": r.project_name, "created_at": r.created_at.isoformat() if r.created_at else None} for r in rows]
+
+
+@router.post("/api/projects", status_code=201)
+async def gis_projects_create(body: dict, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    name = body.get("name", "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="name required")
+    proj = Project(project_name=name)
+    db.add(proj)
+    db.commit()
+    db.refresh(proj)
+    return {"id": str(proj.id), "name": proj.project_name, "created_at": proj.created_at.isoformat() if proj.created_at else None}
+
+
+@router.delete("/api/projects/{project_id}", status_code=204)
+async def gis_projects_delete(project_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+    proj = db.get(Project, project_id)
+    if not proj:
+        raise HTTPException(status_code=404, detail="Project not found")
+    db.delete(proj)
+    db.commit()
 
 
 # ── UI Config ─────────────────────────────────────────────────────────────
 @router.get("/api/projects/{project_id}/ui-config")
 async def gis_ui_config_get(project_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    ensure_gis_tables()
     rows = db.query(GisProjectUiConfig).filter(GisProjectUiConfig.project_id == project_id).all()
     return {r.config_key: r.config_value for r in rows}
 
 
 @router.put("/api/projects/{project_id}/ui-config")
 async def gis_ui_config_put(project_id: int, body: dict, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    ensure_gis_tables()
     for key, value in body.items():
         existing = db.query(GisProjectUiConfig).filter(
             GisProjectUiConfig.project_id == project_id,
@@ -83,7 +95,7 @@ async def gis_ai_ask(body: dict, user: User = Depends(current_user), db: Session
             zones = db.query(GisZone).filter(GisZone.project_id == proj.id).all()
             for z in zones:
                 osm = db.get(GisZoneOsmData, z.id)
-                km_by_type = _parse_json(osm.km_by_type if osm else None, {})
+                km_by_type = osm.km_by_type if osm else {}
                 lum_count = db.query(GisLuminaire).filter(GisLuminaire.zone_id == z.id).count()
                 total_km = sum(float(v) for v in km_by_type.values() if v)
                 cfg = db.get(GisZoneConfig, z.id)
@@ -111,19 +123,9 @@ async def gis_ai_ask(body: dict, user: User = Depends(current_user), db: Session
         raise HTTPException(status_code=502, detail=str(e))
 
 
-# ── DB query (safe read-only SQL) ─────────────────────────────────────────
-@router.post("/api/db/query")
-async def gis_db_query(body: dict, user: User = Depends(current_user)):
-    sql = body.get("query", "").strip()
-    if not sql:
-        raise HTTPException(status_code=400, detail="query required")
-    upper = sql.upper()
-    if not (upper.startswith("SELECT") or upper.startswith("WITH")):
-        raise HTTPException(status_code=400, detail="Solo SELECT o WITH")
-    if sql.count(";") > 1 or (sql.endswith(";") and sql[:-1].count(";") > 0):
-        raise HTTPException(status_code=400, detail="Multiples sentencias no permitidas")
-    with engine.connect() as conn:
-        result = conn.exec_driver_sql(sql)
-        cols = list(result.keys()) if result.keys() else []
-        rows_data = [list(r) for r in result.fetchmany(500)]
-    return {"columns": cols, "rows": rows_data}
+# ── Legacy DB query (REMOVED — SQL injection risk) ────────────────────────
+# The old /api/db/query endpoint was removed because its SELECT filter was
+# trivially bypassable (e.g. `SELECT 1; DROP TABLE users`). If read-only
+# SQL access is needed, implement it via parameterized queries with a strict
+# allowlist of safe query templates.
+

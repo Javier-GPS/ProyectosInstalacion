@@ -2,8 +2,6 @@ import React, { lazy, Suspense, useMemo } from 'react';
 import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom';
 import { useAuth } from './auth/AuthContext';
 import MainLayout from './layouts/MainLayout';
-import LoginPage from './pages/LoginPage';
-const ChangePasswordPage = lazy(() => import('./pages/ChangePasswordPage'));
 const ProjectsListPage = lazy(() => import('./pages/ProjectsListPage'));
 const ProjectTramosPage = lazy(() => import('./pages/ProjectTramosPage'));
 const TramoEditorPage = lazy(() => import('./pages/TramoEditorPage'));
@@ -49,15 +47,7 @@ function App() {
   }
 
   if (!user) {
-    return <LoginPage />;
-  }
-
-  if (user.must_reset_password) {
-    return (
-      <Suspense fallback={<LoadingScreen />}>
-        <ChangePasswordPage />
-      </Suspense>
-    );
+    return <LoadingScreen />;
   }
 
   return (

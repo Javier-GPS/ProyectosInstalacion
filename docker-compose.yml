@@ -69,6 +69,8 @@ services:
     depends_on:
       redis-cache:
         condition: service_started
+      keycloak:
+        condition: service_healthy
     restart: unless-stopped
 
   # LuxStudio backend
@@ -78,7 +80,6 @@ services:
       - "8750:8750"
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-luxstudio}:${POSTGRES_PASSWORD:-luxstudio-local-only}@db:5432/${POSTGRES_DB:-luxstudio}?options=-csearch_path%3Dluxstudio,public
-      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:-lux-studio-local-dev-secret}
       OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-http://keycloak:8080/realms/salvi}
     depends_on:
       db:
@@ -105,7 +106,6 @@ services:
       - "8733:8733"
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-luxstudio}:${POSTGRES_PASSWORD:-luxstudio-local-only}@db:5432/${POSTGRES_DB:-luxstudio}?options=-csearch_path%3Dgis,public
-      AUTH_SECRET_KEY: ${AUTH_SECRET_KEY:-lux-studio-local-dev-secret}
       OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-http://keycloak:8080/realms/salvi}
     depends_on:
       db:
@@ -140,7 +140,7 @@ services:
       luxstudio-backend:
         condition: service_started
       keycloak:
-        condition: service_started
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:

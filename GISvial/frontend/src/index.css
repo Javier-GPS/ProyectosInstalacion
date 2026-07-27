@@ -2,19 +2,11 @@
 @tailwind components;
 @tailwind utilities;
 
-@font-face { font-family:'Exposure'; src:url('/fonts/Exposure - [-70]-205TF.woff2') format('woff2'),url('/fonts/Exposure - [-70]-205TF.woff') format('woff'); font-weight:100; font-style:normal; font-display:swap; }
-@font-face { font-family:'Exposure'; src:url('/fonts/Exposure - [-70] Italic-205TF.woff2') format('woff2'),url('/fonts/Exposure - [-70] Italic-205TF.woff') format('woff'); font-weight:100; font-style:italic; font-display:swap; }
-@font-face { font-family:'Exposure'; src:url('/fonts/Exposure - [-50]-205TF.woff2') format('woff2'),url('/fonts/Exposure - [-50]-205TF.woff') format('woff'); font-weight:200; font-style:normal; font-display:swap; }
-@font-face { font-family:'Exposure'; src:url('/fonts/Exposure - [-50] Italic-205TF.woff2') format('woff2'),url('/fonts/Exposure - [-50] Italic-205TF.woff') format('woff'); font-weight:200; font-style:italic; font-display:swap; }
-@font-face { font-family:'Exposure'; src:url('/fonts/Exposure - [-30]-205TF.woff2') format('woff2'),url('/fonts/Exposure - [-30]-205TF.woff') format('woff'); font-weight:300; font-style:normal; font-display:swap; }
-@font-face { font-family:'Exposure'; src:url('/fonts/Exposure - [-30] Italic-205TF.woff2') format('woff2'),url('/fonts/Exposure - [-30] Italic-205TF.woff') format('woff'); font-weight:300; font-style:italic; font-display:swap; }
-@font-face { font-family:'Exposure'; src:url('/fonts/Exposure - [-10]-205TF.woff2') format('woff2'),url('/fonts/Exposure - [-10]-205TF.woff') format('woff'); font-weight:350; font-style:normal; font-display:swap; }
-@font-face { font-family:'Exposure'; src:url('/fonts/Exposure - [+10]-205TF.woff2') format('woff2'),url('/fonts/Exposure - [+10]-205TF.woff') format('woff'); font-weight:400; font-style:normal; font-display:swap; }
-@font-face { font-family:'Exposure'; src:url('/fonts/Exposure - [+10] Italic-205TF.woff2') format('woff2'),url('/fonts/Exposure - [+10] Italic-205TF.woff') format('woff'); font-weight:400; font-style:italic; font-display:swap; }
-@font-face { font-family:'Exposure'; src:url('/fonts/Exposure - [+30]-205TF.woff2') format('woff2'),url('/fonts/Exposure - [+30]-205TF.woff') format('woff'); font-weight:500; font-style:normal; font-display:swap; }
-@font-face { font-family:'Exposure'; src:url('/fonts/Exposure - [+50]-205TF.woff2') format('woff2'),url('/fonts/Exposure - [+50]-205TF.woff') format('woff'); font-weight:600; font-style:normal; font-display:swap; }
-@font-face { font-family:'Exposure'; src:url('/fonts/Exposure - [+70]-205TF.woff2') format('woff2'),url('/fonts/Exposure - [+70]-205TF.woff') format('woff'); font-weight:700; font-style:normal; font-display:swap; }
-@font-face { font-family:'Exposure'; src:url('/fonts/Exposure - [+90]-205TF.woff2') format('woff2'),url('/fonts/Exposure - [+90]-205TF.woff') format('woff'); font-weight:800; font-style:normal; font-display:swap; }
+@font-face { font-family:'Exposure'; src:url('/fonts/Exposure - [-70]-205TF.woff2') format('woff2'); font-weight:100; font-style:normal; font-display:swap; }
+@font-face { font-family:'Exposure'; src:url('/fonts/Exposure - [+10]-205TF.woff2') format('woff2'); font-weight:400; font-style:normal; font-display:swap; }
+@font-face { font-family:'Exposure'; src:url('/fonts/Exposure - [+30]-205TF.woff2') format('woff2'); font-weight:500; font-style:normal; font-display:swap; }
+@font-face { font-family:'Exposure'; src:url('/fonts/Exposure - [+50]-205TF.woff2') format('woff2'); font-weight:600; font-style:normal; font-display:swap; }
+@font-face { font-family:'Exposure'; src:url('/fonts/Exposure - [+70]-205TF.woff2') format('woff2'); font-weight:700; font-style:normal; font-display:swap; }
 
 @layer base {
   :root {

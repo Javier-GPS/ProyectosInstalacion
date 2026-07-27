@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session, load_only, selectinload
 from ..database import engine, get_db
 from ..models import Project, ProjectDocument, User
 from ._access import can_access_project
-from .auth import current_user
+from .deps import current_user
 
 router = APIRouter()
 

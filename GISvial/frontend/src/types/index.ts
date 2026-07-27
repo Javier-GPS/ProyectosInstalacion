@@ -18,6 +18,17 @@ export interface GisProject {
   created_at: string;
 }
 
+export interface GisZoneGeometry {
+  bbox: [number, number, number, number] | null;
+  polygon: [number, number][] | null;
+  boundary: {
+    type: 'Polygon' | 'MultiPolygon';
+    coordinates: [number, number][][] | [number, number][][][];
+  } | null;
+  status: 'valid' | 'bbox_only' | 'missing' | 'ambiguous' | 'invalid';
+  source_format: { bbox: string | null; polygon: string | null };
+}
+
 export interface GisZone {
   id: string;
   name: string;
@@ -30,7 +41,9 @@ export interface GisZone {
   bbox: string;
   description: string;
   corridors: any[];
-  bounds_polygon: number[][];
+  bounds_polygon: number[][] | GisZoneGeometry['boundary'];
+  geometry: GisZoneGeometry;
+  osm_relation: number | null;
   est: Record<string, number>;
   source: string;
   project_id: string;
@@ -75,6 +88,131 @@ export interface GisOsmData {
   ways: GisOsmWay[];
   source: string;
   loaded_at: string;
+}
+
+export type GisLightingClass =
+  | 'M1' | 'M2' | 'M3' | 'M4' | 'M5' | 'M6'
+  | 'C0' | 'C1' | 'C2' | 'C3' | 'C4' | 'C5'
+  | 'P1' | 'P2' | 'P3' | 'P4' | 'P5' | 'P6' | 'P7';
+
+export type GisDistribution =
+  | 'unilateral_r' | 'unilateral_l' | 'bilateral_pareado'
+  | 'bilateral_tresbolillo' | 'centrada_mediana' | 'mediana_compartida';
+
+export interface GisPlanningLuxParams {
+  poleH?: number | null;
+  armLen?: number | null;
+  setback?: number | null;
+  tilt?: number | null;
+  sidewalkL?: number | null;
+  sidewalkR?: number | null;
+  medianW?: number | null;
+  maintFactor?: number | null;
+  brand?: string | null;
+  range?: string | null;
+  diffuser?: string | null;
+  optic?: string | null;
+  ledType?: string | null;
+  power?: number | null;
+  colorTemp?: number | null;
+  cri?: number | null;
+}
+
+export interface GisPlanningPatch {
+  lighting_class?: GisLightingClass | null;
+  spacing?: number | null;
+  distribution?: GisDistribution | null;
+  luxParams?: GisPlanningLuxParams | null;
+}
+
+export interface GisPlanningPayload {
+  group_defaults: Record<string, GisPlanningPatch>;
+  target_overrides: Record<string, GisPlanningPatch>;
+}
+
+export interface GisPlanningInventoryGroup {
+  group_ref: string;
+  road_type: string | null;
+  street_count: number;
+  target_count: number;
+  length_m: number;
+  invalid_length_count: number;
+}
+
+export interface GisPlanningInventoryTarget {
+  target_ref: string;
+  group_ref: string;
+  source_index: number;
+  name: string | null;
+  length_m: number | null;
+  geometry: [number, number][] | null;
+  diagnostics: string[];
+}
+
+export interface GisPlanningInventory {
+  schema_version: 1;
+  adapter_version: 1;
+  zone_id: string;
+  base_inventory_hash: string;
+  counts: {
+    segment_count: number;
+    named_street_count: number;
+    unnamed_segment_count: number;
+    geometry_available: number;
+    geometry_unavailable: number;
+    invalid_length_count: number;
+  };
+  groups: GisPlanningInventoryGroup[];
+  targets: GisPlanningInventoryTarget[];
+}
+
+export interface GisPlanningDraft {
+  zone_id: string;
+  revision: number;
+  schema_version: 1;
+  base_inventory_hash: string;
+  payload: GisPlanningPayload;
+  updated_at: string | null;
+  updated_by: number | null;
+}
+
+export interface GisRoadScopeAnchor {
+  target_ref: string;
+  segment_index: number;
+  segment_t: number;
+}
+
+export interface GisRoadScopeMember {
+  target_ref: string;
+  segment_index: number;
+  from_t: number;
+  to_t: number;
+  geometry: [number, number][];
+  length_m: number;
+}
+
+export interface GisRoadWorkScope {
+  zone_id: string;
+  revision: number;
+  schema_version: 1;
+  base_inventory_hash: string;
+  current: boolean;
+  boundary: { type: 'Polygon'; coordinates: [number, number][][] };
+  allowed_group_refs: string[];
+  a: GisRoadScopeAnchor;
+  b: GisRoadScopeAnchor;
+  path: [number, number][];
+  length_m: number;
+  members: GisRoadScopeMember[];
+  topology_basis: 'exact-coordinate';
+  topology_limitations: string[];
+  updated_at: string | null;
+  updated_by: number | null;
+}
+
+export interface Etagged<T> {
+  data: T;
+  etag: string;
 }
 
 export interface GisLuminaire {

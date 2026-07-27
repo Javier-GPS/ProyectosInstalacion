@@ -19,7 +19,7 @@ from ..services.ldt_matcher import require_ldt_for_config
 from ..services.pdf_generator import generate_pdf
 from ..services.report_grids import calculation_grids
 from ._access import can_access_project
-from .auth import current_user
+from .deps import current_user
 
 router = APIRouter()
 

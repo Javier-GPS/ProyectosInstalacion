@@ -16,9 +16,7 @@ interface AuthContextValue {
   user: AuthUser | null;
   token: string | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
   logout: () => void;
-  changePassword: (currentPassword: string, newPassword: string) => Promise<void>;
   authFetch: AuthFetch;
 }
 
@@ -69,36 +67,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => window.removeEventListener('message', receivePortalToken);
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
-    const response = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    if (!response.ok) {
-      const errData = await response.json().catch(() => null);
-      throw new Error(errData?.detail || 'auth.loginFailed');
-    }
-    const data = await response.json();
-    localStorage.setItem(TOKEN_KEY, data.access_token);
-    setToken(data.access_token);
-    setUser(data.user);
-  }, []);
-
-  const changePassword = useCallback(async (currentPassword: string, newPassword: string) => {
-    if (!token) throw new Error('auth.sessionExpired');
-    const response = await fetch('/api/auth/change-password', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...authHeaders(token) },
-      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
-    });
-    if (!response.ok) {
-      const errData = await response.json().catch(() => null);
-      throw new Error(errData?.detail || 'auth.changePasswordFailed');
-    }
-    setUser(await response.json());
-  }, [token]);
-
   const authFetch = useCallback<AuthFetch>((input, init = {}) => {
     if (!token) throw new Error('auth.sessionExpired');
     return fetch(input, {
@@ -114,11 +82,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     user,
     token,
     loading,
-    login,
     logout,
-    changePassword,
     authFetch,
-  }), [user, token, loading, login, logout, changePassword, authFetch]);
+  }), [user, token, loading, logout, authFetch]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

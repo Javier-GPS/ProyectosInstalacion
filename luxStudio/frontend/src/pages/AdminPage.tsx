@@ -6,17 +6,10 @@ import DimensionTable from '../components/admin/DimensionTable';
 import CatalogTable from '../components/admin/CatalogTable';
 import PcbTable from '../components/admin/PcbTable';
 import LuminaireLedTable from '../components/admin/LuminaireLedTable';
-import AdminUsersPage from './AdminUsersPage';
 import { useI18n } from '../i18n';
 import type { LDTInfo } from '../types';
 
-type Section = 'users' | 'catalog';
 type CatalogTab = 'luminaires' | 'gamas' | 'difusores' | 'lentes' | 'led-types' | 'leds' | 'pcbs' | 'drivers' | 'luminaire-leds';
-
-const sections: { key: Section; labelKey: string }[] = [
-  { key: 'users', labelKey: 'admin.section.users' },
-  { key: 'catalog', labelKey: 'admin.section.catalog' },
-];
 
 const catalogTabs: { key: CatalogTab; labelKey: string }[] = [
   { key: 'luminaires', labelKey: 'admin.catalog.luminaires' },
@@ -39,7 +32,6 @@ const dimensionEndpoints: Record<string, { endpoint: string; labelKey: string }>
 
 const AdminPage: React.FC = () => {
   const { t } = useI18n();
-  const [section, setSection] = useState<Section>('users');
   const [catalogTab, setCatalogTab] = useState<CatalogTab>('luminaires');
   const [editLum, setEditLum] = useState<LDTInfo | null>(null);
   const [showForm, setShowForm] = useState(false);
@@ -140,7 +132,7 @@ const AdminPage: React.FC = () => {
           >
             {t('actions.backToStudio')}
           </Link>
-          {section === 'catalog' && catalogTab === 'luminaires' && !showForm && (
+          {catalogTab === 'luminaires' && !showForm && (
             <button
               onClick={handleNew}
               className="px-3 py-1.5 text-xs font-medium rounded-md bg-[#1E1E1E] text-white hover:bg-[#333333]"
@@ -151,50 +143,25 @@ const AdminPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Level 1: sections */}
+      {/* Catalog sub-tabs */}
       <div className="flex gap-1 mb-6 border-b border-[#E8E2D8]">
-        {sections.map(sec => (
+        {catalogTabs.map(tb => (
           <button
-            key={sec.key}
-            onClick={() => { setSection(sec.key); setShowForm(false); setEditLum(null); }}
-            className={`px-5 py-2.5 text-sm font-semibold border-b-2 transition-colors ${
-              section === sec.key
+            key={tb.key}
+            onClick={() => { setCatalogTab(tb.key); setShowForm(false); setEditLum(null); }}
+            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+              catalogTab === tb.key
                 ? 'border-[#1E1E1E] text-[#1E1E1E]'
                 : 'border-transparent text-[#A09A91] hover:text-[#6A6A6A] hover:border-[#D4CEC6]'
             }`}
           >
-            {t(sec.labelKey)}
+            {t(tb.labelKey)}
           </button>
         ))}
       </div>
 
-      {/* Level 2: catalog sub-tabs */}
-      {section === 'catalog' && (
-        <div className="flex gap-1 mb-6 border-b border-[#E8E2D8] ml-0">
-          {catalogTabs.map(tb => (
-            <button
-              key={tb.key}
-              onClick={() => { setCatalogTab(tb.key); setShowForm(false); setEditLum(null); }}
-              className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
-                catalogTab === tb.key
-                  ? 'border-[#1E1E1E] text-[#1E1E1E]'
-                  : 'border-transparent text-[#A09A91] hover:text-[#6A6A6A] hover:border-[#D4CEC6]'
-              }`}
-            >
-              {t(tb.labelKey)}
-            </button>
-          ))}
-        </div>
-      )}
-
       {/* Content */}
-      {section === 'users' ? (
-        <div className="bg-[#FFFFFF] rounded-xl border border-[#E8E2D8] shadow-sm overflow-hidden">
-          <AdminUsersPage />
-        </div>
-      ) : (
-        renderCatalogContent()
-      )}
+      {renderCatalogContent()}
     </div>
   );
 };

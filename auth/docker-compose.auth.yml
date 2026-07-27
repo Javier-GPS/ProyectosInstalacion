@@ -9,10 +9,17 @@ services:
       KEYCLOAK_ADMIN_PASSWORD: admin123
       KC_HOSTNAME_URL: http://keycloak:8080
       KC_HOSTNAME_STRICT: false
+      KC_HEALTH_ENABLED: "true"
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://db:5432/auth
       KC_DB_USERNAME: ${POSTGRES_USER:-luxstudio}
       KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-luxstudio-local-only}
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/9000; printf \"GET /health/ready HTTP/1.1\\r\\nHost: localhost\\r\\nConnection: close\\r\\n\\r\\n\" >&3; grep -q \"200 OK\" <&3'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
     volumes:
       - ./realm.json:/opt/keycloak/data/import/realm.json:ro
     depends_on:

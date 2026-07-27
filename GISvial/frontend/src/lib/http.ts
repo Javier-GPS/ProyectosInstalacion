@@ -29,3 +29,14 @@ export const requestJson = async <T>(
   if (!response.ok) throw new Error(errorMessage(body, fallback));
   return body as T;
 };
+
+/** Wraps fetch with optional AbortSignal passthrough. */
+export const requestJsonWithSignal = async <T>(
+  request: Requester,
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  fallback: string,
+  signal?: AbortSignal,
+): Promise<T> => {
+  return requestJson<T>(request, input, { ...init, signal }, fallback);
+};

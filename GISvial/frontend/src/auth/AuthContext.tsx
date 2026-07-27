@@ -5,7 +5,6 @@ interface AuthContextValue {
   user: GisUser | null;
   token: string | null;
   loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
   logout: () => void;
   authFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
 }
@@ -48,28 +47,12 @@ export const GisAuthProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return () => window.removeEventListener('message', receivePortalToken);
   }, []);
 
-  const login = useCallback(async (email: string, password: string) => {
-    const r = await fetch('/api/auth/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-    });
-    if (!r.ok) {
-      const err = await r.json().catch(() => null);
-      throw new Error(err?.detail || 'Credenciales no válidas');
-    }
-    const data = await r.json();
-    localStorage.setItem(TOKEN_KEY, data.token);
-    setToken(data.token);
-    setUser(data.user);
-  }, []);
-
   const authFetch = useCallback((input: RequestInfo | URL, init: RequestInit = {}) => {
     if (!token) throw new Error('No token');
     return fetch(input, { ...init, headers: { ...init.headers, ...authHeaders(token) } });
   }, [token]);
 
-  const value = useMemo<AuthContextValue>(() => ({ user, token, loading, login, logout, authFetch }), [user, token, loading, login, logout, authFetch]);
+  const value = useMemo<AuthContextValue>(() => ({ user, token, loading, logout, authFetch }), [user, token, loading, logout, authFetch]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 };

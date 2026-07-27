@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from ..routers.auth import require_admin
+from ..routers.deps import require_admin
 from ..database import get_db
 from ..schemas.models import LuminaireMaxPowerInfo
 from ..services import catalog_service

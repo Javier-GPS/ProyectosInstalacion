@@ -4,7 +4,7 @@ import os
 
 class Settings:
     app_name: str = "SALVI GIS API"
-    app_version: str = "0.2.0"
+    app_version: str = "0.3.0"
 
     # Database
     database_url: str = os.getenv(
@@ -13,8 +13,6 @@ class Settings:
     )
 
     # Auth
-    auth_secret_key: str = os.getenv("AUTH_SECRET_KEY", "gis-local-dev-secret")
-    token_ttl_hours: int = int(os.getenv("TOKEN_TTL_HOURS", "12"))
     oidc_issuer_url: str = os.getenv("OIDC_ISSUER_URL", "")
 
     # Anthropic

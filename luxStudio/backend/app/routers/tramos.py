@@ -30,7 +30,7 @@ from ..schemas.models import (
     TramoSummary,
 )
 from ._access import can_access_project
-from .auth import current_user
+from .deps import current_user
 from ..services.tramo_operations import (
     bulk_adjust_power_tramos,
     bulk_calculate_tramos as calculate_tramos_bulk,

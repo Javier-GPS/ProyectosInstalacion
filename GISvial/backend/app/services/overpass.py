@@ -1,17 +1,26 @@
 """Fetch and normalize OSM roads from public Overpass mirrors."""
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping, Sequence
 
 import httpx
 
+from ..core.redis import cache_get, cache_set
 
 OVERPASS_URLS = (
     "https://overpass.kumi.systems/api/interpreter",
     "https://overpass-api.de/api/interpreter",
+    "https://overpass.openstreetmap.fr/api/interpreter",
+    "https://maps.mail.ru/osm/tools/overpass/api/interpreter",
 )
+
+OVERPASS_TIMEOUT = 180  # HTTP client timeout (seconds)
+OVERPASS_QUERY_TIMEOUT = 120  # Overpass query timeout (seconds)
+OVERPASS_CACHE_TTL = 3600  # 1 hour cache for Overpass responses
 DEFAULT_WIDTHS = {
     "motorway": 10.5, "trunk": 9.0, "primary": 7.0, "secondary": 6.0,
     "tertiary": 5.5, "residential": 4.5, "living_street": 4.0,
@@ -119,9 +128,29 @@ def normalize_element(element: Mapping) -> dict | None:
     if width is not None:
         estimated_width, width_source = width, "osm_width"
     elif lanes is not None:
-        estimated_width, width_source = lanes * 3.5, "lanes"
+        # Deduct 1 carril for bike lane if present, use 3.0m/lane urban standard
+        has_bike = str(tags.get("cycleway") or "").lower() in {"yes", "true", "1", "lane", "track", "separate"}
+        effective_lanes = lanes - (1 if has_bike else 0)
+        estimated_width, width_source = effective_lanes * 3.0, "lanes"
     else:
         estimated_width, width_source = DEFAULT_WIDTHS.get(highway, 4.0), "default"
+
+    # Sidewalk width from explicit OSM tags
+    sw_left_tag = tags.get("sidewalk:left:width") or tags.get("sidewalk:both:width")
+    sw_right_tag = tags.get("sidewalk:right:width") or tags.get("sidewalk:both:width")
+    sw_width_tag = tags.get("sidewalk:width")
+    sw_left = _number(sw_left_tag) if sw_left_tag else None
+    sw_right = _number(sw_right_tag) if sw_right_tag else None
+    if sw_left is None and sw_right is None and sw_width_tag:
+        sw_left = sw_right = _number(sw_width_tag)
+
+    # Median detection
+    median_raw = str(tags.get("median") or "").lower()
+    median = median_raw in {"yes", "true", "1"}
+    median_width = _number(tags.get("median:width"))
+    dual_carriageway = str(tags.get("dual_carriageway") or "").lower() in {"yes", "true", "1", "separate"}
+    if not dual_carriageway and median:
+        dual_carriageway = True
 
     return {
         "id": element.get("id"),
@@ -133,9 +162,13 @@ def normalize_element(element: Mapping) -> dict | None:
         "width": width,
         "widthSrc": width_source,
         "lanes": lanes,
-        "dual": str(tags.get("oneway") or "").lower() in {"yes", "true", "1"},
-        "surface": tags.get("surface"),
         "sidewalk": tags.get("sidewalk"),
+        "sidewalkWidthLeft": sw_left,
+        "sidewalkWidthRight": sw_right,
+        "median": median,
+        "medianWidth": median_width,
+        "dual": dual_carriageway,
+        "surface": tags.get("surface"),
         "tunnel": is_tunnel,
     }
 
@@ -164,21 +197,122 @@ def parse_overpass_payload(payload: object, bounds: tuple[float, float, float, f
     return ways
 
 
-async def fetch_roads(bbox: str) -> tuple[list[dict], str]:
-    bounds = parse_bbox(bbox)
+def _point_in_ring(lon: float, lat: float, ring: Sequence) -> bool:
+    inside = False
+    for i in range(len(ring) - 1):
+        x1, y1 = ring[i]
+        x2, y2 = ring[i + 1]
+        if (y1 > lat) != (y2 > lat):
+            x_intersect = x1 + (lat - y1) * (x2 - x1) / (y2 - y1)
+            if lon < x_intersect:
+                inside = not inside
+    return inside
+
+
+def _point_in_polygon(lon: float, lat: float, polygon: Collection) -> bool:
+    rings = polygon if polygon and isinstance(polygon[0][0], (list, tuple)) else [polygon]
+    return _point_in_ring(lon, lat, rings[0]) and not any(
+        _point_in_ring(lon, lat, ring) for ring in rings[1:]
+    )
+
+
+def _parse_bounds_polygon(raw: object) -> list | None:
+    if isinstance(raw, dict) and raw.get("type") in ("Polygon", "MultiPolygon"):
+        coords = raw["coordinates"]
+        return coords[0] if raw["type"] == "Polygon" else coords[0][0]
+    if isinstance(raw, (list, tuple)) and len(raw) >= 3:
+        pt = raw[0]
+        if isinstance(pt, (list, tuple)) and len(pt) >= 2:
+            return raw
+    return None
+
+
+def filter_ways_to_polygon(ways: list[dict], polygon: object) -> list[dict]:
+    ring = _parse_bounds_polygon(polygon)
+    if not ring:
+        return ways
+    filtered: list[dict] = []
+    for way in ways:
+        geom = way.get("geom")
+        if not isinstance(geom, (list, tuple)) or len(geom) < 2:
+            continue
+        keep = any(
+            _point_in_polygon(pt["lon"], pt["lat"], ring) for pt in geom
+        )
+        if keep:
+            filtered.append(way)
+    return filtered
+
+
+def _build_query(bounds: tuple[float, float, float, float]) -> str:
     south, north, west, east = bounds
-    query = (
-        f'[out:json][timeout:60];way["highway"]'
+    return (
+        f'[out:json][timeout:{OVERPASS_QUERY_TIMEOUT}];'
+        f'way["highway"]'
         f"({south},{west},{north},{east});out tags geom;"
     )
+
+
+def _cache_key(bounds: tuple[float, float, float, float]) -> str:
+    raw = f"{bounds[0]:.6f},{bounds[1]:.6f},{bounds[2]:.6f},{bounds[3]:.6f}"
+    h = hashlib.md5(raw.encode()).hexdigest()
+    return f"overpass:roads:{h}"
+
+
+async def _try_mirror(
+    client: httpx.AsyncClient,
+    url: str,
+    query: str,
+    bounds: tuple[float, float, float, float],
+) -> tuple[list[dict], str]:
+    """Try a single Overpass mirror. Raises on failure."""
+    response = await client.post(url, content=query)
+    response.raise_for_status()
+    ways = parse_overpass_payload(response.json(), bounds)
+    return ways, url
+
+
+async def fetch_roads(bbox: str) -> tuple[list[dict], str]:
+    bounds = parse_bbox(bbox)
+    query = _build_query(bounds)
+    cache_key = _cache_key(bounds)
+
+    # ── Try Redis cache first ──────────────────────────────────────────
+    cached = await cache_get(cache_key)
+    if cached is not None and isinstance(cached, list) and len(cached) == 2:
+        return cached[0], cached[1]
+
     errors: list[str] = []
-    async with httpx.AsyncClient(timeout=90, headers={"User-Agent": "SALVI-GIS/1.0"}) as client:
-        for url in OVERPASS_URLS:
+    async with httpx.AsyncClient(
+        timeout=OVERPASS_TIMEOUT,
+        headers={"User-Agent": "SALVI-GIS/2.0"},
+        limits=httpx.Limits(max_keepalive_connections=5, max_connections=10),
+    ) as client:
+        # ── Parallel: try all mirrors concurrently, first wins ──────────
+        tasks = [
+            asyncio.create_task(_try_mirror(client, url, query, bounds))
+            for url in OVERPASS_URLS
+        ]
+        done, pending = await asyncio.wait(
+            tasks,
+            return_when=asyncio.FIRST_COMPLETED,
+            timeout=OVERPASS_TIMEOUT,
+        )
+
+        # Cancel remaining in-flight requests
+        for task in pending:
+            task.cancel()
+
+        # Process completed tasks
+        for task in done:
             try:
-                response = await client.post(url, content=query)
-                response.raise_for_status()
-                ways = parse_overpass_payload(response.json(), bounds)
-                return ways, url
+                ways, source = task.result()
+                # Cache in Redis
+                await cache_set(cache_key, [ways, source], ttl=OVERPASS_CACHE_TTL)
+                return ways, source
+            except httpx.HTTPStatusError as exc:
+                errors.append(f"{exc.response.url}: HTTP {exc.response.status_code}")
             except (httpx.HTTPError, ValueError, TypeError, AttributeError) as exc:
-                errors.append(f"{url}: {exc}")
+                errors.append(str(exc))
+
     raise RuntimeError("; ".join(errors) or "No Overpass mirror available")

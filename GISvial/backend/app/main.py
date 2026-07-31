@@ -3,15 +3,35 @@
 Serves SALVI GIS endpoints independently from LuxStudio.
 Shares the same PostgreSQL database (``gis_*`` tables).
 """
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 
 from .core.config import settings
 from .core.database import engine
+from .core.redis import close_redis, init_redis
 from .models import ensure_gis_tables
 from .routers import auth, zones, luminaires, photometric, exports, admin
 
-app = FastAPI(title=settings.app_name, version=settings.app_version)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan: init Redis on start, close on shutdown."""
+    await init_redis()
+    yield
+    await close_redis()
+
+
+app = FastAPI(
+    title=settings.app_name,
+    version=settings.app_version,
+    lifespan=lifespan,
+)
+
+# Compress responses >1KB (big JSON inventories)
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # CORS
 origins = settings.cors_origins.split(",") if settings.cors_origins != "*" else ["*"]

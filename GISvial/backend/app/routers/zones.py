@@ -1,29 +1,35 @@
 """Zones — CRUD, OSM, config, trees, Nominatim."""
 import asyncio
+import logging
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from ..core.database import get_db
+from ..core.database import get_db, SessionLocal
 from ..core.helpers import fval
 from ..models import (
     GisPlanningDraft, GisRoadWorkScope, GisZone, GisZoneConfig, GisZoneOsmData, GisZoneTrees, User,
 )
 from ..schemas.zones import GisCreateZoneBody, GisPlanningDraftPut, GisRoadScopePut, GisRoutePreview
 from ..services.planning import compact_payload, normalize_inventory
-from ..services.overpass import fetch_roads
+from ..services.overpass import fetch_roads, filter_ways_to_polygon
+from ..services.building_width import enrich_widths, fetch_buildings
 from ..services.nominatim import search as _nom_search, reverse as _nom_reverse
 from ..services.zone_geometry import normalize_zone_geometry
 from ..services.road_scope import calculate_route, geometry_hash, normalize_scope_boundary
 from .deps import current_user, require_admin
 
 router = APIRouter()
-_osm_load_locks: dict[str, asyncio.Lock] = {}
+
+# Tracks background building enrichment tasks per zone
+_building_tasks: dict[str, asyncio.Task] = {}
 
 DEFAULT_COLORS = [
     '#4caf82', '#e67e22', '#3498db', '#9b59b6', '#e74c3c',
@@ -55,7 +61,7 @@ def _zone_to_dict(z: GisZone, spacing: int = 30) -> dict:
 @router.get("/api/nominatim/search")
 async def gis_nominatim_search(q: str = Query(...), featuretype: Optional[str] = None):
     try:
-        return _nom_search(q, featuretype)
+        return await _nom_search(q, featuretype)
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
@@ -63,7 +69,7 @@ async def gis_nominatim_search(q: str = Query(...), featuretype: Optional[str] =
 @router.get("/api/nominatim/reverse")
 async def gis_nominatim_reverse(lat: float = Query(...), lon: float = Query(...), zoom: int = 14):
     try:
-        return _nom_reverse(lat, lon, zoom)
+        return await _nom_reverse(lat, lon, zoom)
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
@@ -192,6 +198,7 @@ async def gis_zone_osm_save(zone_id: str, body: dict, user: User = Depends(curre
 @router.post("/api/zones/{zone_id}/osm/load")
 async def gis_zone_osm_load(
     zone_id: str,
+    force: bool = Query(default=False, description="Ignore cached data and force re-fetch from OSM"),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
 ):
@@ -199,26 +206,52 @@ async def gis_zone_osm_load(
     if not zone:
         raise HTTPException(status_code=404, detail="Zone not found")
     bbox = zone.bbox or ""
-    db.close()  # Release the pooled connection while waiting for the external provider.
-    lock = _osm_load_locks.setdefault(zone_id, asyncio.Lock())
-    async with lock:
-        try:
-            ways, source = await fetch_roads(bbox)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-        except RuntimeError as exc:
-            raise HTTPException(status_code=502, detail=f"Overpass unavailable: {exc}") from exc
+    polygon = zone.bounds_polygon or []
 
+    # Check cache (skip if force=True)
+    cached_row = db.get(GisZoneOsmData, zone_id)
+    if cached_row and cached_row.ways and not force:
+        logger.info("Using cached OSM data for zone %s (force=False)", zone_id)
+        if not cached_row.buildings:
+            # Trigger background enrichment without blocking response
+            task = _building_tasks.get(zone_id)
+            if task is None or task.done():
+                _building_tasks[zone_id] = asyncio.create_task(
+                    _enrich_buildings_background(zone_id, bbox, cached_row.ways)
+                )
+        return normalize_inventory(zone_id, cached_row.ways)
+
+    db.close()
+    try:
+        ways, source = await fetch_roads(bbox)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        if cached_row and cached_row.ways:
+            logger.warning("Overpass failed, falling back to cached data: %s", exc)
+            return normalize_inventory(zone_id, cached_row.ways)
+        raise HTTPException(
+            status_code=502,
+            detail="No se pudo conectar con OpenStreetMap. "
+                   "Los servidores de OSM están temporalmente sobrecargados. "
+                   "Inténtalo de nuevo en unos minutos.",
+        ) from exc
+
+    # Re-check zone hasn't changed
     current_zone = db.query(GisZone).filter(GisZone.id == zone_id).populate_existing().first()
     if not current_zone:
         raise HTTPException(status_code=404, detail="Zone was deleted while loading OSM")
     if (current_zone.bbox or "") != bbox:
         raise HTTPException(status_code=409, detail="Zone bounds changed while loading OSM; retry required")
 
+    ways = filter_ways_to_polygon(ways, polygon)
+
     km_by_type: dict[str, float] = {}
     for way in ways:
         road_type = way.get("type") or "unclassified"
-        km_by_type[road_type] = km_by_type.get(road_type, 0.0) + (way.get("len") or 0.0)
+        km_by_type[way.get("type", road_type)] = km_by_type.get(road_type, 0.0) + (way.get("len") or 0.0)
+
+    # Save ways immediately WITHOUT buildings (fast response)
     row = db.get(GisZoneOsmData, zone_id)
     if row and row.ways and not ways:
         raise HTTPException(status_code=502, detail="Overpass returned no roads; existing data was preserved")
@@ -229,11 +262,88 @@ async def gis_zone_osm_load(
         row.loaded_at = datetime.now(timezone.utc)
     else:
         db.add(GisZoneOsmData(
-            zone_id=zone_id, ways=ways, km_by_type=km_by_type,
-            source=source, loaded_at=datetime.now(timezone.utc),
+            zone_id=zone_id, ways=ways,
+            km_by_type=km_by_type, source=source,
+            loaded_at=datetime.now(timezone.utc),
         ))
     db.commit()
+
+    # Fire background enrichment (Catastro WFS) — non-blocking
+    _building_tasks[zone_id] = asyncio.create_task(
+        _enrich_buildings_background(zone_id, bbox, ways)
+    )
+
     return normalize_inventory(zone_id, ways)
+
+
+async def _enrich_buildings_background(zone_id: str, bbox: str, ways: list) -> None:
+    """Fetch Catastro WFS and enrich road widths in the background."""
+    try:
+        buildings = await fetch_buildings(bbox)
+        ways = enrich_widths(ways, buildings)
+        # Count enriched ways
+        enriched = sum(1 for w in ways if w.get("widthSrc") == "catastro")
+        logger.info(
+            "Catastro enrichment: %d buildings, %d/%d ways enriched for zone %s",
+            len(buildings) if buildings else 0, enriched, len(ways), zone_id,
+        )
+        db = SessionLocal()
+        try:
+            row = db.get(GisZoneOsmData, zone_id)
+            if row:
+                row.buildings = buildings
+                row.ways = ways
+                db.commit()
+                logger.info(
+                    "Background building enrichment completed for zone %s: "
+                    "%d ways enriched with Catastro data out of %d total",
+                    zone_id, enriched, len(ways),
+                )
+        except Exception as exc:
+            logger.warning("Background DB update failed for zone %s: %s", zone_id, exc)
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.warning("Background building enrichment failed for zone %s: %s", zone_id, exc)
+    finally:
+        _building_tasks.pop(zone_id, None)
+
+
+@router.get("/api/zones/{zone_id}/building-widths")
+async def gis_building_widths_status(
+    zone_id: str,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    """Check the status of building width enrichment for a zone."""
+    row = db.get(GisZoneOsmData, zone_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="ZONE_NOT_FOUND")
+    task = _building_tasks.get(zone_id)
+    if task and not task.done():
+        return {
+            "zone_id": zone_id,
+            "status": "computing",
+            "buildings": None,
+            "enriched_ways": None,
+            "computed_at": None,
+        }
+    if row.buildings:
+        return {
+            "zone_id": zone_id,
+            "status": "available",
+            "buildings": row.buildings,
+            "enriched_ways": row.ways,
+            "computed_at": row.loaded_at.isoformat() if row.loaded_at else None,
+        }
+    return {
+        "zone_id": zone_id,
+        "status": "unavailable",
+        "buildings": None,
+        "enriched_ways": None,
+        "computed_at": None,
+        "message": "No building data available",
+    }
 
 
 # ── Road planning ──────────────────────────────────────────────────────
@@ -293,6 +403,7 @@ def _road_scope_response(row: GisRoadWorkScope, current_hash: str | None, curren
 @router.get("/api/zones/{zone_id}/planning-inventory")
 async def gis_planning_inventory(
     zone_id: str,
+    refresh: bool = Query(default=False, description="Force recalculate inventory from DB (no Overpass call)"),
     if_none_match: Optional[str] = Header(default=None, alias="If-None-Match"),
     user: User = Depends(current_user),
     db: Session = Depends(get_db),
@@ -301,7 +412,8 @@ async def gis_planning_inventory(
     if inventory is None:
         return Response(status_code=204)
     etag = f'"inventory:{inventory["base_inventory_hash"]}"'
-    if if_none_match == etag:
+    # Skip ETag check if refresh is requested (buildings may have been enriched in background)
+    if not refresh and if_none_match == etag:
         return Response(status_code=304, headers={"ETag": etag})
     return JSONResponse(content=inventory, headers={"ETag": etag})
 

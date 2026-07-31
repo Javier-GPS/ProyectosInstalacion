@@ -81,7 +81,7 @@ class GisPlanningDraftPut(BaseModel):
     mode: Literal["update", "recreate"] = "update"
     confirm: bool = False
     schema_version: Literal[1] = 1
-    base_inventory_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    base_inventory_hash: str = Field(pattern=r"^(sha256:[0-9a-f]{64}|md5:[0-9a-f]{32})$")
     payload: GisPlanningPayload
 
     @model_validator(mode="after")
@@ -105,7 +105,7 @@ class GisRoadScopePut(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     schema_version: Literal[1] = 1
-    base_inventory_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    base_inventory_hash: str = Field(pattern=r"^(sha256:[0-9a-f]{64}|md5:[0-9a-f]{32})$")
     boundary: dict
     allowed_group_refs: list[ShortText] = Field(min_length=1, max_length=50)
     a: GisRoadScopeAnchor
@@ -120,7 +120,7 @@ class GisRoadScopePut(BaseModel):
 
 class GisRoutePreview(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    base_inventory_hash: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    base_inventory_hash: str = Field(pattern=r"^(sha256:[0-9a-f]{64}|md5:[0-9a-f]{32})$")
     a: GisRoadScopeAnchor
     b: GisRoadScopeAnchor
     allowed_group_refs: Optional[list[ShortText]] = None

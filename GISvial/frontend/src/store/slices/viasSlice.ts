@@ -38,6 +38,8 @@ export interface ViasSlice {
   setAccumulatedSelection: (zoneId: string, targetRefs: string[]) => void;
   /** Set or clear planning patch override for a specific target */
   setTargetPatch: (targetRef: string, patch: GisPlanningPatch) => void;
+  /** Set the same patch on multiple targets at once (e.g. entire street) */
+  setBatchTargetPatches: (targetRefs: string[], patch: GisPlanningPatch) => void;
 }
 
 export const createViasSlice: StateCreator<ViasSlice, [], [], ViasSlice> = (set, get) => ({
@@ -125,6 +127,14 @@ export const createViasSlice: StateCreator<ViasSlice, [], [], ViasSlice> = (set,
     const targets = { ...(state.planningPayload.target_overrides || {}) };
     if (Object.keys(patch).length) targets[targetRef] = patch;
     else delete targets[targetRef];
+    return { planningPayload: { ...state.planningPayload, target_overrides: targets } };
+  }),
+  setBatchTargetPatches: (targetRefs, patch) => set((state) => {
+    const targets = { ...(state.planningPayload.target_overrides || {}) };
+    for (const ref of targetRefs) {
+      if (Object.keys(patch).length) targets[ref] = { ...patch };
+      else delete targets[ref];
+    }
     return { planningPayload: { ...state.planningPayload, target_overrides: targets } };
   }),
 });

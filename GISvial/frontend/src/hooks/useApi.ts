@@ -38,11 +38,15 @@ export function useApi<T>(options: UseApiOptions = {}): UseApiResult<T> {
   }, []);
 
   const dedupKey = useCallback((fn: ApiFn<T>): string => {
-    // Use fn.toString() as a naive cache key for GET dedup
+    // Extract method + URL from the arrow function body for dedup
     const src = fn.toString();
-    const match = src.match(/"(GET|POST|PUT|DELETE)"/)?.[1] ?? 'GET';
-    const urlMatch = src.match(/"(https?:\/\/[^"]+)"/)?.[1] ?? src.slice(0, 80);
-    return `${match}::${urlMatch}`;
+    // Try to extract URL from patterns like: api<any>('/api/zones', ...) or api(`/api/zones/${id}`, ...)
+    const urlMatch = src.match(/['`](\/[^'`]+)['`]/);
+    const methodMatch = src.match(/method:\s*'(GET|POST|PUT|DELETE)'/i);
+    const method = methodMatch?.[1] ?? 'GET';
+    // Use a stable URL key — remove dynamic segments like ${id} in favor of a placeholder
+    const url = urlMatch?.[1]?.replace(/\$\{[^}]+\}/g, ':param') ?? src.slice(0, 80);
+    return `${method}::${url}`;
   }, []);
 
   const call = useCallback(async (fn: ApiFn<T>): Promise<T> => {

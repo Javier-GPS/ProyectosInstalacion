@@ -147,6 +147,27 @@ export interface GisPlanningInventoryTarget {
   length_m: number | null;
   geometry: [number, number][] | null;
   diagnostics: string[];
+  estWidth?: number | null;
+  widthSrc?: string | null;
+  lanes?: number | null;
+  sidewalk?: string | null;
+  sidewalkWidthLeft?: number | null;
+  sidewalkWidthRight?: number | null;
+  median?: boolean | null;
+  medianWidth?: number | null;
+  dual?: boolean | null;
+}
+
+export interface GisMergedStreet {
+  street: string;
+  road_type: string;
+  geometry: {
+    type: 'MultiLineString';
+    coordinates: [number, number][][];
+  };
+  target_count: number;
+  total_length_m: number;
+  target_refs: string[];
 }
 
 export interface GisPlanningInventory {
@@ -164,6 +185,7 @@ export interface GisPlanningInventory {
   };
   groups: GisPlanningInventoryGroup[];
   targets: GisPlanningInventoryTarget[];
+  streets?: GisMergedStreet[];  // merged street geometries for efficient rendering
 }
 
 export interface GisPlanningDraft {

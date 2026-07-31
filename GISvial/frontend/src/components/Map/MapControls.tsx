@@ -1,26 +1,23 @@
-import React from 'react';
+import React, { useState } from 'react';
+import { Cuboid } from 'lucide-react';
+import { useGisStore } from '../../store/useGisStore';
 
 interface MapControlsProps {
   mapId: string;
 }
 
 const MapControls: React.FC<MapControlsProps> = ({ mapId }) => {
-  // Access the map instance via the existing useMap hook
-  // We'll use a simpler inline approach since we can't pass mapRef easily
-  const handleZoomIn = () => {
-    const map = (window as any).__gisMap;
-    if (map) map.zoomIn({ duration: 300 });
-  };
+  const [is3d, setIs3d] = useState(false);
+  const mapInstance = useGisStore(s => s.mapInstance);
+  const toggleBaseMapFn = useGisStore(s => s.toggleBaseMap);
+  const toggle3dFn = useGisStore(s => s.toggle3dView);
 
-  const handleZoomOut = () => {
-    const map = (window as any).__gisMap;
-    if (map) map.zoomOut({ duration: 300 });
-  };
-
-  // Base map toggle: expose on window from MapView
-  const toggleBaseMap = () => {
-    const fn = (window as any).__toggleBaseMap;
-    if (fn) fn();
+  const handleZoomIn = () => mapInstance?.zoomIn({ duration: 300 });
+  const handleZoomOut = () => mapInstance?.zoomOut({ duration: 300 });
+  const toggleBaseMap = () => toggleBaseMapFn?.();
+  const toggle3d = () => {
+    const next = toggle3dFn?.();
+    if (typeof next === 'boolean') setIs3d(next);
   };
 
   return (
@@ -48,6 +45,15 @@ const MapControls: React.FC<MapControlsProps> = ({ mapId }) => {
         aria-label="Toggle base map"
       >
         🗺
+      </button>
+      <button
+        onClick={toggle3d}
+        className={`rounded-md border px-2 py-1 text-xs transition-colors shadow-sm ${is3d ? 'border-salvi-black bg-salvi-black text-white' : 'border-salvi-line bg-white/90 text-salvi-grey hover:bg-salvi-surface'} backdrop-blur-sm`}
+        title={is3d ? 'Volver al mapa plano' : 'Ver mapa en 3D'}
+        aria-label={is3d ? 'Volver al mapa plano' : 'Ver mapa en 3D'}
+        aria-pressed={is3d}
+      >
+        <span className="inline-flex items-center gap-1"><Cuboid className="h-3.5 w-3.5" aria-hidden="true" />3D</span>
       </button>
     </div>
   );

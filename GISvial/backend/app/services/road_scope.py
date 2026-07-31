@@ -14,7 +14,7 @@ EPS = 1e-10
 
 def geometry_hash(value: object) -> str:
     raw = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    return "sha256:" + hashlib.sha256(raw.encode()).hexdigest()
+    return "md5:" + hashlib.md5(raw.encode()).hexdigest()
 
 
 def _point(value: object) -> tuple[float, float]:

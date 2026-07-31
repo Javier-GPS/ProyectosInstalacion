@@ -8,12 +8,15 @@ import unicodedata
 from collections.abc import Mapping
 from typing import Any
 
+from .street_merge import merge_streets
+
 
 ADAPTER_VERSION = 1
 PROJECTION_FIELDS = (
     "id", "type", "name", "len", "geom", "startPt", "endPt",
     "estWidth", "width", "widthSrc", "lanes", "dual", "surface",
-    "sidewalk", "tunnel",
+    "sidewalk", "tunnel", "sidewalkWidthLeft", "sidewalkWidthRight",
+    "median", "medianWidth",
 )
 
 
@@ -31,23 +34,23 @@ def record_projection(record: object) -> bytes:
 
 
 def target_ref(source_index: int, projection: bytes) -> str:
-    return f"s:{source_index}:{hashlib.sha256(projection).hexdigest()}"
+    return f"s:{source_index}:{hashlib.md5(projection).hexdigest()}"
 
 
 def group_ref(road_type: str | None) -> str:
-    digest = hashlib.sha256(canonical_json({"road_type": road_type})).hexdigest()
+    digest = hashlib.md5(canonical_json({"road_type": road_type})).hexdigest()
     return f"g:{digest}"
 
 
 def base_inventory_hash(records: list[object]) -> str:
-    digest = hashlib.sha256()
+    digest = hashlib.md5()
     digest.update(b"[")
     for index, record in enumerate(records):
         if index:
             digest.update(b",")
         digest.update(record_projection(record))
     digest.update(b"]")
-    return f"sha256:{digest.hexdigest()}"
+    return f"md5:{digest.hexdigest()}"
 
 
 def length_m(value: object) -> float | None:
@@ -83,7 +86,7 @@ def _label(value: object) -> str | None:
 
 def normalize_inventory(zone_id: str, records: list[object]) -> dict[str, Any]:
     """Return one authoritative planning projection without mutating ``records``."""
-    inventory_digest = hashlib.sha256()
+    inventory_digest = hashlib.md5()
     inventory_digest.update(b"[")
     groups_by_ref: dict[str, dict[str, Any]] = {}
     group_streets: dict[str, set[str]] = {}
@@ -134,6 +137,17 @@ def normalize_inventory(zone_id: str, records: list[object]) -> dict[str, Any]:
         else:
             group["length_m"] += segment_length
 
+        est_width = record.get("estWidth") if isinstance(record, Mapping) else None
+        width_src = record.get("widthSrc") if isinstance(record, Mapping) else None
+        lanes_val = record.get("lanes") if isinstance(record, Mapping) else None
+        sw = record.get("sidewalk") if isinstance(record, Mapping) else None
+        sw_left = record.get("sidewalkWidthLeft") if isinstance(record, Mapping) else None
+        sw_right = record.get("sidewalkWidthRight") if isinstance(record, Mapping) else None
+        median = record.get("median") if isinstance(record, Mapping) else None
+        median_w = record.get("medianWidth") if isinstance(record, Mapping) else None
+        dual = record.get("dual") if isinstance(record, Mapping) else None
+        surface = record.get("surface") if isinstance(record, Mapping) else None
+
         targets.append({
             "target_ref": target_ref(source_index, projection),
             "group_ref": gref,
@@ -142,13 +156,26 @@ def normalize_inventory(zone_id: str, records: list[object]) -> dict[str, Any]:
             "length_m": segment_length,
             "geometry": geometry,
             "diagnostics": diagnostics,
+            "estWidth": est_width,
+            "widthSrc": width_src,
+            "lanes": lanes_val,
+            "sidewalk": sw,
+            "sidewalkWidthLeft": sw_left,
+            "sidewalkWidthRight": sw_right,
+            "median": median,
+            "medianWidth": median_w,
+            "dual": dual,
+            "surface": surface,
         })
 
     groups = list(groups_by_ref.values())
     inventory_digest.update(b"]")
-    inventory_hash = f"sha256:{inventory_digest.hexdigest()}"
+    inventory_hash = f"md5:{inventory_digest.hexdigest()}"
     for group in groups:
         group["street_count"] = len(group_streets[group["group_ref"]])
+
+    # Build merged street geometries for efficient frontend rendering
+    streets = merge_streets(targets, groups, simplify_tolerance=0.0005)
 
     return {
         "schema_version": 1,
@@ -165,6 +192,7 @@ def normalize_inventory(zone_id: str, records: list[object]) -> dict[str, Any]:
         },
         "groups": groups,
         "targets": targets,
+        "streets": streets,
     }
 
 

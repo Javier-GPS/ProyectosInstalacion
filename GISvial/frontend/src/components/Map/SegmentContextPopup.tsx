@@ -23,12 +23,18 @@ interface SegmentContextPopupProps {
   roadType: string | null;
   /** Close handler */
   onClose: () => void;
+  /** Select entire street callback */
+  onSelectStreet?: (streetName: string) => void;
 }
 
-const SegmentContextPopup: React.FC<SegmentContextPopupProps> = ({ x, y, target, roadType, onClose }) => {
+const SegmentContextPopup: React.FC<SegmentContextPopupProps> = ({ x, y, target, roadType, onClose, onSelectStreet }) => {
   const ref = useRef<HTMLDivElement>(null);
   const planningPayload = useGisStore(s => s.planningPayload);
+  const inventory = useGisStore(s => s.activePlanningInventory);
   const setTargetPatch = useGisStore(s => s.setTargetPatch);
+  const setBatchTargetPatches = useGisStore(s => s.setBatchTargetPatches);
+  const toggleTargetSelection = useGisStore(s => s.toggleTargetSelection);
+  const selectedZoneId = useGisStore(s => s.selectedZoneId);
 
   // Inherited patch from group defaults
   const inherited = roadType ? planningPayload.group_defaults[target.group_ref] || {} : {};
@@ -37,6 +43,18 @@ const SegmentContextPopup: React.FC<SegmentContextPopupProps> = ({ x, y, target,
 
   const cfg = roadType ? ROAD_CFG[roadType] : undefined;
   const hasOverride = Object.keys(patch).length > 0;
+
+  // Actual segment values from OSM (estWidth, sidewalk)
+  const segWidth = target.estWidth ?? cfg?.width;
+  const segSidewalk = target.sidewalk ?? null;
+
+  // Count how many targets share this street name
+  const streetTargets = inventory?.targets.filter(t => t.name === target.name && t.name != null) || [];
+  const hasStreetSelection = target.name != null && streetTargets.length > 1;
+
+  // "Apply to entire street" toggle for spacing/distribution
+  const [applyToStreet, setApplyToStreet] = useState(false);
+  const streetRefs = hasStreetSelection ? streetTargets.map(t => t.target_ref) : [];
 
   // Close on ESC or click outside
   useEffect(() => {
@@ -49,7 +67,6 @@ const SegmentContextPopup: React.FC<SegmentContextPopupProps> = ({ x, y, target,
     const onClick = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) onClose();
     };
-    // Delay to avoid the same right-click from closing
     setTimeout(() => document.addEventListener('mousedown', onClick), 0);
     return () => document.removeEventListener('mousedown', onClick);
   }, [onClose]);
@@ -79,13 +96,29 @@ const SegmentContextPopup: React.FC<SegmentContextPopupProps> = ({ x, y, target,
   };
 
   const save = () => {
-    setTargetPatch(target.target_ref, patch);
+    const refs = applyToStreet && streetRefs.length ? streetRefs : [target.target_ref];
+    setBatchTargetPatches(refs, patch);
+    onClose();
+  };
+
+  const selectStreet = () => {
+    if (target.name) onSelectStreet?.(target.name);
     onClose();
   };
 
   // Clamp popup to viewport
   const popupX = Math.min(x, window.innerWidth - 340);
   const popupY = Math.min(y, window.innerHeight - 420);
+
+  // Sidewalk display: luxParams override > parsed OSM sidewalk:width > OSM sidewalk tag > default
+  const swL = target.sidewalkWidthLeft ?? ((target.sidewalk === 'both' || target.sidewalk === 'left') ? 2.0 : null);
+  const swR = target.sidewalkWidthRight ?? ((target.sidewalk === 'both' || target.sidewalk === 'right') ? 2.0 : null);
+  const displaySidewalkL = lux.sidewalkL ?? inheritedLux.sidewalkL ?? swL;
+  const displaySidewalkR = lux.sidewalkR ?? inheritedLux.sidewalkR ?? swR;
+  const hasSidewalk = displaySidewalkL != null || displaySidewalkR != null || segSidewalk != null;
+  const widthIsEst = target.widthSrc && target.widthSrc !== 'osm_width';
+  const srcIcon = target.widthSrc === 'osm_width' ? '📏' : target.widthSrc === 'lanes' ? '🔢' : target.widthSrc === 'catastro' ? '🏛' : target.widthSrc === 'default' ? '⚠' : '❓';
+  const srcLabel = target.widthSrc === 'osm_width' ? 'OSM directo' : target.widthSrc === 'lanes' ? 'carriles×3.0' : target.widthSrc === 'catastro' ? 'Catastro fachadas' : target.widthSrc === 'default' ? 'estimado por tipo' : 'desconocido';
 
   return (
     <div
@@ -104,18 +137,46 @@ const SegmentContextPopup: React.FC<SegmentContextPopupProps> = ({ x, y, target,
         <div className="flex flex-wrap gap-x-3 gap-y-1">
           <span>Tramo {target.source_index + 1}</span>
           <span>{target.length_m == null ? '—' : `${Math.round(target.length_m)} m`}</span>
-          {cfg && <span>Calzada {cfg.width} m</span>}
           {roadType && <span>{cfg ? cfg.labelKey.replace('road.', '') : roadType}</span>}
         </div>
-        {(!lux.sidewalkL && !lux.sidewalkR && !inheritedLux.sidewalkL && !inheritedLux.sidewalkR) ? null : (
-          <div className="mt-1 flex gap-3">
-            {lux.sidewalkL != null && <span>Acera I {lux.sidewalkL} m</span>}
-            {lux.sidewalkR != null && <span>Acera D {lux.sidewalkR} m</span>}
-            {!lux.sidewalkL && inheritedLux.sidewalkL != null && <span className="opacity-60">Acera I {inheritedLux.sidewalkL} m (tipo)</span>}
-            {!lux.sidewalkR && inheritedLux.sidewalkR != null && <span className="opacity-60">Acera D {inheritedLux.sidewalkR} m (tipo)</span>}
-          </div>
-        )}
+        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+          {segWidth != null && (
+            <span title={`Fuente: ${srcLabel}`}>
+              {srcIcon} Calzada {segWidth} m
+              <span className="opacity-50"> · {srcLabel}</span>
+            </span>
+          )}
+        </div>
+        {/* Sidewalk info */}
+        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
+          {displaySidewalkL != null && (
+            <span title={target.sidewalkWidthLeft != null ? 'OSM sidewalk:width' : 'Estimado 2.0m por defecto'}>
+              🚶 Acera I {displaySidewalkL} m{target.sidewalkWidthLeft != null ? ' (OSM)' : ' (est.)'}
+            </span>
+          )}
+          {displaySidewalkR != null && (
+            <span title={target.sidewalkWidthRight != null ? 'OSM sidewalk:width' : 'Estimado 2.0m por defecto'}>
+              🚶 Acera D {displaySidewalkR} m{target.sidewalkWidthRight != null ? ' (OSM)' : ' (est.)'}
+            </span>
+          )}
+          {!displaySidewalkL && !displaySidewalkR && segSidewalk && (
+            <span>🚶 sidewalk: {segSidewalk} <span className="opacity-50">(sin dimensión)</span></span>
+          )}
+          {!displaySidewalkL && !displaySidewalkR && !segSidewalk && (
+            <span className="opacity-50">🚶 Sin datos de acera</span>
+          )}
+        </div>
+        {target.dual && <div className="mt-0.5 text-[9px] text-state-info">🛤 Doble calzada{target.median ? ' con mediana' : ''}</div>}
+        {target.median && target.medianWidth != null && <div className="text-[9px] text-state-info">📐 Mediana {target.medianWidth} m</div>}
+        {widthIsEst && <div className="mt-0.5 text-[9px] text-state-warning">⚠ Calzada estimada — verificar in situ</div>}
       </div>
+
+      {/* Street selection */}
+      {hasStreetSelection && (
+        <button onClick={selectStreet} className="w-full border-b border-salvi-line/50 px-3 py-1.5 text-left text-[10px] font-medium text-state-info hover:bg-salvi-surface">
+          + Seleccionar toda la calle ({streetTargets.length} tramos)
+        </button>
+      )}
 
       {/* Editable fields */}
       <div className="space-y-2 px-3 py-2">
@@ -152,6 +213,13 @@ const SegmentContextPopup: React.FC<SegmentContextPopupProps> = ({ x, y, target,
             {DISTRIBUTIONS.map(d => <option key={d.value} value={d.value}>{d.label}</option>)}
           </select>
         </label>
+
+        {hasStreetSelection && (
+          <label className="flex items-center gap-1.5 text-[9px] text-salvi-muted">
+            <input type="checkbox" checked={applyToStreet} onChange={e => setApplyToStreet(e.target.checked)} />
+            Aplicar interdistancia y distribución a toda la calle ({streetTargets.length} tramos)
+          </label>
+        )}
 
         <details>
           <summary className="cursor-pointer text-[10px] font-medium text-salvi-grey">Parámetros de vía</summary>

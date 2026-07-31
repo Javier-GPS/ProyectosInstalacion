@@ -55,11 +55,27 @@ const etagged = async <T>(url: string, init?: RequestInit, signal?: AbortSignal)
   return { data: body as T, etag: response.headers.get('ETag') || '' };
 };
 
-export const getPlanningInventory = (zoneId: string, signal?: AbortSignal) =>
-  etagged<GisPlanningInventory | null>(`/api/zones/${zoneId}/planning-inventory`, undefined, signal).then(result => result.data);
+export const getPlanningInventory = (
+  zoneId: string,
+  ifNoneMatch?: string,
+  refresh?: boolean,
+  signal?: AbortSignal,
+): Promise<Etagged<GisPlanningInventory | null>> => {
+  const headers: Record<string, string> = {};
+  if (ifNoneMatch) headers['If-None-Match'] = ifNoneMatch;
+  const params = refresh ? '?refresh=true' : '';
+  return etagged<GisPlanningInventory | null>(
+    `/api/zones/${zoneId}/planning-inventory${params}`, { headers }, signal,
+  );
+};
 
 export const loadPlanningOsm = (zoneId: string, signal?: AbortSignal) =>
   etagged<GisPlanningInventory>(`/api/zones/${zoneId}/osm/load`, { method: 'POST' }, signal).then(result => result.data);
+
+export const getBuildingWidths = (zoneId: string, signal?: AbortSignal) =>
+  api<{ zone_id: string; status: string; buildings: any[] | null; enriched_ways: any[] | null; computed_at: string | null }>(
+    `/api/zones/${zoneId}/building-widths`, undefined, undefined, signal,
+  );
 
 export const getPlanningDraft = (zoneId: string, signal?: AbortSignal) =>
   etagged<GisPlanningDraft | null>(`/api/zones/${zoneId}/planning-draft`, undefined, signal);

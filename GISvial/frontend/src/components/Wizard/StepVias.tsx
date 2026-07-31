@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../i18n';
-import { ApiStatusError, deleteRoadScope, getPlanningDraft, getPlanningInventory, getRoadScope, loadPlanningOsm, putPlanningDraft, putRoadScope } from '../../lib/api';
-import { useGisStore, ROAD_CFG } from '../../store/useGisStore';
+import { ApiStatusError, deleteRoadScope, getBuildingWidths, getPlanningDraft, getPlanningInventory, getRoadScope, loadPlanningOsm, putPlanningDraft, putRoadScope } from '../../lib/api';
+import { useGisStore, ROAD_CFG, type RoadTypeCfg } from '../../store/useGisStore';
 import type {
-  GisDistribution, GisLightingClass, GisPlanningInventoryTarget,
-  GisPlanningLuxParams, GisPlanningPatch, GisPlanningPayload, GisRoadWorkScope,
+  Etagged, GisDistribution, GisLightingClass, GisPlanningDraft,
+  GisPlanningInventoryTarget, GisPlanningLuxParams, GisPlanningPatch,
+  GisPlanningPayload, GisRoadWorkScope,
 } from '../../types';
 import type { RoadSelectionDraft } from '../../store/types';
 import { lineInsideBoundary, roadSelectionIsCurrent } from '../../lib/roadSelection';
@@ -194,7 +195,10 @@ const StepVias: React.FC = () => {
   const [staleReady, setStaleReady] = useState(false);
   const [loadingOsm, setLoadingOsm] = useState(false);
   const [scopeBusy, setScopeBusy] = useState(false);
+  const [selectionExpandedStreet, setSelectionExpandedStreet] = useState<string | null>(null);
+  const [buildingStatus, setBuildingStatus] = useState<string | null>(null);
   const osmLoadRef = useRef<AbortController | null>(null);
+  const inventoryEtagRef = useRef<string | null>(null);
 
   const zone = zones.find(z => z.id === selectedZoneId);
   const roadSelection = selectedZoneId ? roadSelectionByZone[selectedZoneId] : undefined;
@@ -220,12 +224,14 @@ const StepVias: React.FC = () => {
     if (!selectedZoneId) {
       setInventory(null);
       setStoreBasePayload(EMPTY_PAYLOAD());
+      setBuildingStatus(null);
       return;
     }
     const controller = new AbortController();
     let live = true;
     setResource({ kind: 'loading' });
     setStaleReady(false);
+    setBuildingStatus(null);
     setMessage('');
     setSelectedTarget(null);
     setInventory(null);
@@ -233,36 +239,93 @@ const StepVias: React.FC = () => {
 
     (async () => {
       try {
-        let nextInventory;
-        try {
-          nextInventory = await getPlanningInventory(selectedZoneId, controller.signal);
-          if (!nextInventory) {
-            if (live) setResource({ kind: 'missing' });
-            return;
-          }
-        } catch (error) {
-          if (error instanceof ApiStatusError && error.status === 404) {
-            if (live) setResource({ kind: 'missing' });
-            return;
-          }
-          throw error;
+        // ── Step 1: Load inventory (with ETag for 304 caching) ─────
+        const inventoryResult = await getPlanningInventory(selectedZoneId, inventoryEtagRef.current || undefined, undefined, controller.signal);
+        const nextInventory = inventoryResult.data;
+        const newEtag = inventoryResult.etag;
+        if (newEtag) inventoryEtagRef.current = newEtag;
+
+        if (!nextInventory) {
+          if (live) setResource({ kind: 'missing' });
+          return;
         }
-        let draftResult = null;
+
+        // ── Step 2: Draft + RoadScope en PARALELO ──────────────────
+        let draftResult: Etagged<GisPlanningDraft | null> | null = null;
+        let scopeResult: Etagged<GisRoadWorkScope | null> | null = null;
         try {
-          const result = await getPlanningDraft(selectedZoneId, controller.signal);
-          if (result.data) draftResult = { ...result, data: result.data };
+          const [dr, sr] = await Promise.all([
+            getPlanningDraft(selectedZoneId, controller.signal)
+              .catch(e => { if (e instanceof ApiStatusError && e.status === 404) return { data: null, etag: '' }; throw e; }),
+            getRoadScope(selectedZoneId, controller.signal)
+              .catch(e => { if (e instanceof ApiStatusError && e.status === 204) return { data: null, etag: '' }; throw e; }),
+          ]);
+          draftResult = dr as Etagged<GisPlanningDraft | null>;
+          scopeResult = sr as Etagged<GisRoadWorkScope | null>;
         } catch (error) {
           if (!(error instanceof ApiStatusError) || error.status !== 404) throw error;
         }
-        const scopeResult = await getRoadScope(selectedZoneId, controller.signal);
+
+        // ── Step 3: Check building widths status ────────────────────
+        try {
+          const bw = await getBuildingWidths(selectedZoneId, controller.signal);
+          if (live) setBuildingStatus(bw.status);
+          // If computing, poll every 5s until available, then refresh inventory
+          if (bw.status === 'computing' && live) {
+            const poll = async () => {
+              while (live) {
+                await new Promise(r => setTimeout(r, 5000));
+                if (!live) return;
+                try {
+                  const res = await getBuildingWidths(selectedZoneId, controller.signal);
+                  if (!live) return;
+                  setBuildingStatus(res.status);
+                  if (res.status === 'available') {
+                    // Force-refresh inventory to get Catastro-enriched widths
+                    const refreshed = await getPlanningInventory(selectedZoneId, undefined, true, controller.signal);
+                    if (refreshed.data && live) {
+                      setInventory(refreshed.data);
+                      setMessage('🏛 Anchos de calle actualizados con datos del Catastro');
+                    }
+                    return;
+                  }
+                  if (res.status === 'unavailable' || res.status === 'error') return;
+                } catch {
+                  return;
+                }
+              }
+            };
+            poll();
+          }
+        } catch {
+          // Building widths check failed, non-fatal
+        }
+
         if (!live) return;
         setInventory(nextInventory);
+
+        // ── Log data source summary ─────────────────────────────────
+        const srcCounts: Record<string, number> = {};
+        for (const t of nextInventory.targets) {
+          const src = t.widthSrc || 'unknown';
+          srcCounts[src] = (srcCounts[src] || 0) + 1;
+        }
+        const srcLabels: Record<string, string> = { osm_width: '📏 OSM', lanes: '🔢 carriles', catastro: '🏛 Catastro', default: '⚠ default', unknown: '❓' };
+        console.log('┌── SALVI GIS: Inventario cargado ────────────────');
+        console.log(`│ Zona:       ${nextInventory.zone_id}`);
+        console.log(`│ Total vías: ${nextInventory.targets.length}`);
+        for (const [src, n] of Object.entries(srcCounts)) {
+          const pct = (n / nextInventory.targets.length * 100).toFixed(0);
+          console.log(`│   ${srcLabels[src] || src}: ${n} (${pct}%)`);
+        }
+        console.log('└──────────────────────────────────────────────────');
+
         const localScope = useGisStore.getState().roadSelectionByZone[selectedZoneId];
         const zoneBoundary = useGisStore.getState().zones.find(item => item.id === selectedZoneId)?.geometry.boundary;
-        if (scopeResult.data && (!localScope || ['complete', 'stale', 'invalid'].includes(localScope.status))) {
+        if (scopeResult?.data && (!localScope || ['complete', 'stale', 'invalid'].includes(localScope.status))) {
           setRoadSelection(selectedZoneId, scopeToDraft(scopeResult.data, scopeResult.etag, JSON.stringify(zoneBoundary)));
         }
-        if (!draftResult) {
+        if (!draftResult || !draftResult.data) {
           const empty = EMPTY_PAYLOAD();
           setPayload(empty); setBasePayload(empty); setStoreBasePayload(empty);
           setResource({ kind: 'absent' });
@@ -519,6 +582,8 @@ const StepVias: React.FC = () => {
           <span>{inventory.counts.segment_count} tramos</span>
           <span>{inventory.counts.unnamed_segment_count} sin nombre</span>
           <span>{inventory.counts.geometry_unavailable} sin geometría</span>
+          {buildingStatus === 'computing' && <span className="text-state-info">🏛 Computando anchos catastro…</span>}
+          {buildingStatus === 'unavailable' && <span className="text-state-warning">🏛 Anchos no disponibles</span>}
         </div>
       </div>
 
@@ -577,8 +642,8 @@ const StepVias: React.FC = () => {
         </details>
 
         {/* ── Accumulated selection summary ── */}
-        <section className="rounded border border-salvi-line bg-white p-2 text-xs">
-          <div className="flex items-center justify-between gap-2">
+        <section className="rounded border border-salvi-line bg-white text-xs">
+          <div className="flex items-center justify-between gap-2 p-2">
             <span className="font-semibold text-salvi-black">
               Selección de estudio {selectedCount > 0 && <span className="ml-1 rounded bg-state-info px-1.5 py-0.5 text-[10px] text-white">{selectedCount}/{totalTargetCount}</span>}
             </span>
@@ -595,7 +660,72 @@ const StepVias: React.FC = () => {
               )}
             </div>
           </div>
-          {selectedCount > 0 && <div className="mt-1 text-[10px] text-salvi-muted">Segmentos seleccionados para el estudio lumínico. Se pueden elegir calles enteras o tramos sueltos desde la lista o el mapa.</div>}
+          {selectedCount > 0 && (() => {
+            const byStreet: Record<string, { targets: typeof inventory.targets; selected: typeof inventory.targets; cfg: RoadTypeCfg | undefined }> = {};
+            for (const t of inventory?.targets || []) {
+              const key = t.name || '(sin nombre)';
+              if (!byStreet[key]) {
+                const grp = inventory!.groups.find(g => g.group_ref === t.group_ref);
+                const rcfg = grp?.road_type ? ROAD_CFG[grp.road_type] : undefined;
+                byStreet[key] = { targets: [], selected: [], cfg: rcfg };
+              }
+              byStreet[key].targets.push(t);
+              if (zoneSelection[t.target_ref]) byStreet[key].selected.push(t);
+            }
+            return (
+              <div className="border-t border-salvi-line/50 max-h-48 overflow-y-auto gis-scroll">
+                {Object.entries(byStreet).filter(([, v]) => v.selected.length).map(([street, { targets, selected, cfg: scfg }]) => {
+                  const all = selected.length === targets.length;
+                  const open = selectionExpandedStreet === street;
+                  return (
+                    <div key={street}>
+                      <div className="flex items-center gap-1.5 border-b border-salvi-line/30 px-2 py-1.5 last:border-0">
+                        <button onClick={() => setSelectionExpandedStreet(open ? null : street)} className="shrink-0 text-[8px] text-salvi-muted transition-transform hover:text-salvi-black">
+                          ▶
+                        </button>
+                        <input type="checkbox" checked={all} ref={el => { if (el) el.indeterminate = !all && selected.length > 0; }}
+                          onChange={() => { if (selectedZoneId) { const refs = targets.map(t => t.target_ref); if (all) refs.forEach(r => toggleTargetSelection(selectedZoneId, r)); else refs.forEach(r => { if (!zoneSelection[r]) toggleTargetSelection(selectedZoneId, r); }); } }}
+                          className="shrink-0 cursor-pointer"
+                        />
+                        <span className="flex-1 truncate text-[10px] font-semibold text-salvi-black">{street}</span>
+                        <span className="text-[9px] text-salvi-muted">{selected.length}/{targets.length}</span>
+                      </div>
+                      {open && (() => {
+                        const groups: { w: number | null; segs: typeof selected }[] = [];
+                        for (const t of selected) {
+                          const w = t.estWidth ?? scfg?.width ?? null;
+                          const last = groups[groups.length - 1];
+                          if (last && last.w === w) last.segs.push(t);
+                          else groups.push({ w, segs: [t] });
+                        }
+                        return (
+                          <div className="border-b border-salvi-line/20 bg-salvi-surface/30">
+                            {groups.map((g, gi) => {
+                              const t = g.segs[0];
+                              const sw = t.sidewalk;
+                              const sl = t.sidewalkWidthLeft ?? (sw === 'both' || sw === 'left' ? 2.0 : null);
+                              const sr = t.sidewalkWidthRight ?? (sw === 'both' || sw === 'right' ? 2.0 : null);
+                              const est = t.widthSrc !== 'osm_width' ? '⚠' : '';
+                              const totalM = g.segs.reduce((s, x) => s + (x.length_m || 0), 0);
+                              return (
+                                <div key={gi} className="flex items-center gap-2 px-5 py-1 text-[9px] text-salvi-muted">
+                                  <span className="w-16 shrink-0">{g.segs.length} tramos</span>
+                                  <span className="w-14 shrink-0">{Math.round(totalM)}m</span>
+                                  {g.w != null && <span className="w-14 shrink-0">{est}C {g.w}m</span>}
+                                  {sl != null && <span className="w-14 shrink-0">AI {sl}m</span>}
+                                  {sr != null && <span className="w-14 shrink-0">AD {sr}m</span>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
         </section>
 
         {selectedTargetRef && (
@@ -679,10 +809,10 @@ const StepVias: React.FC = () => {
                           {streetExpanded && (
                             <div className="border-t border-salvi-line/50">
                               {targets.map(target => {
-                                // Lux params from payload (if overridden) or from group defaults
                                 const override = payload.target_overrides[target.target_ref]?.luxParams;
                                 const groupDefault = payload.group_defaults[target.group_ref]?.luxParams;
                                 const lux = override || groupDefault;
+                                const tgtWidth = target.estWidth ?? roadWidth;
                                 return (
                                   <div key={target.target_ref} className="border-b border-salvi-line/30 last:border-0">
                                     <div className="flex items-center gap-1 px-3 py-1 text-[10px] hover:bg-salvi-surface/50">
@@ -699,9 +829,12 @@ const StepVias: React.FC = () => {
                                       >
                                         <span className="font-medium text-salvi-grey">Tramo {target.source_index + 1}</span>
                                         <span className="text-salvi-muted">{target.length_m == null ? '—' : `${Math.round(target.length_m)} m`}</span>
-                                        {roadWidth != null && <span className="text-salvi-muted">calzada {roadWidth} m</span>}
-                                        {lux?.sidewalkL != null && <span className="text-salvi-muted">acera I {lux.sidewalkL} m</span>}
-                                        {lux?.sidewalkR != null && <span className="text-salvi-muted">acera D {lux.sidewalkR} m</span>}
+                                        {tgtWidth != null && <span className="text-salvi-muted">calzada {tgtWidth} m{target.widthSrc ? ` (${target.widthSrc})` : ''}</span>}
+                                        {target.sidewalk != null && (target.sidewalkWidthLeft != null || target.sidewalkWidthRight != null
+                                          ? <span className="text-salvi-muted">acera I {target.sidewalkWidthLeft ?? '—'}m D {target.sidewalkWidthRight ?? '—'}m</span>
+                                          : <span className="text-salvi-muted">acera: {target.sidewalk}</span>)}
+                                        {lux?.sidewalkL != null && <span className="text-salvi-muted">acera I* {lux.sidewalkL} m</span>}
+                                        {lux?.sidewalkR != null && <span className="text-salvi-muted">acera D* {lux.sidewalkR} m</span>}
                                       </button>
                                     </div>
                                   </div>

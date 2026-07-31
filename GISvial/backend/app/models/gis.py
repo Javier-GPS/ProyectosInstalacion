@@ -69,6 +69,7 @@ class GisZoneOsmData(Base):
     zone_id: Mapped[str] = mapped_column(String(50), ForeignKey("gis_zones.id", ondelete="CASCADE"), primary_key=True)
     km_by_type: Mapped[dict] = mapped_column(JSONB, default=dict)
     ways: Mapped[list] = mapped_column(JSONB, default=list)
+    buildings: Mapped[list | None] = mapped_column(JSONB, nullable=True, default=None)
     source: Mapped[str] = mapped_column(String(50), default="estimated")
     loaded_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     zone: Mapped[GisZone] = relationship("GisZone", back_populates="osm_data")
@@ -184,6 +185,19 @@ class GisRoadWorkScope(Base):
     updated_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
 
+def _ensure_gis_columns() -> None:
+    """Add columns that may be missing after a CREATE TABLE IF NOT EXISTS."""
+    import sqlalchemy as sa
+    from sqlalchemy import inspect
+    inspector = inspect(engine)
+    cols = {c["name"] for c in inspector.get_columns("gis_zone_osm_data")}
+    if "buildings" not in cols:
+        with engine.begin() as conn:
+            conn.execute(sa.text(
+                "ALTER TABLE gis_zone_osm_data ADD COLUMN buildings JSONB DEFAULT NULL"
+            ))
+
+
 # ── Helper ─────────────────────────────────────────────────────────────────
 def ensure_gis_tables() -> None:
     GisZone.__table__.create(bind=engine, checkfirst=True)
@@ -196,3 +210,4 @@ def ensure_gis_tables() -> None:
     GisProjectUiConfig.__table__.create(bind=engine, checkfirst=True)
     GisPlanningDraft.__table__.create(bind=engine, checkfirst=True)
     GisRoadWorkScope.__table__.create(bind=engine, checkfirst=True)
+    _ensure_gis_columns()

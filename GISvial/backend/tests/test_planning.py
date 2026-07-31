@@ -37,7 +37,7 @@ class PlanningInventoryTests(unittest.TestCase):
         self.assertEqual(result["counts"]["geometry_unavailable"], 2)
         self.assertEqual(result["targets"][0]["geometry"], [[-3.0, 40.0], [-3.1, 40.1]])
         self.assertIsNone(result["targets"][1]["geometry"])
-        self.assertRegex(result["targets"][0]["target_ref"], r"^s:0:[0-9a-f]{64}$")
+        self.assertRegex(result["targets"][0]["target_ref"], r"^s:0:[0-9a-f]{32}$")
         self.assertEqual(result["base_inventory_hash"], base_inventory_hash(self.records))
 
     def test_counts_streets_segments_and_metres(self):
@@ -182,7 +182,7 @@ class OverpassNormalizationTests(unittest.TestCase):
         })
         self.assertEqual(way["type"], "residential")
         self.assertEqual(way["name"], "Calle")
-        self.assertEqual(way["estWidth"], 7.0)
+        self.assertEqual(way["estWidth"], 6.0)  # 2 lanes × 3.0m (urban standard, no cycleway)
         self.assertGreater(way["len"], 0)
 
     def test_rejects_invalid_or_excessive_bbox(self):

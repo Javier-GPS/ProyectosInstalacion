@@ -64,6 +64,7 @@ export const nearestInventoryHit = (
   click: { x: number; y: number },
   tolerancePx = 12,
 ): RoadSelectionAnchor | null => {
+  console.log('[nearestInventoryHit] targets:', targets.length, 'click:', click, 'tolerance:', tolerancePx);
   let best: (RoadSelectionAnchor & { distance: number }) | null = null;
   for (const target of targets) {
     if (!target.geometry) continue;
@@ -71,6 +72,7 @@ export const nearestInventoryHit = (
     if (!hit) continue;
     const projected = map.project(hit.coordinate);
     const distance = Math.hypot(projected.x - click.x, projected.y - click.y);
+    console.log('[nearestInventoryHit] target:', target.target_ref, 'distance:', distance, 'hit:', hit);
     if (!best || distance < best.distance) best = { ...hit, target_ref: target.target_ref, distance };
   }
   if (!best) return null;

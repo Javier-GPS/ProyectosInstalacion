@@ -107,8 +107,12 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
           if (hit) toggleLumSelection(hit.properties.lumId);
           const store = useGisStore.getState();
           const inv = store.activePlanningInventory;
+          console.log('[MapView click] inv:', inv?.zone_id, 'selectedZone:', store.selectedZoneId, 'targets with geometry:', inv?.targets.filter(t => t.geometry).length);
           if (inv && inv.zone_id === store.selectedZoneId) {
-            const anchor = nearestInventoryHit(map, inv.targets.filter(t => t.geometry), e.point, 30);
+            const targetsWithGeometry = inv.targets.filter(t => t.geometry);
+            console.log('[MapView click] calling nearestInventoryHit with', targetsWithGeometry.length, 'targets, point:', e.point);
+            const anchor = nearestInventoryHit(map, targetsWithGeometry, e.point, 30);
+            console.log('[MapView click] anchor:', anchor);
             if (anchor) {
               store.setSelectedSegment(anchor.target_ref, inv.targets.find(t => t.target_ref === anchor.target_ref)?.name || null);
               store.toggleTargetSelection(inv.zone_id, anchor.target_ref);
@@ -475,6 +479,18 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
           target={contextPopup.target}
           roadType={contextPopup.roadType}
           onClose={() => setContextPopup(null)}
+          onSelectStreet={(streetName) => {
+            const store = useGisStore.getState();
+            const inv = store.activePlanningInventory;
+            if (!inv || !store.selectedZoneId) return;
+            const refs = inv.targets.filter(t => t.name === streetName).map(t => t.target_ref);
+            const zoneSel = store.accumulatedSelection[store.selectedZoneId] || {};
+            let anyChanged = false;
+            for (const r of refs) {
+              if (!zoneSel[r]) { store.toggleTargetSelection(store.selectedZoneId, r); anyChanged = true; }
+            }
+            if (anyChanged) store.setSelectedSegment(null, null);
+          }}
         />
       )}
     </>

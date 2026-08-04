@@ -1,0 +1,68 @@
+/* Salvi Studio Design System v1.0 — tokens oficiales (Anexo técnico 15.1) */
+:root {
+  --salvi-black: #1e1e1e;
+  --salvi-grey: #6a6a6a;
+  --salvi-cream: #fcf9f5;
+  --salvi-surface: #f7f4ef;
+  --salvi-surface-white: #ffffff;
+  --salvi-line: #e8e2d8;
+  --salvi-muted: #a09a91;
+
+  --state-success: #1f7a4d;
+  --state-warning: #b7791f;
+  --state-danger: #b42318;
+  --state-info: #4a5568;
+
+  --font-brand: "Exposure", Georgia, serif;
+  --font-ui: "Helvetica Neue", Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 12px;
+  --radius-xl: 18px;
+
+  --shadow-card: 0 1px 2px rgba(30, 30, 30, 0.06), 0 8px 24px rgba(30, 30, 30, 0.04);
+  --shadow-panel: 0 8px 32px rgba(30, 30, 30, 0.08);
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-ui);
+  background: var(--salvi-cream);
+  color: var(--salvi-black);
+  font-size: 14px;
+}
+
+button {
+  font-family: inherit;
+}
+
+a {
+  color: var(--salvi-black);
+}
+
+input,
+select,
+textarea {
+  font-family: inherit;
+  font-size: 14px;
+}

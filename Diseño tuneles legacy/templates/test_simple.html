@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Simple - SalviLux</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 600px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 { color: #333; }
+        input, button {
+            padding: 10px;
+            margin: 10px 0;
+            width: 100%;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        button {
+            background: #333;
+            color: white;
+            cursor: pointer;
+            border: none;
+        }
+        button:hover { background: #555; }
+        button:disabled { background: #999; cursor: not-allowed; }
+        .message {
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+            display: none;
+        }
+        .success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+            display: block;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+            display: block;
+        }
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top: 2px solid white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🧪 Test Simple - Generador Excel</h1>
+        <p>Prueba mínima para generar un Excel.</p>
+
+        <div>
+            <label>Nombre del Proyecto:</label>
+            <input type="text" id="nombre" placeholder="Ej: TEST" value="TEST">
+        </div>
+
+        <div>
+            <label>Cliente Final:</label>
+            <input type="text" id="cliente" placeholder="Ej: TEST" value="TEST">
+        </div>
+
+        <button id="btn-generar" onclick="generarExcel()">
+            📄 Generar Excel
+        </button>
+
+        <div id="mensaje" class="message"></div>
+
+        <div style="margin-top: 30px; padding-top: 20px; border-top: 1px solid #eee;">
+            <h3>Información de Debug</h3>
+            <p><strong>Endpoint:</strong> POST /api/submit-form</p>
+            <p><strong>Campos requeridos:</strong> nombre_proyecto, cliente_final</p>
+            <p><strong>Respuesta esperada:</strong> JSON con success=true, download_url, filename</p>
+            <pre id="debug" style="background: #f5f5f5; padding: 10px; border-radius: 4px; max-height: 200px; overflow-y: auto;"></pre>
+        </div>
+    </div>
+
+    <script>
+        function mostrarMensaje(texto, tipo) {
+            const msg = document.getElementById('mensaje');
+            msg.textContent = texto;
+            msg.className = `message ${tipo}`;
+        }
+
+        function addDebug(texto) {
+            const debug = document.getElementById('debug');
+            debug.textContent += texto + '\n';
+            debug.scrollTop = debug.scrollHeight;
+        }
+
+        async function generarExcel() {
+            const nombre = document.getElementById('nombre').value.trim();
+            const cliente = document.getElementById('cliente').value.trim();
+            const btn = document.getElementById('btn-generar');
+
+            // Validar
+            if (!nombre) {
+                mostrarMensaje('⚠️ Por favor ingresa el nombre del proyecto', 'error');
+                return;
+            }
+
+            if (!cliente) {
+                mostrarMensaje('⚠️ Por favor ingresa el cliente final', 'error');
+                return;
+            }
+
+            // Desabilitar botón
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span>Generando...';
+            document.getElementById('debug').textContent = '';
+            addDebug('📤 Enviando solicitud...');
+            addDebug(`Nombre: ${nombre}`);
+            addDebug(`Cliente: ${cliente}`);
+
+            try {
+                addDebug('Conectando a /api/submit-form...');
+
+                const response = await fetch('/api/submit-form', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        modo: 'manual',
+                        nombre_proyecto: nombre,
+                        cliente_final: cliente,
+                        localizacion: 'Test',
+                        proyectista: 'Javier Elizalde',
+                        fecha_estudio: new Date().toISOString().split('T')[0],
+                        norma_aplicable: 'EN 13201:2015',
+                        identificador_modelo: 'TEST',
+                        disposicion: 'lineal',
+                        altura_montaje: 6,
+                        interdistancia: 15,
+                        saliente_brazo: 0.5,
+                        calzada1_ancho: 7,
+                        calzada1_carriles: 2,
+                        calzada1_pavimento: 'asfalto-nuevo',
+                        calzada1_q0: 0.07,
+                        calzada1_clase: 'me2',
+                        acera1_ancho: 2,
+                        acera1_pavimento: 'hormigon',
+                        acera1_clase: 's2',
+                        luminarias: [{
+                            modelo: 'TEST',
+                            optica: 'F151',
+                            potencia: 35,
+                            objetivo: 'calzada'
+                        }],
+                        horas_funcionamiento: 3650,
+                        tarifa_electrica: 0.15,
+                        factor_co2: 0.4,
+                        zona_ambiental: 'e1',
+                        ulor_maximo: 5
+                    })
+                });
+
+                addDebug(`📨 Respuesta status: ${response.status}`);
+                const result = await response.json();
+                addDebug(`📋 JSON: ${JSON.stringify(result, null, 2)}`);
+
+                if (result.success) {
+                    mostrarMensaje(`✓ Excel generado correctamente!\nArchivo: ${result.filename}`, 'success');
+                    console.log('Descargando desde:', result.download_url);
+
+                    // Descargar automáticamente
+                    setTimeout(() => {
+                        const link = document.createElement('a');
+                        link.href = result.download_url;
+                        link.setAttribute('download', result.filename);
+                        document.body.appendChild(link);
+                        link.click();
+                        document.body.removeChild(link);
+                    }, 1000);
+                } else {
+                    mostrarMensaje(`❌ Error: ${result.error}`, 'error');
+                    addDebug(`ERROR: ${result.error}`);
+                }
+            } catch (error) {
+                mostrarMensaje(`❌ Error de conexión: ${error.message}`, 'error');
+                addDebug(`EXCEPCIÓN: ${error.message}`);
+                addDebug(error.stack);
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '📄 Generar Excel';
+            }
+        }
+
+        // Enviar al presionar Enter
+        document.getElementById('nombre').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') generarExcel();
+        });
+        document.getElementById('cliente').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') generarExcel();
+        });
+    </script>
+</body>
+</html>

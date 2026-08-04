@@ -1,0 +1,32 @@
+.phase-placeholder-card {
+  background: var(--salvi-surface-white);
+  border: 1px dashed var(--salvi-line);
+  border-radius: var(--radius-lg);
+  padding: 28px;
+  max-width: 640px;
+  color: var(--salvi-grey);
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+/* Estado funcional (pendiente) — ambar, uso limitado y puntual, no como color de marca */
+.phase-placeholder-badge {
+  display: inline-block;
+  background: #fdf2e0;
+  color: var(--state-warning);
+  font-weight: 700;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 4px 10px;
+  border-radius: 999px;
+  margin-bottom: 14px;
+}
+
+.phase-placeholder-card code {
+  background: var(--salvi-surface);
+  color: var(--salvi-black);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+}

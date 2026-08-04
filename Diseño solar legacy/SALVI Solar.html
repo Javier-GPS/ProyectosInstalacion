@@ -1,0 +1,3855 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SALVI Solar</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <style>
+    @font-face { font-family:'Exposure'; src:url('fonts/Exposure - [-70]-205TF.woff2') format('woff2'),url('fonts/Exposure - [-70]-205TF.woff') format('woff'); font-weight:100; font-style:normal; font-display:swap; }
+    @font-face { font-family:'Exposure'; src:url('fonts/Exposure - [-50]-205TF.woff2') format('woff2'),url('fonts/Exposure - [-50]-205TF.woff') format('woff'); font-weight:200; font-style:normal; font-display:swap; }
+    @font-face { font-family:'Exposure'; src:url('fonts/Exposure - [-30]-205TF.woff2') format('woff2'),url('fonts/Exposure - [-30]-205TF.woff') format('woff'); font-weight:300; font-style:normal; font-display:swap; }
+    @font-face { font-family:'Exposure'; src:url('fonts/Exposure - [+10]-205TF.woff2') format('woff2'),url('fonts/Exposure - [+10]-205TF.woff') format('woff'); font-weight:400; font-style:normal; font-display:swap; }
+    @font-face { font-family:'Exposure'; src:url('fonts/Exposure - [+10] Italic-205TF.woff2') format('woff2'),url('fonts/Exposure - [+10] Italic-205TF.woff') format('woff'); font-weight:400; font-style:italic; font-display:swap; }
+    @font-face { font-family:'Exposure'; src:url('fonts/Exposure - [+30]-205TF.woff2') format('woff2'),url('fonts/Exposure - [+30]-205TF.woff') format('woff'); font-weight:500; font-style:normal; font-display:swap; }
+    @font-face { font-family:'Exposure'; src:url('fonts/Exposure - [+50]-205TF.woff2') format('woff2'),url('fonts/Exposure - [+50]-205TF.woff') format('woff'); font-weight:600; font-style:normal; font-display:swap; }
+    @font-face { font-family:'Exposure'; src:url('fonts/Exposure - [+70]-205TF.woff2') format('woff2'),url('fonts/Exposure - [+70]-205TF.woff') format('woff'); font-weight:700; font-style:normal; font-display:swap; }
+    @font-face { font-family:'Exposure'; src:url('fonts/Exposure - [+90]-205TF.woff2') format('woff2'),url('fonts/Exposure - [+90]-205TF.woff') format('woff'); font-weight:800; font-style:normal; font-display:swap; }
+
+    :root {
+      --salvi-black: #1E1E1E;
+      --salvi-grey: #6A6A6A;
+      --salvi-cream: #FCF9F5;
+      --salvi-surface: #F7F4EF;
+      --salvi-surface-white: #FFFFFF;
+      --salvi-line: #E8E2D8;
+      --salvi-muted: #A09A91;
+      --state-success: #1F7A4D;
+      --state-warning: #B7791F;
+      --state-danger: #B42318;
+      --state-info: #4A5568;
+      --font-brand: 'Exposure', Georgia, serif;
+      --font-ui: 'Helvetica Neue', Inter, system-ui, sans-serif;
+      --font-mono: 'SFMono-Regular', Consolas, monospace;
+      --radius-sm: 6px;
+      --radius-md: 10px;
+      --radius-lg: 12px;
+      --shadow-card: 0 1px 2px rgba(30,30,30,.06), 0 8px 24px rgba(30,30,30,.04);
+      --shadow-panel: 0 8px 32px rgba(30,30,30,.08);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font-ui); background: var(--salvi-cream); color: var(--salvi-black); font-size: 14px; overflow: hidden; }
+
+    #app {
+      display: grid;
+      grid-template-areas: "topbar topbar topbar" "left main right" "bottom bottom bottom";
+      grid-template-rows: 60px 1fr 28px;
+      grid-template-columns: var(--left-w, 300px) 1fr 300px;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    /* ── TOP BAR ── */
+    #top-bar {
+      grid-area: topbar;
+      background: var(--salvi-surface-white);
+      color: var(--salvi-black);
+      display: flex;
+      align-items: center;
+      padding: 0 20px;
+      gap: 16px;
+      border-bottom: 1px solid var(--salvi-line);
+      box-shadow: 0 1px 0 var(--salvi-line);
+    }
+    .top-bar-brand { display: flex; align-items: center; gap: 12px; flex-shrink: 0; }
+    .module-badge {
+      background: #FFF7E6; border: 1px solid #E8D5A0;
+      color: #7A5C00; font-family: var(--font-brand); font-size: 12px; font-weight: 600;
+      padding: 3px 10px; border-radius: 20px; letter-spacing: 0.5px;
+    }
+    .top-bar-project { flex: 1; text-align: center; font-size: 13px; color: var(--salvi-grey); font-family: var(--font-ui); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .top-bar-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+    .version-tag { font-size: 11px; color: var(--salvi-muted); font-family: var(--font-mono); }
+    .btn-header { background: var(--salvi-surface-white); border: 1px solid #D4CEC6; color: var(--salvi-grey); padding: 5px 14px; border-radius: var(--radius-sm); cursor: pointer; font-size: 12px; font-family: var(--font-ui); transition: all .2s; }
+    .btn-header:hover { background: #F0EDE8; border-color: #B8B0A6; color: var(--salvi-black); }
+    .btn-header-primary { background: var(--salvi-black); color: white; border: 1px solid var(--salvi-black); padding: 5px 14px; border-radius: var(--radius-sm); cursor: pointer; font-size: 12px; font-family: var(--font-ui); transition: all .2s; }
+    .btn-header-primary:hover { background: #333; }
+
+    /* ── LEFT PANEL ── */
+    #left-panel {
+      grid-area: left;
+      background: var(--salvi-surface);
+      border-right: 1px solid var(--salvi-line);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      position: relative;
+      min-width: 220px;
+      max-width: 520px;
+    }
+    /* Resize handle — identical to GIS */
+    #panel-resize {
+      position: absolute; right: 0; top: 0; width: 7px; height: 100%;
+      cursor: col-resize; z-index: 100; background: transparent; transition: background 0.15s;
+    }
+    #panel-resize:hover, #panel-resize.dragging { background: rgba(30,30,30,.10); }
+    #panel-resize::after {
+      content: ''; position: absolute; right: 2px; top: 50%; transform: translateY(-50%);
+      height: 40px; width: 3px; border-radius: 2px; background: rgba(30,30,30,.15);
+    }
+    /* ── Horizontal icon step nav ── */
+    #step-nav {
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-around;
+      padding: 6px 8px;
+      border-bottom: 1px solid var(--salvi-line);
+      background: var(--salvi-surface-white);
+    }
+    .step-icon-btn {
+      position: relative;
+      display: flex; align-items: center; justify-content: center;
+      width: 34px; height: 34px;
+      border: none; border-radius: var(--radius-sm);
+      background: transparent; cursor: pointer;
+      color: var(--salvi-muted);
+      transition: background 0.15s, color 0.15s;
+      flex-shrink: 0;
+    }
+    .step-icon-btn svg { width: 18px; height: 18px; stroke-width: 1.75; }
+    .step-icon-btn:hover { background: var(--salvi-surface); color: var(--salvi-black); }
+    .step-icon-btn.active {
+      background: var(--salvi-black);
+      color: white;
+    }
+    .step-icon-btn.completed { color: var(--state-success); }
+    .step-icon-btn.completed.active { background: var(--salvi-black); color: white; }
+    /* Tooltip */
+    .step-icon-btn::after {
+      content: attr(data-label);
+      position: absolute; top: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+      background: var(--salvi-black); color: white;
+      padding: 4px 9px; border-radius: var(--radius-sm);
+      font-size: 11px; font-family: var(--font-ui); white-space: nowrap;
+      pointer-events: none; opacity: 0; transition: opacity 0.15s;
+      z-index: 500;
+    }
+    .step-icon-btn::before {
+      content: '';
+      position: absolute; top: calc(100% + 2px); left: 50%; transform: translateX(-50%);
+      border: 4px solid transparent; border-bottom-color: var(--salvi-black);
+      pointer-events: none; opacity: 0; transition: opacity 0.15s;
+      z-index: 500;
+    }
+    .step-icon-btn:hover::after, .step-icon-btn:hover::before { opacity: 1; }
+    /* Completed dot */
+    .step-check { display: none; }
+    .step-icon-btn.completed .step-check {
+      display: block; position: absolute; top: 3px; right: 3px;
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--state-success);
+    }
+    #step-content { flex: 1; overflow-y: auto; padding: 0; }
+    #step-nav-buttons {
+      display: flex;
+      gap: 8px;
+      padding: 10px 12px;
+      border-top: 1px solid var(--salvi-line);
+      flex-shrink: 0;
+      background: var(--salvi-surface);
+    }
+    #step-nav-buttons .btn-primary,
+    #step-nav-buttons .btn-secondary { flex: 1; }
+
+    .step-item-unused {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 5px 12px;
+      cursor: pointer;
+      border-left: 3px solid transparent;
+      transition: background 0.1s;
+    }
+    .step-item:hover { background: rgba(30,30,30,0.04); }
+    .step-item.active { background: rgba(30,30,30,0.07); border-left: 3px solid var(--salvi-black); }
+    .step-item.completed .step-num { background: var(--state-success); color: white; }
+    .step-num {
+      width: 20px; height: 20px; border-radius: 50%;
+      background: var(--salvi-line);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; font-weight: 700; flex-shrink: 0;
+      transition: background 0.2s;
+    }
+    .step-title { font-size: 12px; font-weight: 500; flex: 1; }
+    .step-status { font-size: 11px; color: var(--state-success); flex-shrink: 0; }
+
+    .step-form { display: none; padding: 16px; }
+    .step-form.active { display: block; }
+    .step-header {
+      font-family: var(--font-brand);
+      font-size: 16px;
+      font-weight: 600;
+      margin-bottom: 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--salvi-line);
+    }
+
+    /* ── MAIN CANVAS ── */
+    #main-canvas {
+      grid-area: main;
+      overflow-y: auto;
+      background: var(--salvi-cream);
+    }
+    .canvas-panel { min-height: 100%; }
+
+    /* ── RIGHT PANEL ── */
+    #right-panel {
+      grid-area: right;
+      background: var(--salvi-surface);
+      border-left: 1px solid var(--salvi-line);
+      overflow-y: auto;
+      padding: 16px;
+    }
+
+    /* ── BOTTOM BAR ── */
+    #bottom-bar {
+      grid-area: bottom;
+      background: var(--salvi-surface);
+      border-top: 1px solid var(--salvi-line);
+      color: var(--salvi-muted);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      font-size: 11px;
+      gap: 16px;
+      height: 28px;
+    }
+    #bottom-bar span { display: flex; align-items: center; gap: 5px; }
+    .api-status { font-size: 11px; flex-shrink: 0; display: flex; align-items: center; gap: 6px; background: #F0EDE8; border: 1px solid #D4CEC6; padding: 2px 10px; border-radius: 20px; }
+    .api-status.ok { border-color: var(--state-success); color: var(--state-success); }
+    .api-status.err { border-color: var(--state-danger); color: var(--state-danger); }
+    .api-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--salvi-muted); flex-shrink: 0; }
+    .api-status.ok .api-dot { background: var(--state-success); animation: apiBlink 2.5s ease-in-out infinite; }
+    .api-status.err .api-dot { background: var(--state-danger); }
+    @keyframes apiBlink { 0%,100%{box-shadow:0 0 0 0 transparent} 50%{box-shadow:0 0 0 3px rgba(31,122,77,0.2)} }
+
+    /* ── BUTTONS ── */
+    .btn-primary {
+      background: var(--salvi-black); color: white; border: none;
+      border-radius: var(--radius-sm); padding: 8px 16px;
+      cursor: pointer; font-family: var(--font-ui); font-size: 13px;
+      font-weight: 500; transition: background 0.15s;
+    }
+    .btn-primary:hover { background: #333; }
+    .btn-secondary {
+      background: transparent; color: var(--salvi-black);
+      border: 1px solid var(--salvi-line); border-radius: var(--radius-sm);
+      padding: 8px 16px; cursor: pointer; font-family: var(--font-ui);
+      font-size: 13px; transition: border-color 0.15s, background 0.15s;
+    }
+    .btn-secondary:hover { border-color: var(--salvi-grey); background: rgba(30,30,30,0.03); }
+    .btn-link { background: none; border: none; color: var(--salvi-grey); cursor: pointer; font-family: var(--font-ui); font-size: 13px; text-decoration: underline; }
+    .btn-link:hover { color: var(--salvi-black); }
+    .btn-large { padding: 14px 24px; font-size: 15px; font-weight: 600; }
+    .btn-block { width: 100%; display: block; text-align: center; }
+    .btn-sm { padding: 4px 10px; font-size: 12px; }
+
+    /* ── FORMS ── */
+    input, select, textarea {
+      width: 100%; padding: 7px 10px;
+      border: 1px solid var(--salvi-line);
+      border-radius: var(--radius-sm);
+      font-family: var(--font-ui); font-size: 13px;
+      background: var(--salvi-surface-white);
+      color: var(--salvi-black);
+      transition: border-color 0.15s;
+    }
+    input:focus, select:focus { outline: none; border-color: var(--salvi-black); }
+    .field-group { margin-bottom: 12px; }
+    .field-group label { display: block; font-size: 12px; font-weight: 600; color: var(--salvi-black); margin-bottom: 4px; }
+    .unit { color: var(--salvi-grey); font-weight: 400; }
+    .field-help { font-size: 11px; color: var(--salvi-muted); margin-top: 3px; }
+    .field-row { display: flex; gap: 8px; }
+    .field-row .half { flex: 1; min-width: 0; }
+    .section-label { font-size: 11px; font-weight: 700; color: var(--salvi-grey); text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 8px; margin-top: 4px; }
+
+    /* ── CANDIDATES GRID ── */
+    .candidates-actions { display: flex; gap: 6px; margin-bottom: 10px; flex-wrap: wrap; }
+    .candidates-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 4px 0 8px; }
+    .candidate-card {
+      border: 2px solid var(--salvi-line); border-radius: var(--radius-md);
+      padding: 10px; cursor: pointer; transition: all 0.15s;
+      background: var(--salvi-surface-white);
+    }
+    .candidate-card.selected { border-color: var(--salvi-black); background: rgba(30,30,30,0.04); }
+    .candidate-card:hover { border-color: var(--salvi-grey); }
+    .candidate-card .card-name { font-weight: 700; font-size: 12px; margin-bottom: 4px; }
+    .candidate-card .card-spec { font-size: 11px; color: var(--salvi-grey); line-height: 1.5; }
+    .candidate-card .card-check { float: right; font-size: 14px; }
+
+    /* ── PERIODS TABLE ── */
+    .periods-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-bottom: 8px; }
+    .periods-table th {
+      padding: 6px 4px; text-align: center;
+      font-size: 11px; color: var(--salvi-grey);
+      border-bottom: 1px solid var(--salvi-line);
+      font-weight: 600; white-space: nowrap;
+    }
+    .periods-table td { padding: 4px 2px; }
+    .periods-table input { padding: 4px 6px; font-size: 12px; text-align: center; }
+    .periods-table .col-wh { font-family: var(--font-mono); font-size: 12px; text-align: center; color: var(--salvi-grey); }
+    .table-actions { display: flex; gap: 8px; margin-bottom: 10px; align-items: center; }
+    .consumption-summary {
+      background: var(--salvi-surface-white); border: 1px solid var(--salvi-line);
+      border-radius: var(--radius-md); padding: 10px 14px;
+      margin: 12px 0; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+    .consumption-label { font-size: 12px; font-weight: 600; color: var(--salvi-grey); }
+    .consumption-value { font-size: 18px; font-weight: 700; color: var(--salvi-black); }
+    .consumption-note { font-size: 11px; color: var(--salvi-muted); }
+
+    /* ── INFO TABLE ── */
+    .info-table { background: rgba(30,30,30,0.03); border-radius: var(--radius-md); padding: 10px 12px; margin-bottom: 12px; }
+    .info-table-title { font-size: 11px; font-weight: 700; color: var(--salvi-grey); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+    .info-table table { width: 100%; font-size: 12px; }
+    .info-table td { padding: 3px 4px; }
+    .info-table td:last-child { text-align: right; font-family: var(--font-mono); color: var(--salvi-grey); }
+
+    /* ── SIMULATION ── */
+    .sim-pre { padding: 8px 0; }
+    .sim-summary { margin-bottom: 14px; }
+    .sim-summary-item { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--salvi-line); font-size: 13px; }
+    .sim-summary-item:last-child { border-bottom: none; }
+    .sim-note { font-size: 11px; color: var(--salvi-muted); margin-top: 12px; line-height: 1.6; background: rgba(30,30,30,0.03); border-radius: var(--radius-sm); padding: 10px 12px; }
+    .sim-progress { padding: 16px 0; }
+    .progress-title { font-size: 14px; font-weight: 600; margin-bottom: 10px; }
+    .progress-bar { height: 4px; background: var(--salvi-line); border-radius: 2px; overflow: hidden; margin: 12px 0; }
+    .progress-fill { height: 100%; background: var(--salvi-black); width: 10%; animation: progress-anim 3s ease-in-out infinite; }
+    @keyframes progress-anim { 0%{width:10%} 50%{width:80%} 100%{width:95%} }
+    .progress-log { font-size: 12px; color: var(--salvi-grey); line-height: 2; font-family: var(--font-mono); }
+
+    /* ── RESULTS TABLE ── */
+    .results-toolbar {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 16px 10px; gap: 12px; border-bottom: 1px solid var(--salvi-line);
+      background: var(--salvi-surface-white); flex-shrink: 0;
+    }
+    .results-title { font-family: var(--font-brand); font-size: 15px; font-weight: 600; }
+    .results-actions { display: flex; gap: 8px; align-items: center; }
+    .results-actions select { width: auto; min-width: 180px; }
+    .table-container { overflow-x: auto; }
+    .results-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .results-table th {
+      background: var(--salvi-black); color: white;
+      padding: 8px 12px; text-align: left;
+      font-weight: 500; font-size: 12px; white-space: nowrap;
+    }
+    .results-table th.sortable { cursor: pointer; user-select: none; }
+    .results-table th.sortable:hover { background: #333; }
+    .results-table td { padding: 10px 12px; border-bottom: 1px solid var(--salvi-line); vertical-align: middle; }
+    .results-table tr:hover td { background: rgba(30,30,30,0.02); }
+    .row-recommended { background: rgba(31,122,77,0.06) !important; }
+    .row-recommended td:first-child { border-left: 3px solid var(--state-success); }
+    .row-unreliable { opacity: 0.7; }
+    .reliability-badge { font-weight: 700; font-size: 13px; }
+    .reliability-badge.good { color: var(--state-success); }
+    .reliability-badge.warn { color: var(--state-warning); }
+    .reliability-badge.bad { color: var(--state-danger); }
+    .failure-nights { font-size: 11px; color: var(--salvi-muted); margin-top: 1px; }
+    .cost-note { font-size: 11px; color: var(--salvi-muted); margin-top: 1px; }
+
+    /* ── SCENARIO BADGES ── */
+    .scenario-badges-row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
+    .scenario-badge { display: inline-block; font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 10px; letter-spacing: 0.2px; }
+    .scenario-badge.scenario-recommended { background: rgba(31,122,77,0.12); color: var(--state-success); border: 1px solid rgba(31,122,77,0.25); }
+    .scenario-badge.scenario-lowcapex    { background: rgba(30,30,30,0.06); color: var(--salvi-grey); border: 1px solid var(--salvi-line); }
+    .scenario-badge.scenario-maxrel      { background: rgba(30,80,180,0.08); color: #1a50a0; border: 1px solid rgba(30,80,180,0.2); }
+    .scenario-badge.scenario-hybrid      { background: rgba(183,121,31,0.10); color: #8a5a00; border: 1px solid rgba(183,121,31,0.25); }
+
+    /* ── LOSS TREE ── */
+    .loss-tree-wrap { padding: 4px 0 8px; }
+    .loss-tree-row { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; font-size: 12px; }
+    .loss-tree-label { width: 170px; flex-shrink: 0; color: var(--salvi-grey); }
+    .loss-tree-label.total-label { color: var(--salvi-black); font-weight: 600; }
+    .loss-tree-bar-wrap { flex: 1; height: 10px; background: rgba(30,30,30,0.06); border-radius: 5px; overflow: hidden; }
+    .loss-tree-bar { height: 100%; border-radius: 5px; transition: width 0.4s ease; }
+    .loss-tree-bar.bar-available  { background: var(--state-success); }
+    .loss-tree-bar.bar-geometry   { background: #8B6914; }
+    .loss-tree-bar.bar-soiling    { background: #c44; }
+    .loss-tree-bar.bar-temp       { background: #e07820; }
+    .loss-tree-bar.bar-controller { background: #6060a0; }
+    .loss-tree-bar.bar-battery    { background: #207080; }
+    .loss-tree-bar.bar-degradation{ background: #a0a0a0; }
+    .loss-tree-val { width: 46px; text-align: right; font-weight: 600; flex-shrink: 0; font-size: 12px; }
+    .loss-tree-val.val-loss { color: var(--state-danger); }
+    .loss-tree-val.val-avail { color: var(--state-success); font-size: 13px; }
+    .loss-tree-divider { border: none; border-top: 1px dashed var(--salvi-line); margin: 6px 0; }
+
+    /* ── NIGHT PROFILE CHART ── */
+    .np-topbar { display: flex; align-items: center; justify-content: space-between; padding: 9px 16px 7px; border-bottom: 1px solid var(--salvi-line); flex-shrink: 0; background: var(--salvi-surface); }
+    .np-canvas-title { font-family: var(--font-brand); font-size: 13px; font-weight: 600; color: var(--salvi-black); text-transform: uppercase; letter-spacing: 0.6px; }
+    .np-energy-badge { display: inline-block; background: rgba(31,122,77,0.12); color: var(--state-success); border: 1px solid rgba(31,122,77,0.25); border-radius: 12px; font-size: 11px; font-weight: 700; padding: 3px 10px; }
+    #np-chart { flex: 1; min-height: 0; display: block; width: 100%; height: 100%; cursor: default; touch-action: none; background: #fff; }
+    .np-legend-row { display: flex; align-items: center; gap: 16px; font-size: 11px; padding: 5px 16px; border-top: 1px solid var(--salvi-line); flex-shrink: 0; background: var(--salvi-surface); }
+    .np-legend-pres  { color: rgba(31,122,77,0.9);  font-weight: 600; }
+    .np-legend-nopres{ color: rgba(183,121,31,0.9); font-weight: 600; }
+    .np-legend-hint  { font-size: 10px; color: #c0c0c0; margin-left: auto; }
+    /* Sliders in left panel */
+    .np-sliders { background: rgba(30,30,30,0.025); border: 1px solid var(--salvi-line); border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 10px; }
+    .np-slider-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+    .np-slider-label { font-size: 11px; color: var(--salvi-grey); font-weight: 600; width: 80px; flex-shrink: 0; }
+    .np-slider-input { flex: 1; height: 4px; cursor: pointer; accent-color: var(--salvi-black); }
+    .np-slider-val { font-size: 11px; font-weight: 700; color: var(--salvi-black); width: 34px; text-align: right; flex-shrink: 0; }
+    .np-slider-hint { font-size: 9px; color: var(--salvi-muted); margin-bottom: 6px; padding-left: 88px; }
+
+    .result-note { font-size: 12px; color: var(--salvi-muted); background: rgba(30,30,30,0.03); border-radius: var(--radius-sm); padding: 10px 12px; margin-top: 8px; }
+
+    /* ── CHARTS ── */
+    .charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; }
+    .chart-card { background: var(--salvi-surface-white); border-radius: var(--radius-lg); padding: 16px; box-shadow: var(--shadow-card); }
+    .chart-title { font-size: 12px; font-weight: 600; color: var(--salvi-grey); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+    /* ── DETAIL ── */
+    #detail-content { padding: 16px; }
+    .detail-header { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 1px solid var(--salvi-line); }
+    .detail-product-name { font-family: var(--font-brand); font-size: 22px; font-weight: 600; margin-bottom: 4px; }
+    .detail-product-sub { font-size: 13px; color: var(--salvi-grey); }
+    .detail-kpis { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 20px; }
+    .detail-kpi { background: var(--salvi-surface-white); border-radius: var(--radius-md); padding: 14px 16px; box-shadow: var(--shadow-card); }
+    .detail-kpi-label { font-size: 11px; font-weight: 600; color: var(--salvi-grey); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+    .detail-kpi-value { font-size: 22px; font-weight: 700; }
+    .detail-kpi-value.success { color: var(--state-success); }
+    .detail-kpi-value.warning { color: var(--state-warning); }
+    .detail-kpi-value.danger { color: var(--state-danger); }
+    .detail-kpi-sub { font-size: 11px; color: var(--salvi-muted); margin-top: 3px; }
+    .detail-section { margin-bottom: 20px; }
+    .detail-section-title { font-size: 13px; font-weight: 700; color: var(--salvi-black); margin-bottom: 10px; text-transform: uppercase; letter-spacing: 0.5px; padding-bottom: 6px; border-bottom: 1px solid var(--salvi-line); }
+    .detail-monthly-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .detail-monthly-table th { padding: 6px 8px; text-align: left; font-weight: 600; color: var(--salvi-grey); font-size: 11px; border-bottom: 1px solid var(--salvi-line); }
+    .detail-monthly-table td { padding: 7px 8px; border-bottom: 1px solid var(--salvi-line); font-family: var(--font-mono); }
+    .smartec-block { background: var(--salvi-black); color: #90ee90; border-radius: var(--radius-md); padding: 14px; font-family: var(--font-mono); font-size: 11px; line-height: 1.6; overflow-x: auto; }
+    .back-btn { margin-bottom: 16px; }
+
+    /* ── RIGHT PANEL ── */
+    .rp-section { margin-bottom: 0; }
+    .rp-title { font-family: var(--font-brand); font-size: 14px; font-weight: 600; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--salvi-line); }
+    .rp-checklist { margin-bottom: 16px; }
+    .rp-check-item { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 12px; }
+    .rp-check-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .rp-check-dot.ok { background: var(--state-success); }
+    .rp-check-dot.pending { background: var(--salvi-muted); }
+    .rp-check-dot.error { background: var(--state-danger); }
+    .rp-consumption { background: var(--salvi-surface-white); border-radius: var(--radius-md); padding: 12px; margin-bottom: 12px; box-shadow: var(--shadow-card); }
+    .rp-label { font-size: 11px; color: var(--salvi-grey); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+    .rp-value { font-size: 20px; font-weight: 700; }
+    .rp-product-name { font-size: 17px; font-weight: 700; margin: 8px 0; }
+    .rp-specs { font-size: 12px; color: var(--salvi-grey); margin-bottom: 14px; line-height: 1.7; }
+    .rp-kpis { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+    .rp-kpi { background: var(--salvi-surface-white); border-radius: var(--radius-md); padding: 10px 12px; box-shadow: var(--shadow-card); }
+    .rp-kpi-label { font-size: 11px; color: var(--salvi-grey); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 3px; }
+    .rp-kpi-value { font-size: 20px; font-weight: 700; }
+    .rp-kpi-value.success { color: var(--state-success); }
+    .rp-kpi-value.warning { color: var(--state-warning); }
+    .rp-kpi-value.danger { color: var(--state-danger); }
+
+    /* ── BADGES ── */
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+    .badge-danger { background: rgba(180,35,24,0.1); color: var(--state-danger); }
+    .badge-warn { background: rgba(183,121,31,0.1); color: var(--state-warning); }
+    .badge-success { background: rgba(31,122,77,0.1); color: var(--state-success); }
+    .badge-info { background: rgba(74,85,104,0.1); color: var(--state-info); }
+
+    /* ── WELCOME ── */
+    .canvas-panel { padding: 0; }
+    .welcome-content { max-width: 480px; margin: 0 auto; text-align: center; padding: 60px 24px; }
+    .welcome-icon { font-size: 48px; margin-bottom: 16px; }
+    .welcome-title { font-family: var(--font-brand); font-size: 32px; font-weight: 600; margin-bottom: 8px; }
+    .welcome-subtitle { color: var(--salvi-grey); margin-bottom: 24px; font-size: 15px; }
+    .welcome-summary { text-align: left; background: var(--salvi-surface); border-radius: var(--radius-lg); padding: 16px; margin-bottom: 24px; font-size: 13px; border: 1px solid var(--salvi-line); }
+    .welcome-summary-row { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid var(--salvi-line); }
+    .welcome-summary-row:last-child { border-bottom: none; }
+    .welcome-summary-row .label { color: var(--salvi-grey); }
+    .welcome-summary-row .val { font-weight: 600; }
+
+    /* ── EXPORT STEP ── */
+    .export-options { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+    .export-info { font-size: 12px; color: var(--salvi-grey); background: rgba(30,30,30,0.03); border-radius: var(--radius-sm); padding: 10px 12px; line-height: 1.6; }
+
+    /* ── TOASTS ── */
+    #toast-container { position: fixed; bottom: 52px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; }
+    .toast {
+      background: var(--salvi-black); color: white;
+      padding: 10px 16px; border-radius: var(--radius-md);
+      font-size: 13px; max-width: 320px;
+      box-shadow: var(--shadow-panel);
+      animation: toast-in 0.2s ease;
+    }
+    .toast.error { background: var(--state-danger); }
+    .toast.success { background: var(--state-success); }
+    .toast.warning { background: var(--state-warning); color: white; }
+    @keyframes toast-in { from { opacity:0; transform: translateY(10px); } to { opacity:1; transform: translateY(0); } }
+
+    /* ── TWILIGHT CONFIG ── */
+    .twilight-config { background: var(--salvi-surface-white); border: 1px solid var(--salvi-line); border-radius: var(--radius-md); padding: 12px; margin-bottom: 14px; }
+    .input-with-badge { display: flex; flex-direction: column; gap: 3px; }
+    .input-with-badge .unit { font-size: 10px; }
+
+    /* ── RESULTS INFO ── */
+    .results-info { margin-bottom: 8px; font-size: 13px; color: var(--salvi-grey); }
+
+    /* ── SCROLLBAR ── */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--salvi-line); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--salvi-muted); }
+
+    /* canvas-results layout */
+    #canvas-results { display: flex; flex-direction: column; }
+    .table-container { flex-shrink: 0; }
+
+    /* Detail back nav */
+    .detail-back { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--salvi-grey); cursor: pointer; margin-bottom: 16px; }
+    .detail-back:hover { color: var(--salvi-black); }
+
+    /* step 7 */
+    #step-7 .result-note { color: var(--salvi-grey); font-size: 12px; }
+
+    /* ── CANVAS STEP 1 — CLIMA SOLAR ── */
+    .c1-tab {
+      background: transparent; border: 1px solid var(--salvi-line);
+      border-radius: 20px; padding: 3px 11px;
+      font-size: 11px; color: var(--salvi-grey); cursor: pointer;
+      font-family: var(--font-ui); transition: all .15s; white-space: nowrap;
+    }
+    .c1-tab:hover { border-color: var(--salvi-grey); color: var(--salvi-black); }
+    .c1-tab.active { background: var(--salvi-black); color: white; border-color: var(--salvi-black); }
+    #c1-monthly-panel {
+      border-top: 1px solid var(--salvi-line);
+      background: var(--salvi-surface-white); flex-shrink: 0;
+    }
+    #c1-monthly-title {
+      font-size: 11px; font-weight: 600; color: var(--salvi-grey);
+      padding: 6px 14px 3px; display: block;
+    }
+    #c1-chart-wrap { padding: 2px 14px 8px; height: 90px; position: relative; }
+    #c1-monthly-empty { text-align: center; padding: 14px 0 12px; font-size: 12px; color: var(--salvi-muted); }
+    /* Floating pick hint on canvas map */
+    #c1-pick-hint {
+      position: absolute; bottom: 44px; left: 50%; transform: translateX(-50%);
+      background: rgba(30,30,30,0.72); color: white;
+      padding: 6px 16px; border-radius: 20px; font-size: 12px;
+      pointer-events: none; white-space: nowrap; z-index: 500;
+      transition: opacity 0.3s;
+    }
+    #c1-pick-hint.hidden { opacity: 0; }
+    /* GHI gradient legend */
+    #c1-ghi-legend {
+      position: absolute; bottom: 10px; right: 10px; z-index: 500;
+      background: rgba(255,255,255,0.92); border-radius: 6px;
+      padding: 7px 8px; font-size: 9px; line-height: 1.4;
+      border: 1px solid rgba(30,30,30,0.15);
+      display: none; flex-direction: row; align-items: stretch; gap: 5px;
+    }
+    #c1-ghi-gradient-bar {
+      width: 14px; border-radius: 3px;
+      background: linear-gradient(to top,
+        #004CB3 0%, #0099CC 20%, #64C864 38%, #DCC800 55%, #F08200 72%, #C80000 100%);
+    }
+    #c1-ghi-labels {
+      display: flex; flex-direction: column; justify-content: space-between;
+      color: var(--salvi-grey);
+    }
+    #c1-ghi-loading {
+      position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%);
+      background: rgba(255,255,255,0.85); border-radius: 8px;
+      padding: 8px 14px; font-size: 12px; color: var(--salvi-grey);
+      z-index: 600; display: none; pointer-events: none;
+    }
+
+    /* Loading state for candidates */
+    .candidates-loading { text-align: center; padding: 24px; color: var(--salvi-muted); font-size: 13px; }
+
+    /* Step canvas views */
+    .canvas-step-view { display: flex; flex-direction: column; height: 100%; }
+    .canvas-header { padding: 14px 20px 10px; border-bottom: 1px solid var(--salvi-line); flex-shrink: 0; }
+    .canvas-title { font-family: var(--font-brand); font-size: 16px; font-weight: 600; display: block; }
+    .canvas-subtitle { font-size: 12px; color: var(--salvi-muted); display: block; margin-top: 2px; }
+    .canvas-footer-bar { padding: 8px 16px; border-top: 1px solid var(--salvi-line); background: var(--salvi-surface); display: flex; align-items: center; justify-content: space-between; flex-shrink: 0; }
+
+    /* Simulation canvas */
+    #canvas-simulation { display: flex; align-items: center; justify-content: center; min-height: 100%; }
+    .canvas-sim-inner { max-width: 440px; width: 100%; padding: 40px 24px; }
+    .canvas-sim-title { font-family: var(--font-brand); font-size: 22px; font-weight: 600; margin-bottom: 20px; }
+
+    /* small detail charts */
+    .detail-charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+
+    /* period delete btn */
+    .period-del { background: none; border: none; cursor: pointer; color: var(--salvi-muted); font-size: 14px; padding: 2px 6px; }
+    .period-del:hover { color: var(--state-danger); }
+
+    /* sort indicator */
+    th.sorted-asc::after { content: ' ▲'; font-size: 10px; }
+    th.sorted-desc::after { content: ' ▼'; font-size: 10px; }
+
+    .mb-8 { margin-bottom: 8px; }
+    .mt-8 { margin-top: 8px; }
+    .gap-btn { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+
+    /* ── MAP MODAL ── */
+    #map-modal {
+      display: none;
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 2000;
+      background: rgba(30,30,30,0.65);
+      align-items: center; justify-content: center;
+    }
+    #map-modal.open { display: flex; }
+    .map-modal-box {
+      background: var(--salvi-surface-white);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-panel);
+      width: 700px; max-width: 96vw;
+      display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+    .map-modal-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--salvi-line);
+      background: var(--salvi-surface);
+    }
+    .map-modal-title { font-family: var(--font-brand); font-size: 15px; font-weight: 600; }
+    .map-modal-close { background: none; border: none; cursor: pointer; font-size: 20px; color: var(--salvi-grey); line-height: 1; padding: 2px 6px; }
+    .map-modal-close:hover { color: var(--salvi-black); }
+    .map-search-bar {
+      display: flex; gap: 8px; padding: 10px 14px;
+      border-bottom: 1px solid var(--salvi-line);
+      background: var(--salvi-surface-white);
+    }
+    .map-search-bar input { flex: 1; padding: 7px 10px; border: 1px solid var(--salvi-line); border-radius: var(--radius-sm); font-family: var(--font-ui); font-size: 13px; }
+    .map-search-bar input:focus { outline: none; border-color: var(--salvi-black); }
+    #map-container { height: 380px; width: 100%; }
+    .map-modal-footer {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 14px;
+      border-top: 1px solid var(--salvi-line);
+      background: var(--salvi-surface);
+    }
+    .map-coords-display { font-size: 12px; color: var(--salvi-grey); font-family: var(--font-mono); }
+    .map-coords-display strong { color: var(--salvi-black); }
+
+    /* ── GIS IMPORT MODAL ── */
+    #gis-modal {
+      display: none;
+      position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 2000;
+      background: rgba(30,30,30,0.65);
+      align-items: center; justify-content: center;
+    }
+    #gis-modal.open { display: flex; }
+    .gis-modal-box {
+      background: var(--salvi-surface-white);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-panel);
+      width: 480px; max-width: 96vw;
+      max-height: 80vh;
+      display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+    .gis-project-list { overflow-y: auto; padding: 8px 0; flex: 1; }
+    .gis-project-item {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 10px 18px; cursor: pointer; border-bottom: 1px solid var(--salvi-line);
+    }
+    .gis-project-item:hover { background: var(--salvi-surface); }
+    .gis-project-name { font-weight: 600; font-size: 13px; }
+    .gis-project-coords { font-size: 11px; color: var(--salvi-grey); font-family: var(--font-mono); }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- TOP BAR -->
+  <header id="top-bar">
+    <div class="top-bar-brand">
+      <svg width="80" height="38" viewBox="0 0 80 38" xmlns="http://www.w3.org/2000/svg" style="overflow:visible;flex-shrink:0;">
+        <text x="0" y="27" font-family="Exposure, Georgia, serif" font-size="30" font-weight="300" fill="#1E1E1E" letter-spacing="3">Salvi</text>
+        <text x="1" y="37" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="7" font-weight="400" fill="#A09A91" letter-spacing="2">LIGHT INSPIRED BY YOU</text>
+      </svg>
+      <span class="module-badge">☀ Solar</span>
+    </div>
+    <div class="top-bar-project">
+      <span id="project-name-display" style="color:var(--salvi-grey);">Sin proyecto</span>
+    </div>
+    <div class="top-bar-actions">
+      <div id="api-status" class="api-status"><span class="api-dot"></span><span id="api-status-text">Conectando…</span></div>
+      <button id="btn-save" class="btn-header-primary" onclick="saveProject()">Guardar</button>
+      <button id="btn-export" class="btn-header" onclick="showExport()">Exportar</button>
+      <span class="version-tag">v1.0.0</span>
+    </div>
+  </header>
+
+  <!-- LEFT PANEL -->
+  <aside id="left-panel">
+    <div id="panel-resize" title="Arrastra para cambiar el ancho"></div>
+    <div id="step-nav">
+      <button class="step-icon-btn active" data-step="1" onclick="goToStep(1)" data-label="Proyecto">
+        <i data-lucide="map-pin"></i>
+        <span class="step-check" id="step-status-1"></span>
+      </button>
+      <button class="step-icon-btn" data-step="2" onclick="goToStep(2)" data-label="Fotometría">
+        <i data-lucide="lightbulb"></i>
+        <span class="step-check" id="step-status-2"></span>
+      </button>
+      <button class="step-icon-btn" data-step="3" onclick="goToStep(3)" data-label="Perfil Nocturno">
+        <i data-lucide="moon"></i>
+        <span class="step-check" id="step-status-3"></span>
+      </button>
+      <button class="step-icon-btn" data-step="4" onclick="goToStep(4)" data-label="Entorno" style="display:none">
+        <i data-lucide="cloud"></i>
+        <span class="step-check" id="step-status-4"></span>
+      </button>
+      <button class="step-icon-btn" data-step="5" onclick="goToStep(5)" data-label="Candidatos">
+        <i data-lucide="package"></i>
+        <span class="step-check" id="step-status-5"></span>
+      </button>
+      <button class="step-icon-btn" data-step="6" onclick="goToStep(6)" data-label="Simulación">
+        <i data-lucide="play-circle"></i>
+        <span class="step-check" id="step-status-6"></span>
+      </button>
+      <button class="step-icon-btn" data-step="7" onclick="goToStep(7)" data-label="Resultados">
+        <i data-lucide="bar-chart-2"></i>
+        <span class="step-check" id="step-status-7"></span>
+      </button>
+      <button class="step-icon-btn" data-step="8" onclick="goToStep(8)" data-label="Detalle">
+        <i data-lucide="zoom-in"></i>
+        <span class="step-check" id="step-status-8"></span>
+      </button>
+      <button class="step-icon-btn" data-step="9" onclick="goToStep(9)" data-label="Informe">
+        <i data-lucide="file-text"></i>
+        <span class="step-check" id="step-status-9"></span>
+      </button>
+    </div>
+
+    <div id="step-content">
+
+      <!-- STEP 1: Proyecto -->
+      <div id="step-1" class="step-form active">
+        <h3 class="step-header">Proyecto</h3>
+        <div class="field-group">
+          <label>Nombre del proyecto *</label>
+          <input type="text" id="f-name" placeholder="Ej: Carrer Mallorca, Barcelona"
+                 oninput="APP.project.name=this.value; updateDisplay()">
+        </div>
+        <div class="field-group">
+          <label>País</label>
+          <select id="f-country" onchange="onCountryChange(this.value)">
+            <option value="ES">España</option>
+            <option value="FR">Francia</option>
+            <option value="DE">Alemania</option>
+            <option value="IT">Italia</option>
+            <option value="PT">Portugal</option>
+            <option value="MA">Marruecos</option>
+            <option value="DZ">Argelia</option>
+            <option value="TN">Túnez</option>
+            <option value="SN">Senegal</option>
+            <option value="EG">Egipto</option>
+            <option value="NG">Nigeria</option>
+            <option value="KE">Kenia</option>
+            <option value="ZA">Sudáfrica</option>
+            <option value="SA">Arabia Saudí</option>
+            <option value="IN">India</option>
+            <option value="BR">Brasil</option>
+            <option value="MX">México</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label>Ciudad</label>
+          <input type="text" id="f-city" placeholder="Barcelona"
+                 oninput="APP.project.city=this.value; updateDisplay()">
+        </div>
+        <div class="field-row">
+          <div class="field-group half">
+            <label>Latitud *</label>
+            <input type="number" id="f-lat" step="0.0001" min="-90" max="90"
+                   placeholder="41.3851" oninput="APP.project.lat=+this.value; updateDisplay()">
+          </div>
+          <div class="field-group half">
+            <label>Longitud *</label>
+            <input type="number" id="f-lon" step="0.0001" min="-180" max="180"
+                   placeholder="2.1734" oninput="APP.project.lon=+this.value; updateDisplay()">
+          </div>
+        </div>
+        <div style="display:flex; flex-direction:column; gap:6px; margin-top:6px;">
+          <button class="btn-secondary btn-block" onclick="openGISImport()" style="font-size:13px;">
+            ↗ Importar desde SALVI GIS
+          </button>
+        </div>
+
+        <div style="margin-top:16px;padding-top:12px;border-top:1px solid var(--salvi-line);">
+          <div style="font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--salvi-muted);margin-bottom:10px;">Parámetros de entorno</div>
+
+          <div class="field-group">
+            <label>Nivel de suciedad</label>
+            <select id="f-soiling" onchange="APP.env.soiling_env=this.value">
+              <option value="verde_lluviosa">Verde / lluviosa (4%)</option>
+              <option value="urbana_normal" selected>Urbana normal (7%)</option>
+              <option value="polvo_medio">Polvo medio (10%)</option>
+              <option value="desierto_alto">Desierto / polvo alto (20%)</option>
+            </select>
+          </div>
+
+          <div class="field-row">
+            <div class="field-group half">
+              <label>Temperatura diseño <span class="unit">°C</span></label>
+              <input type="number" id="f-temp" value="35" min="-10" max="60"
+                     oninput="APP.env.ambient_temp_c=+this.value; this.dataset.userEdited='1'">
+              <div class="field-help" id="f-temp-help" style="display:none;color:var(--state-success)">✓ Auto API</div>
+            </div>
+            <div class="field-group half">
+              <label>Fiabilidad mínima <span class="unit">% fallo máx.</span></label>
+              <input type="number" id="f-reliability" value="2.0" min="0.1" max="20" step="0.1"
+                     oninput="APP.env.max_failure_rate_pct=+this.value">
+            </div>
+          </div>
+
+          <div class="field-row">
+            <div class="field-group half">
+              <label>Coste electricidad <span class="unit">€/kWh</span></label>
+              <input type="number" id="f-ecost" value="0.15" min="0.01" max="1" step="0.01"
+                     oninput="APP.env.electricity_cost=+this.value">
+            </div>
+            <div class="field-group half">
+              <label>Factor CO₂ red <span class="unit">kg/kWh</span></label>
+              <input type="number" id="f-co2" value="0.25" min="0.01" max="1.5" step="0.01"
+                     oninput="APP.env.country_co2_factor=+this.value">
+            </div>
+          </div>
+          <div class="field-help">Coste y CO₂ se actualizan al elegir país. Editables.</div>
+        </div>
+      </div>
+
+      <!-- STEP 2: Fotometría -->
+      <div id="step-2" class="step-form">
+        <h3 class="step-header">Fotometría</h3>
+        <div class="field-group">
+          <label>Clase luminotécnica</label>
+          <select id="f-class" onchange="APP.photometry.lighting_class=this.value">
+            <optgroup label="Serie M (vial)">
+              <option>M1</option><option>M2</option><option>M3</option>
+              <option selected>M4</option><option>M5</option><option>M6</option>
+            </optgroup>
+            <optgroup label="Serie C (conflicto)">
+              <option>C0</option><option>C1</option><option>C2</option>
+              <option>C3</option><option>C4</option><option>C5</option>
+            </optgroup>
+            <optgroup label="Serie P (peatonal)">
+              <option>P1</option><option>P2</option><option>P3</option>
+              <option>P4</option><option>P5</option><option>P6</option>
+            </optgroup>
+          </select>
+        </div>
+        <div class="field-group">
+          <label>Potencia total del sistema <span class="unit">W</span></label>
+          <input type="number" id="f-power" min="1" max="1000" value="90"
+                 oninput="APP.photometry.system_power_w=+this.value; updateConsumptionLive()">
+          <div class="field-help">Incluye luminaria + driver + electrónica</div>
+        </div>
+        <div class="field-row">
+          <div class="field-group half">
+            <label>Altura montaje <span class="unit">m</span></label>
+            <input type="number" id="f-height" min="1" max="20" step="0.5" value="8"
+                   oninput="APP.photometry.mounting_height_m=+this.value">
+          </div>
+          <div class="field-group half">
+            <label>Interdistancia <span class="unit">m</span></label>
+            <input type="number" id="f-spacing" min="5" max="100" step="1" value="30"
+                   oninput="APP.photometry.spacing_m=+this.value">
+          </div>
+        </div>
+        <div class="field-group">
+          <label>Margen normativo <span class="unit">%</span></label>
+          <input type="number" id="f-margin" min="0" max="50" value="10"
+                 oninput="APP.photometry.compliance_margin_pct=+this.value">
+        </div>
+      </div>
+
+      <!-- STEP 3: Perfil Nocturno -->
+      <div id="step-3" class="step-form">
+        <h3 class="step-header">Perfil Nocturno</h3>
+        <div class="twilight-config">
+          <div class="field-row">
+            <div class="field-group half">
+              <label>Encendido</label>
+              <div class="input-with-badge">
+                <input type="number" id="f-margin-on" min="-30" max="30" value="-15"
+                       oninput="APP.nightProfile.margin_on_min=+this.value">
+                <span class="unit" style="font-size:10px;">min antes del ocaso</span>
+              </div>
+            </div>
+            <div class="field-group half">
+              <label>Apagado</label>
+              <div class="input-with-badge">
+                <input type="number" id="f-margin-off" min="-30" max="30" value="15"
+                       oninput="APP.nightProfile.margin_off_min=+this.value">
+                <span class="unit" style="font-size:10px;">min después del alba</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Night profile controls -->
+        <div class="np-sliders">
+          <div class="np-slider-row">
+            <span class="np-slider-label">Mes</span>
+            <input type="range" id="np-month-slider" class="np-slider-input" min="0" max="11" value="5"
+                   oninput="npSetMonth(this.value)">
+            <span id="np-month-val" class="np-slider-val">Jun</span>
+          </div>
+          <div class="np-slider-hint">Previsualiza horas de noche por mes</div>
+          <div class="np-slider-row">
+            <span class="np-slider-label">Presencia</span>
+            <input type="range" id="np-presence-slider" class="np-slider-input" min="0" max="100" value="50"
+                   oninput="npSetPresence(this.value)">
+            <span id="np-presence-val" class="np-slider-val">50%</span>
+          </div>
+          <div class="np-slider-hint">100% = sin sensor · 0% = siempre sin presencia</div>
+          <div style="display:flex;gap:6px;margin-top:6px;">
+            <button class="btn-secondary btn-sm" style="flex:1" onclick="npAddSegment()">+ Segmento</button>
+            <button class="btn-link btn-sm" onclick="npReset()">↺ Defecto</button>
+          </div>
+        </div>
+
+        <div class="section-label">Periodos nocturnos</div>
+        <table id="periods-table" class="periods-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Duración<br><small>% noche</small></th>
+              <th>Presencia<br><small>%</small></th>
+              <th>Dim.pres.<br><small>%</small></th>
+              <th>Dim.s/p.<br><small>%</small></th>
+              <th>Wh</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="periods-tbody"></tbody>
+        </table>
+
+        <div class="table-actions">
+          <button class="btn-secondary btn-sm" onclick="addPeriod()">+ Añadir</button>
+          <button class="btn-link btn-sm" onclick="resetPeriods()">↺ Defecto</button>
+        </div>
+
+        <div class="consumption-summary">
+          <span class="consumption-label">Consumo estimado:</span>
+          <span id="consumption-live" class="consumption-value">486 Wh/noche</span>
+          <span class="consumption-note">(noche ~12h)</span>
+        </div>
+
+        <div class="field-group">
+          <label>Consumo auxiliar (nodo, controlador) <span class="unit">Wh/noche</span></label>
+          <input type="number" id="f-aux" min="0" max="50" value="0" step="0.5"
+                 oninput="APP.nightProfile.aux_wh=+this.value; updateConsumptionLive()">
+        </div>
+      </div>
+
+      <!-- STEP 4: eliminado — contenido integrado en Fase 1 -->
+      <div id="step-4" class="step-form" style="display:none"></div>
+
+      <!-- STEP 5: Candidatos -->
+      <div id="step-5" class="step-form">
+        <h3 class="step-header">Soluciones Candidatas</h3>
+        <div class="candidates-actions">
+          <button class="btn-secondary btn-sm" onclick="selectAllCandidates()">Todas</button>
+          <button class="btn-secondary btn-sm" onclick="selectSILOnly()">Solo SIL</button>
+          <button class="btn-secondary btn-sm" onclick="clearCandidates()">Ninguna</button>
+        </div>
+        <div id="candidates-grid" class="candidates-grid">
+          <div class="candidates-loading">Cargando productos...</div>
+        </div>
+      </div>
+
+      <!-- STEP 6: Simulación -->
+      <div id="step-6" class="step-form">
+        <h3 class="step-header">Simulación</h3>
+        <div id="sim-pre" class="sim-pre">
+          <div class="sim-summary">
+            <div class="sim-summary-item"><span>Ubicación:</span><strong id="sim-location">–</strong></div>
+            <div class="sim-summary-item"><span>Potencia:</span><strong id="sim-power">–</strong></div>
+            <div class="sim-summary-item"><span>Candidatos:</span><strong id="sim-candidates-count">–</strong></div>
+          </div>
+          <button id="btn-simulate" class="btn-primary btn-large btn-block" onclick="runSimulation()">
+            ▶ Ejecutar Simulación
+          </button>
+          <div class="sim-note">
+            <strong>Fuente solar:</strong> PVGIS/JRC (Comisión Europea)<br>
+            El cálculo puede tardar 30–60 segundos dependiendo de los candidatos.
+          </div>
+        </div>
+        <div id="sim-progress" class="sim-progress" style="display:none">
+          <div class="progress-title">Simulando...</div>
+          <div class="progress-bar"><div id="progress-fill" class="progress-fill"></div></div>
+          <div id="progress-log" class="progress-log"></div>
+        </div>
+      </div>
+
+      <!-- STEP 7: Resultados -->
+      <div id="step-7" class="step-form">
+        <h3 class="step-header">Resultados</h3>
+        <div class="results-info">
+          <span>Comparativa de <strong id="results-count">–</strong> soluciones</span>
+        </div>
+        <div class="result-note">Consulta la tabla comparativa en el área central →</div>
+        <div class="gap-btn mt-8">
+          <button class="btn-secondary btn-sm" onclick="exportCSV()">📊 Exportar CSV</button>
+          <button class="btn-secondary btn-sm" onclick="exportJSON()">{ } JSON</button>
+        </div>
+      </div>
+
+      <!-- STEP 8: Detalle -->
+      <div id="step-8" class="step-form">
+        <h3 class="step-header">Detalle Solución</h3>
+        <div id="detail-product-header" class="mb-8"></div>
+        <div class="result-note">Consulta el detalle en el área central →</div>
+      </div>
+
+      <!-- STEP 9: Informe -->
+      <div id="step-9" class="step-form">
+        <h3 class="step-header">Informe y Exportación</h3>
+        <div class="export-options">
+          <button class="btn-primary btn-block" onclick="generateReport()">📄 Generar informe PDF</button>
+          <button class="btn-secondary btn-block" onclick="exportJSON()">{ } Exportar JSON completo</button>
+          <button class="btn-secondary btn-block" onclick="exportCSV()">📊 Exportar tabla CSV</button>
+        </div>
+        <div class="export-info" id="export-params"></div>
+      </div>
+
+    </div><!-- /step-content -->
+
+    <div id="step-nav-buttons">
+      <button id="btn-prev" class="btn-secondary" onclick="prevStep()">← Anterior</button>
+      <button id="btn-next" class="btn-primary" onclick="nextStep()">Siguiente →</button>
+    </div>
+  </aside>
+
+  <!-- MAIN CANVAS -->
+  <main id="main-canvas">
+
+    <!-- Welcome (steps 1-5) -->
+    <!-- CANVAS STEP 1: Clima Solar -->
+    <div id="canvas-step1" class="canvas-panel canvas-step-view" style="display:none">
+      <div class="canvas-header" style="padding-bottom:8px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px;">
+          <span class="canvas-title">Clima Solar</span>
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <div style="display:flex;gap:5px;">
+              <button class="c1-tab active" data-tab="irradiance" onclick="setMonthlyTab('irradiance')">☀ Irradiancia</button>
+              <button class="c1-tab"        data-tab="precip"     onclick="setMonthlyTab('precip')">🌧 Lluvia</button>
+              <button class="c1-tab"        data-tab="temp"       onclick="setMonthlyTab('temp')">🌡 Temperatura</button>
+              <button class="c1-tab"        data-tab="soiling"    onclick="setMonthlyTab('soiling')">🌫 Soiling</button>
+            </div>
+            <div id="c1-opacity-wrap" style="display:none;align-items:center;gap:8px;flex-wrap:wrap;">
+              <button class="c1-tab active" id="c1-btn-annual" onclick="setHeatmapMonth(null)" style="font-size:10px;padding:2px 9px;">Media anual</button>
+              <input id="c1-month-slider" type="range" min="0" max="11" value="0" step="1"
+                style="width:120px;accent-color:var(--salvi-black);cursor:pointer;"
+                oninput="setHeatmapMonth(parseInt(this.value))">
+              <span id="c1-month-label" style="font-size:11px;font-weight:600;color:var(--salvi-black);min-width:28px;"></span>
+              <span style="font-size:10px;color:var(--salvi-grey);margin-left:4px;">opac.</span>
+              <input id="c1-ghi-opacity" type="range" min="0" max="100" value="70" step="5"
+                style="width:55px;height:3px;accent-color:var(--salvi-black);cursor:pointer;"
+                oninput="setGHIOpacity(this.value)">
+              <!-- Geometry selector removed: soiling map shows base environmental index.
+                   Product-specific factor (×0.5–×1.25) is applied at simulation time. -->
+            </div>
+          </div>
+        </div>
+        <span class="canvas-subtitle" id="c1-subtitle" style="display:block;margin-top:4px;">Sin coordenadas — haz clic en el mapa para situar el proyecto</span>
+      </div>
+
+      <div id="c1-cta-strip" style="background:#FFFBF0;border-bottom:1px solid #E8D5A0;padding:7px 16px;display:flex;align-items:center;gap:8px;font-size:12px;color:#7A5C00;flex-shrink:0;">
+        <span style="font-size:15px;">☝️</span>
+        <span>Haz clic en el mapa para situar el proyecto y cargar los datos climáticos</span>
+      </div>
+      <div id="canvas-map" style="flex:1;min-height:0;position:relative;">
+        <div id="c1-ghi-legend">
+          <div id="c1-ghi-gradient-bar" style="height:110px;"></div>
+          <div id="c1-ghi-labels">
+            <span>2800+</span>
+            <span>2400</span>
+            <span>2000</span>
+            <span>1600</span>
+            <span>1200</span>
+            <span>800</span>
+          </div>
+        </div>
+        <div id="c1-ghi-loading">⏳ Calculando mapa solar…</div>
+        <div id="c1-probe" style="display:none;position:absolute;pointer-events:none;z-index:700;
+          background:rgba(20,20,20,0.82);color:#fff;border-radius:5px;
+          padding:4px 9px;font-size:11px;font-family:var(--font-mono);white-space:nowrap;"></div>
+      </div>
+      <div id="c1-monthly-panel">
+        <span id="c1-monthly-title">Irradiancia mensual (kWh/m²/día) · PVGIS/JRC — año meteorológico típico</span>
+        <div id="c1-chart-wrap" style="display:none;"><canvas id="c1-monthly-chart"></canvas></div>
+        <div id="c1-monthly-empty">Haz clic en el mapa para ver el perfil climático mensual</div>
+      </div>
+      <div class="canvas-footer-bar">
+        <span id="c1-coords" style="font-family:var(--font-mono);font-size:12px;color:var(--salvi-grey);">–</span>
+        <span id="c1-pvgis-db" style="font-size:11px;color:var(--salvi-muted);"></span>
+        <span id="c1-annual-ghi" style="font-family:var(--font-mono);font-size:11px;color:var(--salvi-grey);"></span>
+      </div>
+    </div>
+
+    <!-- CANVAS STEP 2-5: Resumen configuración -->
+    <!-- Step 3 – Perfil Nocturno chart -->
+    <div id="canvas-step3" class="canvas-panel canvas-step-view" style="display:none">
+      <div class="np-topbar">
+        <span class="np-canvas-title">Perfil de Dimming Nocturno</span>
+        <span id="np-energy-badge" class="np-energy-badge">⚡ –% ahorro</span>
+      </div>
+      <svg id="np-chart" xmlns="http://www.w3.org/2000/svg"></svg>
+      <div class="np-legend-row">
+        <span class="np-legend-pres">─── Con presencia</span>
+        <span class="np-legend-nopres">- - - Sin presencia</span>
+        <span class="np-legend-hint">Arrastra los puntos · ✕ elimina segmento</span>
+      </div>
+    </div>
+
+    <div id="canvas-welcome" class="canvas-panel">
+      <div class="welcome-content">
+        <div class="welcome-icon">☀</div>
+        <h2 class="welcome-title">SALVI Solar</h2>
+        <p class="welcome-subtitle">Dimensionamiento solar inteligente para alumbrado público</p>
+        <div class="welcome-summary" id="welcome-summary">
+          <div class="welcome-summary-row"><span class="label">Proyecto</span><span class="val" id="ws-name">–</span></div>
+          <div class="welcome-summary-row"><span class="label">Ubicación</span><span class="val" id="ws-loc">–</span></div>
+          <div class="welcome-summary-row"><span class="label">Potencia</span><span class="val" id="ws-power">–</span></div>
+          <div class="welcome-summary-row"><span class="label">Consumo estimado</span><span class="val" id="ws-consumption">–</span></div>
+          <div class="welcome-summary-row"><span class="label">Candidatos</span><span class="val" id="ws-candidates">–</span></div>
+        </div>
+        <button class="btn-primary" onclick="goToStep(6)">Ir a Simulación →</button>
+      </div>
+    </div>
+
+    <!-- Simulation in canvas -->
+    <div id="canvas-simulation" class="canvas-panel" style="display:none">
+      <div class="canvas-sim-inner">
+        <div class="canvas-sim-title">Ejecutando simulación solar</div>
+        <div class="progress-bar" style="height:6px;"><div id="canvas-progress-fill" class="progress-fill"></div></div>
+        <div id="canvas-progress-log" class="progress-log" style="margin-top:12px;"></div>
+      </div>
+    </div>
+
+    <!-- Results table + charts -->
+    <div id="canvas-results" class="canvas-panel" style="display:none">
+      <div class="results-toolbar">
+        <span class="results-title" id="results-canvas-title">Comparativa de soluciones</span>
+        <div class="results-actions">
+          <select id="chart-product-selector" onchange="updateCharts(this.value)">
+            <option value="">– Seleccionar producto –</option>
+          </select>
+          <button class="btn-secondary btn-sm" onclick="exportCSV()">CSV</button>
+          <button class="btn-link btn-sm" style="font-size:10px;opacity:0.5;" onclick="runDebugSim()" title="Diagnóstico de cálculo">🔍</button>
+        </div>
+      </div>
+      <div class="table-container">
+        <table id="results-table" class="results-table">
+          <thead>
+            <tr>
+              <th>Producto</th>
+              <th>Panel <small>Wp</small></th>
+              <th>Batería <small>Wh</small></th>
+              <th>Peso <small>kg</small></th>
+              <th class="sortable" onclick="sortTable('annual_failure_rate_pct')" id="th-reliability">Fiabilidad</th>
+              <th class="sortable" onclick="sortTable('tco_10y_sale')" id="th-tco">TCO 10a €</th>
+              <th class="sortable" onclick="sortTable('co2_saved_10y_kg')" id="th-co2">CO₂ 10a kg</th>
+              <th title="Fiabilidad estimada en el año 10, con batería degradada">Fiab. año 10</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="results-tbody"></tbody>
+        </table>
+      </div>
+      <div class="charts-row">
+        <div class="chart-card">
+          <div class="chart-title" id="chart1-title">Producción vs Consumo mensual</div>
+          <div style="position:relative;height:200px;">
+            <canvas id="chart-monthly"></canvas>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">Estado de carga batería (SOC mensual)</div>
+          <div style="position:relative;height:200px;">
+            <canvas id="chart-soc"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Product detail -->
+    <div id="canvas-detail" class="canvas-panel" style="display:none">
+      <div id="detail-content"></div>
+    </div>
+
+  </main>
+
+  <!-- RIGHT PANEL -->
+  <aside id="right-panel">
+    <div id="rp-pre-sim" class="rp-section">
+      <div class="rp-title">Estado del proyecto</div>
+      <div id="rp-checklist" class="rp-checklist"></div>
+      <div class="rp-consumption">
+        <div class="rp-label">Consumo estimado</div>
+        <div id="rp-consumption-value" class="rp-value">– Wh/noche</div>
+      </div>
+      <button class="btn-primary btn-block" onclick="goToStep(6)" style="margin-top:8px;">Ejecutar Simulación →</button>
+    </div>
+    <div id="rp-results" class="rp-section" style="display:none">
+      <div class="rp-title">★ Solución Recomendada</div>
+      <div id="rp-recommended-name" class="rp-product-name"></div>
+      <div id="rp-recommended-specs" class="rp-specs"></div>
+      <div class="rp-kpis" id="rp-kpis"></div>
+      <button class="btn-secondary btn-block" onclick="goToStep(7)">Ver comparativa →</button>
+    </div>
+  </aside>
+
+  <!-- BOTTOM BAR -->
+  <footer id="bottom-bar">
+    <span>SALVI Solar v1.0.0 · Motor v1.0 · Biblioteca Salvi Solar 2026.1</span>
+    <span id="error-badge" class="badge badge-danger" style="display:none"></span>
+  </footer>
+
+</div><!-- /#app -->
+
+<div id="toast-container"></div>
+
+<script src="https://unpkg.com/lucide@0.383.0/dist/umd/lucide.min.js"></script>
+<script>if (window.lucide) lucide.createIcons();</script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<script>
+// ─────────────────────────────────────────────
+// APP STATE
+// ─────────────────────────────────────────────
+const API = 'http://localhost:5001/api';
+
+async function apiPost(endpoint, body) {
+  const r = await fetch(API + endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  if (!r.ok) {
+    let msg = 'HTTP ' + r.status;
+    try { const d = await r.json(); if (d.error) msg = d.error; } catch(_) {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+const APP = {
+  step: 1,
+  project: { name: '', country: 'ES', city: '', lat: null, lon: null },
+  photometry: {
+    lighting_class: 'M4', luminaire_model: '',
+    system_power_w: 90, mounting_height_m: 8,
+    spacing_m: 30, compliance_margin_pct: 10
+  },
+  nightProfile: {
+    margin_on_min: -15, margin_off_min: 15, aux_wh: 0,
+    periods: [
+      { duration_pct: 0.333, presence_ratio: 0.5,  dimming_presence: 1.0, dimming_no_presence: 0.3 },
+      { duration_pct: 0.333, presence_ratio: 0.2,  dimming_presence: 0.8, dimming_no_presence: 0.2 },
+      { duration_pct: 0.334, presence_ratio: 0.3,  dimming_presence: 0.8, dimming_no_presence: 0.2 },
+    ]
+  },
+  env: {
+    soiling_env: 'urbana_normal', ambient_temp_c: 35,
+    electricity_cost: 0.15, country_co2_factor: 0.18,
+    max_failure_rate_pct: 2.0
+  },
+  candidates: ['SIL_M_60','SIL_M_90','SIL_L_200','SIL_L_260'],
+  products: [],
+  simulation: null,
+  selectedProductId: null,
+  sortField: null,
+  sortAsc: true,
+  charts: { monthly: null, soc: null },
+};
+
+// cost = tarifa alumbrado público (industrial/comercial) €/kWh — fuente: Eurostat Q3-2024, IEA 2023, tarifas nacionales
+// co2  = intensidad carbono red eléctrica kg CO₂/kWh — fuente: Ember Global Electricity Review 2024 / IEA CO₂ 2023
+const COUNTRY_CO2 = {
+  'ES':{ co2:0.18, cost:0.15 },  // España      — mix renovable alto, tarifa 3.0A AP
+  'FR':{ co2:0.05, cost:0.14 },  // Francia     — nuclear dominante
+  'DE':{ co2:0.35, cost:0.18 },  // Alemania    — transición energética
+  'IT':{ co2:0.23, cost:0.20 },  // Italia
+  'PT':{ co2:0.18, cost:0.14 },  // Portugal    — alta penetración renovable
+  'MA':{ co2:0.62, cost:0.12 },  // Marruecos   — ONEE tarifa industrial
+  'DZ':{ co2:0.57, cost:0.04 },  // Argelia     — gas subvencionado
+  'TN':{ co2:0.50, cost:0.08 },  // Túnez
+  'SN':{ co2:0.62, cost:0.18 },  // Senegal     — SENELEC tarifa comercial
+  'EG':{ co2:0.44, cost:0.04 },  // Egipto      — energía subvencionada
+  'NG':{ co2:0.40, cost:0.05 },  // Nigeria
+  'KE':{ co2:0.22, cost:0.10 },  // Kenia       — hidro + geotérmico
+  'ZA':{ co2:0.85, cost:0.07 },  // Sudáfrica   — carbón dominante (Eskom)
+  'SA':{ co2:0.65, cost:0.04 },  // Arabia Saudí — gas subvencionado
+  'IN':{ co2:0.70, cost:0.08 },  // India       — mix carbón + renovable
+  'BR':{ co2:0.09, cost:0.08 },  // Brasil      — hidro dominante
+  'MX':{ co2:0.42, cost:0.06 },  // México
+};
+
+const MONTHS = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+
+// ─────────────────────────────────────────────
+// NAVIGATION
+// ─────────────────────────────────────────────
+// Fase 4 (Entorno) integrada en Fase 1 — se omite en la secuencia de navegación
+const STEP_ORDER = [1, 2, 3, 5, 6, 7, 8, 9];
+
+function goToStep(n) {
+  if (!STEP_ORDER.includes(n)) return;
+  // Hide all forms
+  document.querySelectorAll('.step-form').forEach(f => f.classList.remove('active'));
+  document.querySelectorAll('.step-icon-btn').forEach(btn => btn.classList.remove('active'));
+  // Show target form
+  const form = document.getElementById('step-' + n);
+  if (form) form.classList.add('active');
+  // Mark active nav icon
+  const navItem = document.querySelector('.step-icon-btn[data-step="' + n + '"]');
+  if (navItem) navItem.classList.add('active');
+  APP.step = n;
+  // Update canvas
+  updateCanvasView(n);
+  // Update step 6 summary
+  if (n === 6) updateSimSummary();
+  // Update step 9 export info
+  if (n === 9) updateExportInfo();
+  // Update nav buttons
+  updateNavButtons();
+}
+
+function nextStep() {
+  const idx = STEP_ORDER.indexOf(APP.step);
+  if (idx < STEP_ORDER.length - 1) goToStep(STEP_ORDER[idx + 1]);
+}
+function prevStep() {
+  const idx = STEP_ORDER.indexOf(APP.step);
+  if (idx > 0) goToStep(STEP_ORDER[idx - 1]);
+}
+
+function updateNavButtons() {
+  const idx = STEP_ORDER.indexOf(APP.step);
+  document.getElementById('btn-prev').disabled = idx <= 0;
+  document.getElementById('btn-next').disabled = idx >= STEP_ORDER.length - 1;
+}
+
+function updateCanvasView(step) {
+  const c1    = document.getElementById('canvas-step1');
+  const c3    = document.getElementById('canvas-step3');
+  const welcome = document.getElementById('canvas-welcome');
+  const sim   = document.getElementById('canvas-simulation');
+  const results = document.getElementById('canvas-results');
+  const detail  = document.getElementById('canvas-detail');
+  [c1, c3, welcome, sim, results, detail].forEach(el => { if(el) el.style.display = 'none'; });
+
+  if (step === 1) {
+    c1.style.display = 'flex';
+    setTimeout(function() { initCanvasMap(); }, 30);
+  } else if (step === 3) {
+    c3.style.display = 'flex';
+    setTimeout(function() { npInitFromApp(); }, 30);
+  } else if (step <= 5) {
+    welcome.style.display = 'block';
+  } else if (step === 6) {
+    APP.simulation ? (results.style.display = 'flex') : (welcome.style.display = 'block');
+  } else if (step === 7) {
+    APP.simulation ? (results.style.display = 'flex') : (welcome.style.display = 'block');
+  } else if (step === 8) {
+    if (APP.selectedProductId && APP.simulation) detail.style.display = 'block';
+    else if (APP.simulation) results.style.display = 'flex';
+    else welcome.style.display = 'block';
+  } else if (step === 9) {
+    APP.simulation ? (results.style.display = 'flex') : (welcome.style.display = 'block');
+  }
+}
+
+// ─────────────────────────────────────────────
+// CANVAS MAP (step 1) — Clima Solar
+// ─────────────────────────────────────────────
+let _canvasMap    = null;
+let _canvasMarker = null;
+let _ghiCircle    = null;
+let _ghiGridLayer = null;
+let _ghiGridData  = null;   // last rendered grid, for probe
+let _ghiGridDebounce = null;
+let _heatmapMonth = null;   // null=annual avg, 0-11=specific month
+
+const MO_NAMES = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+let _monthlyChart = null;
+let _monthlyData  = { irradiance: null, precip: null, temp: null, wind: null, soiling: null };
+// 'base' = factor 1.0 (environmental indicator, no product assumption).
+// The product geometry factor is applied at simulation time (backend geometrias.py).
+let _soilingGeoKey = 'base';
+
+// Factors from geometrias.py — same values used in simulation engine
+const SOILING_GEO_FACTORS = {
+  sil_horizontal:     1.25,   // SIL M/L 5°: accumulates dust (worse than reference)
+  sil_independent:    1.00,   // SIL independiente 5°: reference
+  double_vertical_eo: 0.60,   // Vertical E/O 90°: partial self-cleaning
+  cylinder:           0.50,   // Cilindro 90°: best self-cleaning
+};
+const SOILING_THRESHOLD_PCT = 5.0;  // industry standard: clean at 5% loss
+let _activeMonthlyTab = 'irradiance';
+let _climateDebounce  = null;
+
+const MONTHLY_CFG = {
+  irradiance: { title: 'Irradiancia mensual (kWh/m²/día) · PVGIS/JRC — año meteorológico típico',           unit: 'kWh/m²/día', color: '#F5A623', type: 'bar'  },
+  precip:     { title: 'Precipitación media mensual (mm/día) · Open-Meteo 2020–2023',                        unit: 'mm/día',     color: '#4A90D9', type: 'bar'  },
+  temp:       { title: 'Temperatura media mensual (°C) · Open-Meteo 2020–2023',                              unit: '°C',         color: '#E8742A', type: 'line' },
+  soiling:    { title: 'Índice ambiental de suciedad (% base, factor geom. ×0.5–×1.25 según panel) · Open-Meteo 2020–2023', unit: '%', color: '#8B4513', type: 'bar' },
+};
+
+const GHI_ZONES = [
+  { max: 1200,     color: '#3D8B37' },
+  { max: 1600,     color: '#8BB833' },
+  { max: 2000,     color: '#F5C518' },
+  { max: 2400,     color: '#F5A623' },
+  { max: Infinity, color: '#D0021B' },
+];
+
+
+function _hexToRgba(hex, a) {
+  const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+function initCanvasMap() {
+  if (!window.L) return;
+  const container = document.getElementById('canvas-map');
+  if (!container) return;
+  if (!_canvasMap) {
+    const lat  = APP.project.lat || 20.0;
+    const lon  = APP.project.lon || 10.0;
+    const zoom = APP.project.lat ? 8 : 3;
+    _canvasMap = L.map('canvas-map', { zoomControl: true, attributionControl: true })
+      .setView([lat, lon], zoom);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '© OpenStreetMap contributors', maxZoom: 18
+    }).addTo(_canvasMap);
+    setTimeout(function() { _canvasMap.invalidateSize(); }, 50);
+    setTimeout(initProbeHandler, 100);
+    // ── Redraw heatmap on zoom/pan ──
+    _canvasMap.on('moveend', function() {
+      if (!_ghiGridData) return;
+      clearTimeout(_ghiGridDebounce);
+      _ghiGridDebounce = setTimeout(fetchGHIGrid, 800);
+    });
+    // ── Click to pick location ──
+    _canvasMap.on('click', function(e) {
+      const lat = parseFloat(e.latlng.lat.toFixed(5));
+      const lon = parseFloat(e.latlng.lng.toFixed(5));
+      APP.project.lat = lat;
+      APP.project.lon = lon;
+      const latEl = document.getElementById('f-lat');
+      const lonEl = document.getElementById('f-lon');
+      if (latEl) latEl.value = lat;
+      if (lonEl) lonEl.value = lon;
+      const hint = document.getElementById('c1-pick-hint');
+      if (hint) hint.classList.add('hidden');
+      const strip = document.getElementById('c1-cta-strip');
+      if (strip) strip.style.display = 'none';
+      updateDisplay();
+      updateCanvasMapPin();
+      _reverseGeocode(lat, lon);
+    });
+  } else {
+    _canvasMap.invalidateSize();
+  }
+  updateCanvasMapPin();
+}
+
+async function _reverseGeocode(lat, lon) {
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10&addressdetails=1`;
+    const r = await fetch(url, { headers: { 'Accept-Language': 'es,en' } });
+    const d = await r.json();
+    if (d.address) {
+      const city = d.address.city || d.address.town || d.address.village ||
+                   d.address.municipality || d.address.county || '';
+      APP.project.city = city;
+      const cityEl = document.getElementById('f-city');
+      if (cityEl) cityEl.value = city;
+      const cc = (d.address.country_code || '').toUpperCase();
+      if (cc) {
+        APP.project.country = cc;
+        const sel = document.getElementById('f-country');
+        if (sel) { for (const opt of sel.options) { if (opt.value === cc) { sel.value = cc; break; } } }
+      }
+      updateDisplay();
+    }
+  } catch(e) {}
+}
+
+// Called from fetchClimateData when irradiance point data arrives
+function updateMapGHI(lat, lon, annualGHI) {
+  const ghiEl = document.getElementById('c1-annual-ghi');
+  if (ghiEl) ghiEl.textContent = 'GHI anual: ' + Math.round(annualGHI) + ' kWh/m²';
+  clearTimeout(_ghiGridDebounce);
+  _ghiGridDebounce = setTimeout(fetchGHIGrid, 200);
+}
+
+function setGHIOpacity(val) {
+  const op = parseInt(val) / 100;
+  if (_ghiGridLayer) _ghiGridLayer.setOpacity(op);
+  if (_ghiCircle) _ghiCircle.setStyle({ fillOpacity: op });
+}
+
+// ── Color scale matching PVGIS (blue→cyan→green→yellow→orange→red) ──
+const GHI_COLOR_STOPS = [
+  { v: 800,  r:   0, g:  76, b: 179 },
+  { v: 1200, r:   0, g: 153, b: 204 },
+  { v: 1600, r: 100, g: 200, b: 100 },
+  { v: 2000, r: 220, g: 200, b:   0 },
+  { v: 2400, r: 240, g: 130, b:   0 },
+  { v: 2800, r: 200, g:   0, b:   0 },
+];
+
+function ghiToRGB(ghi) {
+  const stops = GHI_COLOR_STOPS;
+  if (ghi <= stops[0].v) return [stops[0].r, stops[0].g, stops[0].b];
+  if (ghi >= stops[stops.length-1].v) { const s = stops[stops.length-1]; return [s.r, s.g, s.b]; }
+  for (let k = 1; k < stops.length; k++) {
+    if (ghi <= stops[k].v) {
+      const t = (ghi - stops[k-1].v) / (stops[k].v - stops[k-1].v);
+      return [
+        Math.round(stops[k-1].r + (stops[k].r - stops[k-1].r) * t),
+        Math.round(stops[k-1].g + (stops[k].g - stops[k-1].g) * t),
+        Math.round(stops[k-1].b + (stops[k].b - stops[k-1].b) * t),
+      ];
+    }
+  }
+  return [200, 0, 0];
+}
+
+// Precipitation color stops (t=0..1): white → light blue → blue → dark blue
+const PRECIP_STOPS = [
+  [0,    255, 252, 255],
+  [0.15, 190, 225, 250],
+  [0.35,  90, 170, 230],
+  [0.6,   30, 110, 200],
+  [0.8,   10,  55, 160],
+  [1.0,    5,  20,  90],
+];
+// Temperature color stops (t=0..1): dark blue → cyan → green → yellow → orange → red
+const TEMP_STOPS = [
+  [0,    0,   40, 160],
+  [0.2,  30, 140, 210],
+  [0.4, 100, 210, 120],
+  [0.6, 230, 225,  40],
+  [0.8, 240, 110,  10],
+  [1.0, 200,   0,   0],
+];
+
+// Soiling color: green (clean) → yellow → orange → brown-red (desert)
+const SOILING_STOPS = [
+  [0,    40, 180,  60],
+  [0.2, 150, 200,  50],
+  [0.4, 230, 210,  30],
+  [0.6, 240, 130,  15],
+  [0.8, 200,  55,  10],
+  [1.0, 130,  25,  10],
+];
+
+// Base monthly soiling rate (% per month, horizontal reference, before geo correction)
+function _baseSoilingMonthly(precip_mm_day, wind_kmh) {
+  const monthly_mm = (precip_mm_day || 0) * 30;
+  const wind = wind_kmh || 0;
+  let base;
+  if      (monthly_mm >= 100) base = 0.5;
+  else if (monthly_mm >=  60) base = 1.0;
+  else if (monthly_mm >=  30) base = 2.2;
+  else if (monthly_mm >=  10) base = 4.5;
+  else if (monthly_mm >=   3) base = 9.0;
+  else if (monthly_mm >= 0.5) base = 16.0;
+  else                        base = 22.0;
+  const wf = wind > 50 ? 1.30 : wind > 20 ? 1.15 : 1.0;
+  return base * wf;
+}
+
+// Monthly soiling loss % for a specific geometry
+function computeSoilingPct(precip_mm_day, wind_kmh, geo_key) {
+  const gf = SOILING_GEO_FACTORS[geo_key] ?? 1.0;
+  return Math.min(30, _baseSoilingMonthly(precip_mm_day, wind_kmh) * gf);
+}
+
+// Estimated cleaning interval in days (cumulative model, threshold=5%)
+// Returns null if natural rain keeps panels clean without manual cleaning
+function computeCleaningDays(precip_mm_day, wind_kmh, geo_key) {
+  const gf  = SOILING_GEO_FACTORS[geo_key] ?? 1.0;
+  const eff = _baseSoilingMonthly(precip_mm_day, wind_kmh) * gf;   // %/month with geo
+  if (eff <= 0.01) return null;
+  const daily_rate = eff / 30.0;                                   // %/day
+  const days = Math.round(SOILING_THRESHOLD_PCT / daily_rate);
+  // Check if natural rain events clean before threshold is reached
+  const monthly_mm = (precip_mm_day || 0) * 30;
+  const rain_days  = Math.min(30, monthly_mm / 5);                 // ~5mm per rain event
+  const dry_run    = rain_days > 0 ? 30 / rain_days : 999;         // avg days between rain
+  if (dry_run < days) return null;                                  // rain handles it
+  return days;
+}
+
+function setSoilingGeo(key) {
+  _soilingGeoKey = key;
+  if (_ghiGridData) renderGHICanvas(_ghiGridData._raw);
+  if (_monthlyData.precip) {
+    _monthlyData.soiling = _monthlyData.precip.map(function(p, i) {
+      return computeSoilingPct(p, _monthlyData.wind ? _monthlyData.wind[i] : 0, _soilingGeoKey);
+    });
+    renderMonthlyChart();
+  }
+}
+
+function normToRGBStops(t, stops) {
+  if (t <= 0) return [stops[0][1], stops[0][2], stops[0][3]];
+  if (t >= 1) { const s = stops[stops.length-1]; return [s[1], s[2], s[3]]; }
+  for (let k = 1; k < stops.length; k++) {
+    if (t <= stops[k][0]) {
+      const lo = stops[k-1], hi = stops[k];
+      const f = (t - lo[0]) / (hi[0] - lo[0]);
+      return [
+        Math.round(lo[1] + (hi[1]-lo[1])*f),
+        Math.round(lo[2] + (hi[2]-lo[2])*f),
+        Math.round(lo[3] + (hi[3]-lo[3])*f),
+      ];
+    }
+  }
+  const s = stops[stops.length-1]; return [s[1], s[2], s[3]];
+}
+
+async function fetchGHIGrid() {
+  if (!_canvasMap) return;
+  const loadEl = document.getElementById('c1-ghi-loading');
+  if (loadEl) loadEl.style.display = 'block';
+  try {
+    const n = 5;
+    const b = _canvasMap.getBounds();
+    const c = _canvasMap.getCenter();
+    // dlat/dlon chosen so n grid points span exactly the visible viewport
+    const dlat = (b.getNorth() - b.getSouth()) / (n - 1);
+    const dlon = (b.getEast()  - b.getWest())  / (n - 1);
+    const url = 'http://localhost:5001/api/climate/grid?lat=' + c.lat.toFixed(4) +
+                '&lon=' + c.lng.toFixed(4) +
+                '&n=' + n +
+                '&dlat=' + dlat.toFixed(4) +
+                '&dlon=' + dlon.toFixed(4);
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const d = await r.json();
+    if (d.grid) renderGHICanvas(d);
+  } catch(e) {
+    console.warn('[grid] error:', e.message);
+  } finally {
+    if (loadEl) loadEl.style.display = 'none';
+  }
+}
+
+function setHeatmapMonth(mo) {
+  _heatmapMonth = mo;
+  const slider = document.getElementById('c1-month-slider');
+  const label  = document.getElementById('c1-month-label');
+  const annBtn = document.getElementById('c1-btn-annual');
+  if (mo === null) {
+    if (label) label.textContent = 'Media anual';
+    if (annBtn) annBtn.classList.add('active');
+  } else {
+    if (slider) slider.value = mo;
+    if (label)  label.textContent = MO_NAMES[mo];
+    if (annBtn) annBtn.classList.remove('active');
+  }
+  if (_ghiGridData) renderGHICanvas(_ghiGridData._raw);
+}
+
+function renderGHICanvas(data) {
+  const n = data.n;
+  const dlat = data.dlat;
+  const dlon = data.dlon;
+  const center = data.center;
+  const pts = data.grid;
+  const half = (n - 1) / 2;
+  const mo = _heatmapMonth;   // null = annual daily avg, 0-11 = specific month
+
+  const tab = _activeMonthlyTab;  // 'irradiance' | 'precip' | 'temp'
+
+  // Build n×n matrix — value depends on active tab and selected month
+  const matrix = [];
+  for (let i = 0; i < n; i++) {
+    matrix[i] = [];
+    for (let j = 0; j < n; j++) {
+      const elat = center.lat + (i - half) * dlat;
+      const elon = center.lon + (j - half) * dlon;
+      const pt = pts.find(function(p) {
+        return Math.abs(p.lat - elat) < 0.5 && Math.abs(p.lon - elon) < 0.5;
+      });
+      let val = null;
+      if (pt) {
+        if (tab === 'irradiance') {
+          if (mo !== null && pt.monthly && pt.monthly[mo] != null) val = pt.monthly[mo];
+          else if (pt.annual) val = pt.annual / 365.0;
+        } else if (tab === 'precip') {
+          const arr = pt.precip;
+          if (arr) val = mo !== null ? arr[mo] : arr.reduce(function(s,v){return s+v;},0)/12;
+        } else if (tab === 'temp') {
+          const arr = pt.temp;
+          if (arr) val = mo !== null ? arr[mo] : arr.reduce(function(s,v){return s+v;},0)/12;
+        } else if (tab === 'soiling') {
+          const pa = pt.precip, wa = pt.wind;
+          if (pa && wa) {
+            if (mo !== null) {
+              val = computeSoilingPct(pa[mo], wa[mo], _soilingGeoKey);
+            } else {
+              const avg = pa.map(function(p,i){ return computeSoilingPct(p, wa[i], _soilingGeoKey); });
+              val = avg.reduce(function(s,v){return s+v;},0) / 12;
+            }
+          }
+        }
+      }
+      matrix[i][j] = val;
+    }
+  }
+
+  // Collect valid values; fill nulls with median
+  const allValid = [];
+  for (let i=0;i<n;i++) for (let j=0;j<n;j++) if (matrix[i][j] != null) allValid.push(matrix[i][j]);
+  allValid.sort(function(a,b){return a-b;});
+  if (!allValid.length) return;
+  const median = allValid[Math.floor(allValid.length / 2)];
+  for (let i = 0; i < n; i++)
+    for (let j = 0; j < n; j++)
+      if (matrix[i][j] == null) matrix[i][j] = median;
+
+  // Fixed universal scale — same color always means same value regardless of location/month
+  const UNIVERSAL_SCALES = {
+    irradiance: { min: 0,   max: 8.5 },   // kWh/m²/d: Finland winter → Sahara/Yemen summer
+    precip:     { min: 0,   max: 12  },   // mm/d: desert → Atlantic coast
+    temp:       { min: -10, max: 42  },   // °C: Central Europe winter → Sahel summer
+    soiling:    { min: 0,   max: 20  },   // %: clean → high dust/desert
+  };
+  const _sc = UNIVERSAL_SCALES[tab] || { min: 0, max: 10 };
+  const scaleMin = _sc.min;
+  const scaleMax = _sc.max;
+
+  // Update legend labels and gradient bar
+  const labels = document.querySelectorAll('#c1-ghi-labels span');
+  if (labels.length === 6) {
+    const step = (scaleMax - scaleMin) / 5;
+    const unitSuffix = { irradiance: ' kWh/m²/d', precip: ' mm/d', temp: '°C', soiling: '%' };
+    const suf = unitSuffix[tab] || '';
+    for (let k = 0; k < 6; k++) {
+      labels[5 - k].textContent = (scaleMin + k * step).toFixed(1) + suf;
+    }
+  }
+  const gradBar = document.getElementById('c1-ghi-gradient-bar');
+  if (gradBar) {
+    const palettes = {
+      irradiance: 'linear-gradient(to top,#004CB3,#0099CC,#64C864,#DCE800,#F08200,#C80000)',
+      precip:     'linear-gradient(to top,#FFFCFF,#BEE1FA,#5AAAE6,#1E6EC8,#0A37A0,#05145A)',
+      temp:       'linear-gradient(to top,#00289F,#1E8CD2,#64D278,#E6E128,#F06E0A,#C80000)',
+      soiling:    'linear-gradient(to top,#28B43C,#96C832,#E6D21E,#F0820F,#C8370A,#821919)',
+    };
+    gradBar.style.background = palettes[tab] || palettes.irradiance;
+  }
+
+  // Color scale for active tab
+  const colorStops = tab === 'precip' ? PRECIP_STOPS
+                   : tab === 'temp'   ? TEMP_STOPS
+                   : tab === 'soiling'? SOILING_STOPS
+                   : null;
+  function normToRGB(t) {
+    if (colorStops) return normToRGBStops(t, colorStops);
+    const stops = [[0,0,76,179],[0.2,0,153,204],[0.4,100,200,100],[0.6,220,200,0],[0.8,240,130,0],[1.0,200,0,0]];
+    return normToRGBStops(t, stops);
+  }
+
+  // Canvas: 512×512, bilinear interpolation
+  const SZ = 512;
+  const canvas = document.createElement('canvas');
+  canvas.width = SZ; canvas.height = SZ;
+  const ctx = canvas.getContext('2d');
+  const imgData = ctx.createImageData(SZ, SZ);
+  const px = imgData.data;
+  const slider = document.getElementById('c1-ghi-opacity');
+  const alpha = slider ? Math.round(parseInt(slider.value) * 2.55) : 179;
+
+  for (let py = 0; py < SZ; py++) {
+    for (let pxx = 0; pxx < SZ; pxx++) {
+      const gi = ((SZ - 1 - py) / (SZ - 1)) * (n - 1);
+      const gj = (pxx / (SZ - 1)) * (n - 1);
+      const i0 = Math.min(Math.floor(gi), n - 2);
+      const i1 = i0 + 1;
+      const j0 = Math.min(Math.floor(gj), n - 2);
+      const j1 = j0 + 1;
+      const ti = gi - i0, tj = gj - j0;
+      const val = matrix[i0][j0]*(1-ti)*(1-tj) + matrix[i1][j0]*ti*(1-tj) +
+                  matrix[i0][j1]*(1-ti)*tj      + matrix[i1][j1]*ti*tj;
+      const t = Math.max(0, Math.min(1, (val - scaleMin) / (scaleMax - scaleMin)));
+      const [r, g, b] = normToRGB(t);
+      const idx = (py * SZ + pxx) * 4;
+      px[idx]=r; px[idx+1]=g; px[idx+2]=b; px[idx+3]=alpha;
+    }
+  }
+  ctx.putImageData(imgData, 0, 0);
+
+  // Leaflet image overlay — stretch exactly to current viewport
+  const mb = _canvasMap.getBounds();
+  const overlayBounds = [
+    [mb.getSouth(), mb.getWest()],
+    [mb.getNorth(), mb.getEast()]
+  ];
+  if (_ghiGridLayer) { _canvasMap.removeLayer(_ghiGridLayer); }
+  if (_ghiCircle)    { _canvasMap.removeLayer(_ghiCircle); _ghiCircle = null; }
+  _ghiGridLayer = L.imageOverlay(canvas.toDataURL('image/png'), overlayBounds, {
+    opacity: 1.0, interactive: false, zIndex: 200
+  }).addTo(_canvasMap);
+
+  // Save grid for probe and month switching
+  _ghiGridData = { matrix, n, center, dlat, dlon, scaleMin, scaleMax, half, _raw: data };
+
+  // Update legend unit label
+  const unitStr = mo !== null ? (MO_NAMES[mo] + ' · kWh/m²/día') : 'kWh/m²/día (media)';
+  const ghiEl = document.getElementById('c1-annual-ghi');
+  // (unit shown in probe tooltip instead of footer)
+
+  // Show legend + opacity slider + month strip
+  const legend = document.getElementById('c1-ghi-legend');
+  if (legend) legend.style.display = 'flex';
+  const opWrap = document.getElementById('c1-opacity-wrap');
+  if (opWrap) opWrap.style.display = 'flex';
+  // Sync month label + annual button state
+  const label = document.getElementById('c1-month-label');
+  if (label) label.textContent = mo !== null ? MO_NAMES[mo] : '';
+  const annBtn = document.getElementById('c1-btn-annual');
+  if (annBtn) annBtn.classList.toggle('active', mo === null);
+}
+
+// Returns the nearest raw grid point to (lat,lon) — used by soiling probe
+function _probeGetPoint(lat, lon) {
+  if (!_ghiGridData) return null;
+  const pts = _ghiGridData._raw.grid;
+  let best = null, bestDist = Infinity;
+  pts.forEach(function(p) {
+    const d = Math.abs(p.lat - lat) + Math.abs(p.lon - lon);
+    if (d < bestDist) { bestDist = d; best = p; }
+  });
+  return best;
+}
+
+// ── GHI Probe: interpolate GHI at any lat/lon from the stored grid ──
+function probeGHI(lat, lon) {
+  const g = _ghiGridData;
+  if (!g) return null;
+  const n = g.n, half = g.half;
+  const gi = (lat - g.center.lat) / g.dlat + half;
+  const gj = (lon - g.center.lon) / g.dlon + half;
+  if (gi < 0 || gi > n-1 || gj < 0 || gj > n-1) return null;
+  const i0 = Math.min(Math.floor(gi), n-2), i1 = i0+1;
+  const j0 = Math.min(Math.floor(gj), n-2), j1 = j0+1;
+  const ti = gi-i0, tj = gj-j0;
+  // matrix already stores kWh/m2/day
+  return g.matrix[i0][j0]*(1-ti)*(1-tj) + g.matrix[i1][j0]*ti*(1-tj) +
+         g.matrix[i0][j1]*(1-ti)*tj      + g.matrix[i1][j1]*ti*tj;
+}
+
+function initProbeHandler() {
+  if (!_canvasMap || _canvasMap._probeInit) return;
+  _canvasMap._probeInit = true;
+  const probeEl = document.getElementById('c1-probe');
+  const mapContainer = document.getElementById('canvas-map');
+
+  _canvasMap.on('mousemove', function(e) {
+    if (!_ghiGridData || !probeEl) return;
+    const val = probeGHI(e.latlng.lat, e.latlng.lng);
+    if (val === null) { probeEl.style.display = 'none'; return; }
+    const mo    = _heatmapMonth;
+    const tab   = _activeMonthlyTab;
+    const label = mo !== null ? MO_NAMES[mo] : 'media';
+    let text;
+    if (tab === 'irradiance') {
+      text = label + ': ' + val.toFixed(1) + ' kWh/m²/día';
+    } else if (tab === 'precip') {
+      text = label + ': ' + val.toFixed(1) + ' mm/día';
+    } else if (tab === 'temp') {
+      text = label + ': ' + val.toFixed(1) + ' °C';
+    } else if (tab === 'soiling') {
+      // Show base environmental soiling + per-geometry range note.
+      // Product geometry factor (×0.5–×1.25) is applied at simulation time, not here.
+      const g = _ghiGridData;
+      const pt = g ? _probeGetPoint(e.latlng.lat, e.latlng.lng) : null;
+      let rangeStr = '';
+      if (pt && pt.precip) {
+        const pidx = mo !== null ? mo : 5;
+        const base = _baseSoilingMonthly(pt.precip[pidx], pt.wind ? pt.wind[pidx] : 0);
+        const vCyl  = Math.min(30, base * 0.50);
+        const vSil  = Math.min(30, base * 1.25);
+        if (base > 0.1) {
+          rangeStr = '  ·  cilindro: ' + vCyl.toFixed(1) + '%  /  SIL horiz.: ' + vSil.toFixed(1) + '%';
+        }
+      }
+      text = label + ': ' + val.toFixed(1) + '% (base)' + rangeStr;
+    } else {
+      text = label + ': ' + val.toFixed(1);
+    }
+    probeEl.textContent = text;
+    // Position tooltip near cursor (offset so it doesn't cover the click target)
+    const rect = mapContainer.getBoundingClientRect();
+    const mp = _canvasMap.latLngToContainerPoint(e.latlng);
+    const tx = mp.x + 14, ty = mp.y - 28;
+    probeEl.style.left = tx + 'px';
+    probeEl.style.top  = ty + 'px';
+    probeEl.style.display = 'block';
+  });
+
+  _canvasMap.on('mouseout', function() {
+    if (probeEl) probeEl.style.display = 'none';
+  });
+}
+
+function updateCanvasMapPin() {
+  if (!_canvasMap || !APP.project.lat || !APP.project.lon) return;
+  const lat = APP.project.lat, lon = APP.project.lon;
+  if (_canvasMarker) {
+    _canvasMarker.setLatLng([lat, lon]);
+  } else {
+    _canvasMarker = L.marker([lat, lon]).addTo(_canvasMap);
+  }
+  _canvasMap.setView([lat, lon], Math.max(_canvasMap.getZoom(), 8));
+  const coordsEl   = document.getElementById('c1-coords');
+  const subtitleEl = document.getElementById('c1-subtitle');
+  const pvgisEl    = document.getElementById('c1-pvgis-db');
+  if (coordsEl)  coordsEl.textContent = lat.toFixed(4) + ', ' + lon.toFixed(4);
+  if (subtitleEl) {
+    const name = APP.project.city || (lat.toFixed(2) + ', ' + lon.toFixed(2));
+    subtitleEl.textContent = name + (APP.project.country ? ' · ' + APP.project.country : '');
+  }
+  if (pvgisEl) {
+    const db = (lat >= -65 && lat <= 65 && lon >= -25 && lon <= 75) ? 'PVGIS-SARAH3' : 'ERA5';
+    pvgisEl.textContent = 'Base solar: ' + db;
+  }
+  clearTimeout(_climateDebounce);
+  _climateDebounce = setTimeout(() => fetchClimateData(lat, lon), 700);
+}
+
+async function fetchClimateData(lat, lon) {
+  const emptyEl   = document.getElementById('c1-monthly-empty');
+  const chartWrap = document.getElementById('c1-chart-wrap');
+  if (emptyEl) { emptyEl.style.display = 'block'; emptyEl.textContent = 'Cargando datos climáticos…'; }
+  if (chartWrap) chartWrap.style.display = 'none';
+
+  let fetchErr = null;
+  try {
+    const r = await fetch('http://localhost:5001/api/climate?lat=' + lat + '&lon=' + lon);
+    if (!r.ok) { fetchErr = 'HTTP ' + r.status; throw new Error(fetchErr); }
+    const d = await r.json();
+    const days = [31,28,31,30,31,30,31,31,30,31,30,31];
+    if (d.irradiance && d.irradiance.length === 12) {
+      _monthlyData.irradiance = d.irradiance;
+      const annualGHI = d.irradiance.reduce(function(s, v, i) { return s + v * days[i]; }, 0);
+      updateMapGHI(lat, lon, annualGHI);
+    } else {
+      _monthlyData.irradiance = null;
+    }
+    _monthlyData.precip = (d.precip && d.precip.length === 12) ? d.precip : null;
+    _monthlyData.temp   = (d.temp   && d.temp.length   === 12) ? d.temp   : null;
+    _monthlyData.wind   = (d.wind   && d.wind.length   === 12) ? d.wind   : null;
+    // Auto-fill design temperature (max monthly avg = summer peak) unless user edited it
+    if (_monthlyData.temp) {
+      const ftemp = document.getElementById('f-temp');
+      if (ftemp && !ftemp.dataset.userEdited) {
+        const designTemp = Math.round(_monthlyData.temp.reduce((a, b) => a + b, 0) / _monthlyData.temp.length);
+        ftemp.value = designTemp;
+        APP.env.ambient_temp_c = designTemp;
+        const helpEl = document.getElementById('f-temp-help');
+        if (helpEl) helpEl.style.display = 'block';
+      }
+    }
+    // Compute soiling from precip + wind
+    if (_monthlyData.precip) {
+      _monthlyData.soiling = _monthlyData.precip.map(function(p, i) {
+        return computeSoilingPct(p, _monthlyData.wind ? _monthlyData.wind[i] : 0, _soilingGeoKey);
+      });
+    } else {
+      _monthlyData.soiling = null;
+    }
+    if (d.errors && d.errors.length) console.warn('[climate] server errors:', JSON.stringify(d.errors));
+  } catch(e) {
+    fetchErr = e.message;
+    _monthlyData.irradiance = null;
+    _monthlyData.precip = null;
+    _monthlyData.temp   = null;
+    _monthlyData.wind   = null;
+    _monthlyData.soiling = null;
+  }
+
+  const hasData = _monthlyData.irradiance || _monthlyData.precip || _monthlyData.temp || _monthlyData.soiling;
+  if (hasData) {
+    if (emptyEl) emptyEl.style.display = 'none';
+    if (chartWrap) chartWrap.style.display = 'block';
+    renderMonthlyChart();
+  } else {
+    const msg = fetchErr
+      ? 'Error al cargar datos: ' + fetchErr
+      : 'No se pudo cargar el perfil climatico. Reinicia el servidor e intentalo de nuevo.';
+    if (emptyEl) { emptyEl.style.display = 'block'; emptyEl.textContent = msg; }
+  }
+}
+
+function setMonthlyTab(tab) {
+  _activeMonthlyTab = tab;
+  document.querySelectorAll('[data-tab]').forEach(b =>
+    b.classList.toggle('active', b.dataset.tab === tab));
+  // (Geometry selector removed — soiling map is a location-only environmental index)
+  // Re-render heatmap for new variable (no re-fetch needed — data cached in _ghiGridData)
+  if (_ghiGridData) renderGHICanvas(_ghiGridData._raw);
+  const cfg = MONTHLY_CFG[tab];
+  const el  = document.getElementById('c1-monthly-title');
+  if (el && cfg) el.textContent = cfg.title;
+  const data = _monthlyData[tab];
+  const chartWrap = document.getElementById('c1-chart-wrap');
+  const emptyEl   = document.getElementById('c1-monthly-empty');
+  if (data) {
+    if (chartWrap) chartWrap.style.display = 'block';
+    if (emptyEl)  emptyEl.style.display = 'none';
+    renderMonthlyChart();
+  } else if (APP.project.lat) {
+    if (chartWrap) chartWrap.style.display = 'none';
+    if (emptyEl) { emptyEl.style.display = 'block'; emptyEl.textContent = 'Datos no disponibles para esta variable.'; }
+  }
+}
+
+function renderMonthlyChart() {
+  const ctx = document.getElementById('c1-monthly-chart');
+  if (!ctx) return;
+  const data = _monthlyData[_activeMonthlyTab];
+  if (!data) return;
+  const cfg    = MONTHLY_CFG[_activeMonthlyTab] || MONTHLY_CFG.irradiance;
+  const months = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  const maxV   = Math.max(...data) || 1;
+  const isLine = cfg.type === 'line';
+  if (_monthlyChart) { _monthlyChart.destroy(); _monthlyChart = null; }
+  _monthlyChart = new Chart(ctx, {
+    type: isLine ? 'line' : 'bar',
+    data: {
+      labels: months,
+      datasets: [{
+        data,
+        backgroundColor: isLine
+          ? _hexToRgba(cfg.color, 0.15)
+          : data.map(v => _hexToRgba(cfg.color, 0.38 + 0.58 * (v / maxV))),
+        borderColor: cfg.color,
+        borderWidth: isLine ? 2 : 1,
+        borderRadius: isLine ? 0 : 3,
+        fill: isLine, tension: 0.35,
+        pointRadius: isLine ? 3 : 0, pointBackgroundColor: cfg.color,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => c.raw + ' ' + cfg.unit } }
+      },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 10 }, color: '#9A9A9A' } },
+        y: {
+          grid: { color: 'rgba(0,0,0,0.04)' },
+          ticks: { font: { size: 10 }, color: '#9A9A9A' },
+          beginAtZero: true,
+          max: _activeMonthlyTab === 'soiling' ? 25 : undefined,
+        }
+      }
+    }
+  });
+}
+
+// ─────────────────────────────────────────────
+// DISPLAY UPDATE
+// ─────────────────────────────────────────────
+function updateDisplay() {
+  // Top bar
+  const nameEl = document.getElementById('project-name-display');
+  if (nameEl) nameEl.textContent = APP.project.name || 'Sin proyecto';
+
+  // Welcome summary
+  const wsName = document.getElementById('ws-name');
+  const wsLoc = document.getElementById('ws-loc');
+  const wsPower = document.getElementById('ws-power');
+  const wsConsumption = document.getElementById('ws-consumption');
+  const wsCandidates = document.getElementById('ws-candidates');
+  if (wsName) wsName.textContent = APP.project.name || '–';
+  if (wsLoc) {
+    if (APP.project.lat && APP.project.lon) {
+      wsLoc.textContent = (APP.project.city || '') + (APP.project.city && APP.project.lat ? ' · ' : '') +
+        (APP.project.lat ? APP.project.lat.toFixed(4) + ', ' + (APP.project.lon||0).toFixed(4) : '–');
+    } else {
+      wsLoc.textContent = APP.project.city || '–';
+    }
+  }
+  // Update canvas map if on step 1
+  if (APP.step === 1) updateCanvasMapPin();
+  if (wsPower) wsPower.textContent = APP.photometry.system_power_w + ' W';
+  const consumption = calcularConsumoLive();
+  if (wsConsumption) wsConsumption.textContent = consumption + ' Wh/noche';
+  if (wsCandidates) wsCandidates.textContent = APP.candidates.length + ' soluciones';
+
+  // Right panel checklist
+  updateChecklist();
+
+  // Consumption live
+  updateConsumptionLive();
+
+  // Step nav statuses
+  updateStepStatuses();
+}
+
+function updateChecklist() {
+  const el = document.getElementById('rp-checklist');
+  if (!el) return;
+  const checks = [
+    { label: 'Nombre del proyecto', ok: !!APP.project.name },
+    { label: 'Coordenadas GPS', ok: !!(APP.project.lat && APP.project.lon) },
+    { label: 'Potencia luminaria', ok: APP.photometry.system_power_w > 0 },
+    { label: 'Periodos nocturnos', ok: APP.nightProfile.periods.length > 0 },
+    { label: 'Candidatos seleccionados', ok: APP.candidates.length > 0 },
+  ];
+  el.innerHTML = checks.map(c => `
+    <div class="rp-check-item">
+      <div class="rp-check-dot ${c.ok ? 'ok' : 'pending'}"></div>
+      <span>${c.label}</span>
+    </div>`).join('');
+
+  const rpConsEl = document.getElementById('rp-consumption-value');
+  if (rpConsEl) rpConsEl.textContent = calcularConsumoLive() + ' Wh/noche';
+}
+
+function updateStepStatuses() {
+  const statuses = {
+    1: !!(APP.project.name && APP.project.lat && APP.project.lon),
+    2: APP.photometry.system_power_w > 0,
+    3: APP.nightProfile.periods.length > 0,
+    4: true,
+    5: APP.candidates.length > 0,
+    6: !!APP.simulation,
+    7: !!APP.simulation,
+    8: !!APP.selectedProductId,
+    9: false,
+  };
+  for (let s = 1; s <= 9; s++) {
+    const navItem = document.querySelector(`.step-icon-btn[data-step="${s}"]`);
+    if (statuses[s]) {
+      navItem && navItem.classList.add('completed');
+    } else {
+      navItem && navItem.classList.remove('completed');
+    }
+  }
+}
+
+// ─────────────────────────────────────────────
+// CONSUMPTION CALC
+// ─────────────────────────────────────────────
+function calcularConsumoLive() {
+  const P = APP.photometry.system_power_w || 90;
+  const nightH = npNightHours(APP.project.lat || 41.4, typeof _npMo !== 'undefined' ? _npMo : 5);
+  let total = APP.nightProfile.aux_wh || 0;
+  for (const p of APP.nightProfile.periods) {
+    const h = (p.duration_pct || 0.333) * nightH;
+    total += P * h * (
+      (p.presence_ratio || 0) * (p.dimming_presence || 1.0) +
+      (1 - (p.presence_ratio || 0)) * (p.dimming_no_presence || 0.2)
+    );
+  }
+  return Math.round(total);
+}
+
+function updateConsumptionLive() {
+  const val = calcularConsumoLive();
+  const el = document.getElementById('consumption-live');
+  if (el) el.textContent = val + ' Wh/noche';
+  const rpEl = document.getElementById('rp-consumption-value');
+  if (rpEl) rpEl.textContent = val + ' Wh/noche';
+  // Sync chart from APP data (re-renders SVG + re-renders Wh column in table)
+  npInitFromApp();
+}
+
+// ─────────────────────────────────────────────
+// PERIODS TABLE
+// ─────────────────────────────────────────────
+function calcPeriodWh(p) {
+  const P = APP.photometry.system_power_w || 90;
+  const nightH = 12;
+  const h = (p.duration_pct || 0.333) * nightH;
+  return Math.round(P * h * (
+    (p.presence_ratio || 0) * (p.dimming_presence || 1.0) +
+    (1 - (p.presence_ratio || 0)) * (p.dimming_no_presence || 0.2)
+  ));
+}
+
+function renderPeriodsTable() {
+  const tbody = document.getElementById('periods-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  APP.nightProfile.periods.forEach((p, i) => {
+    const wh = calcPeriodWh(p);
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="text-align:center;font-weight:600;color:var(--salvi-grey)">${i+1}</td>
+      <td><input type="number" min="0.01" max="1" step="0.01" value="${(p.duration_pct*100).toFixed(1)}"
+          oninput="updatePeriod(${i},'duration_pct',+this.value/100)"></td>
+      <td><input type="number" min="0" max="100" step="1" value="${(p.presence_ratio*100).toFixed(0)}"
+          oninput="updatePeriod(${i},'presence_ratio',+this.value/100)"></td>
+      <td><input type="number" min="0" max="100" step="1" value="${(p.dimming_presence*100).toFixed(0)}"
+          oninput="updatePeriod(${i},'dimming_presence',+this.value/100)"></td>
+      <td><input type="number" min="0" max="100" step="1" value="${(p.dimming_no_presence*100).toFixed(0)}"
+          oninput="updatePeriod(${i},'dimming_no_presence',+this.value/100)"></td>
+      <td class="col-wh">${wh}</td>
+      <td><button class="period-del" onclick="deletePeriod(${i})" title="Eliminar">✕</button></td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function updatePeriod(idx, field, val) {
+  APP.nightProfile.periods[idx][field] = val;
+  updateConsumptionLive();
+}
+
+function addPeriod() {
+  const pr = typeof _npPR !== 'undefined' ? _npPR : 0.5;
+  APP.nightProfile.periods.push({ duration_pct:0.1, presence_ratio:pr, dimming_presence:0.8, dimming_no_presence:0.2 });
+  renderPeriodsTable();
+  updateConsumptionLive(); // calls npInitFromApp internally
+}
+
+function deletePeriod(idx) {
+  if (APP.nightProfile.periods.length <= 1) { showToast('Debe haber al menos un periodo', 'warning'); return; }
+  APP.nightProfile.periods.splice(idx, 1);
+  renderPeriodsTable();
+  updateConsumptionLive();
+}
+
+function resetPeriods() {
+  APP.nightProfile.periods = [
+    { duration_pct:0.333, presence_ratio:0.5,  dimming_presence:1.0, dimming_no_presence:0.3 },
+    { duration_pct:0.333, presence_ratio:0.2,  dimming_presence:0.8, dimming_no_presence:0.2 },
+    { duration_pct:0.334, presence_ratio:0.3,  dimming_presence:0.8, dimming_no_presence:0.2 },
+  ];
+  renderPeriodsTable();
+  updateConsumptionLive();
+}
+
+// ─────────────────────────────────────────────
+// NIGHT PROFILE CHART EDITOR
+// ─────────────────────────────────────────────
+const NP_MONTHS = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+const NP_PAD_L = 50, NP_PAD_R = 22, NP_PAD_T = 18, NP_PAD_B = 58;
+// Dynamic — updated by npRenderChart() from actual SVG bounding rect
+let _npW = 640, _npH = 400, _npCW = 568, _npCH = 324;
+
+// Internal chart state (mirrors APP.nightProfile.periods)
+let _npBP = [0, 0.333, 0.666, 1.0];   // breakpoints N+1, always 0 and 1 at edges
+let _npDP = [1.0, 0.8, 0.5];           // dimming_presence per segment
+let _npDN = [0.3, 0.2, 0.1];           // dimming_no_presence per segment
+let _npPR = 0.5;                        // global presence_ratio
+let _npMo = 5;                          // display month 0=Jan..11=Dec
+let _npDrag = null, _npChartRect = null;
+
+// Civil twilight duration (6° below horizon) at given lat+month
+function npNightHours(lat, month) {
+  const d = [15,46,75,106,136,167,197,228,258,289,319,350][month];
+  const decl = -23.45 * Math.cos((360/365*(d+10))*Math.PI/180);
+  const latR = lat*Math.PI/180, declR = decl*Math.PI/180;
+  const cosHA = (Math.sin(-6*Math.PI/180)-Math.sin(latR)*Math.sin(declR))
+               /(Math.cos(latR)*Math.cos(declR));
+  if (cosHA >= 1) return 24; if (cosHA <= -1) return 0;
+  return 24 - Math.acos(Math.max(-1,Math.min(1,cosHA)))*2*180/(Math.PI*15);
+}
+
+// Civil twilight onset (start of night) in decimal hours from midnight
+function npCivilOnset(lat, month) {
+  const d = [15,46,75,106,136,167,197,228,258,289,319,350][month];
+  const decl = -23.45 * Math.cos((360/365*(d+10))*Math.PI/180);
+  const latR = lat*Math.PI/180, declR = decl*Math.PI/180;
+  const cosHA = (Math.sin(-6*Math.PI/180)-Math.sin(latR)*Math.sin(declR))
+               /(Math.cos(latR)*Math.cos(declR));
+  const ha = Math.acos(Math.max(-1,Math.min(1,cosHA)))*180/Math.PI;
+  return 12 - ha/15;
+}
+
+function npHHMM(h) {
+  const h24=((h%24)+24)%24, hh=Math.floor(h24), mm=Math.round((h24-hh)*60);
+  if(mm>=60) return String(hh+1).padStart(2,'0')+':00';
+  return String(hh).padStart(2,'0')+':'+String(mm).padStart(2,'0');
+}
+
+// SVG coordinate helpers — use dynamic _npCW/_npCH updated by npRenderChart
+function npX(f)  { return NP_PAD_L + f*_npCW; }
+function npY(d)  { return NP_PAD_T + (1-d)*_npCH; }
+function npFrac(px){ return Math.max(0,Math.min(1,(px-NP_PAD_L)/_npCW)); }
+function npDim(py) { return Math.max(0,Math.min(1,1-(py-NP_PAD_T)/_npCH)); }
+
+// Sync APP → internal state, then render
+function npInitFromApp() {
+  const ps = APP.nightProfile.periods;
+  if (!ps || !ps.length) return;
+  _npBP = [0]; _npDP = []; _npDN = [];
+  let cum = 0;
+  for (const p of ps) {
+    cum += p.duration_pct;
+    _npBP.push(Math.min(1, Math.round(cum*10000)/10000));
+    _npDP.push(p.dimming_presence);
+    _npDN.push(p.dimming_no_presence);
+  }
+  _npBP[_npBP.length-1] = 1.0;
+  _npPR = ps[0]?.presence_ratio ?? 0.5;
+  // Keep month from slider (don't reset)
+  // Update presence slider UI
+  const pSlider = document.getElementById('np-presence-slider');
+  if (pSlider) {
+    pSlider.value = Math.round(_npPR*100);
+    const pVal = document.getElementById('np-presence-val');
+    if (pVal) pVal.textContent = Math.round(_npPR*100)+'%';
+  }
+  // Set up ResizeObserver so chart redraws if panel size changes
+  const svgEl = document.getElementById('np-chart');
+  if (svgEl && !_npResizeObserver && window.ResizeObserver) {
+    _npResizeObserver = new ResizeObserver(() => npRenderChart());
+    _npResizeObserver.observe(svgEl);
+  }
+  npRenderChart();
+}
+
+// Sync internal state → APP, then update table + consumption display
+function npSyncToApp() {
+  const N = _npDP.length;
+  APP.nightProfile.periods = [];
+  for (let i = 0; i < N; i++) {
+    APP.nightProfile.periods.push({
+      duration_pct:        Math.round((_npBP[i+1]-_npBP[i])*10000)/10000,
+      presence_ratio:      _npPR,
+      dimming_presence:    Math.round(_npDP[i]*100)/100,
+      dimming_no_presence: Math.round(_npDN[i]*100)/100,
+    });
+  }
+  renderPeriodsTable();
+  const val = calcularConsumoLive();
+  const el = document.getElementById('consumption-live');
+  if (el) el.textContent = val+' Wh/noche';
+  const rpEl = document.getElementById('rp-consumption-value');
+  if (rpEl) rpEl.textContent = val+' Wh/noche';
+}
+
+let _npResizeObserver = null;
+
+function npRenderChart() {
+  const svg = document.getElementById('np-chart');
+  if (!svg) return;
+  // Measure actual rendered size — if not laid out yet, retry on next frame
+  const bbox = svg.getBoundingClientRect();
+  if (bbox.width < 50 || bbox.height < 50) {
+    requestAnimationFrame(npRenderChart);
+    return;
+  }
+  _npW  = bbox.width;
+  _npH  = bbox.height;
+  _npCW = _npW - NP_PAD_L - NP_PAD_R;
+  _npCH = _npH - NP_PAD_T - NP_PAD_B;
+  svg.setAttribute('viewBox', `0 0 ${_npW} ${_npH}`);
+  const N = _npDP.length;
+  const lat = APP.project.lat || 41.4;
+  const nightH = npNightHours(lat, _npMo);
+  const onset  = npCivilOnset(lat, _npMo);
+  const showNoP = _npPR < 0.995;
+  let s = '';
+
+  // Background
+  s += `<rect x="${NP_PAD_L}" y="${NP_PAD_T}" width="${_npCW}" height="${_npCH}" fill="rgba(30,30,30,0.015)" rx="3"/>`;
+
+  // Y-axis grid + labels
+  [0, 0.25, 0.5, 0.75, 1.0].forEach(v => {
+    const y = npY(v);
+    s += `<line x1="${NP_PAD_L}" y1="${y}" x2="${NP_PAD_L+_npCW}" y2="${y}" stroke="rgba(30,30,30,${v===0||v===1?'0.14':'0.055'})" stroke-width="1"/>`;
+    s += `<text x="${NP_PAD_L-5}" y="${y+4}" text-anchor="end" fill="#9A9A9A" font-size="10">${Math.round(v*100)}%</text>`;
+  });
+  s += `<text x="12" y="${NP_PAD_T+_npCH/2}" text-anchor="middle" fill="#aaa" font-size="10" transform="rotate(-90,12,${NP_PAD_T+_npCH/2})">Dimming</text>`;
+
+  // X-axis: ticks + two label rows (clock + %)
+  for (let t = 0; t <= 5; t++) {
+    const frac = t/5, x = npX(frac);
+    if (t > 0 && t < 5) s += `<line x1="${x}" y1="${NP_PAD_T}" x2="${x}" y2="${NP_PAD_T+_npCH}" stroke="rgba(30,30,30,0.045)" stroke-width="1" stroke-dasharray="3,4"/>`;
+    s += `<line x1="${x}" y1="${NP_PAD_T+_npCH}" x2="${x}" y2="${NP_PAD_T+_npCH+5}" stroke="#ccc" stroke-width="1"/>`;
+    // Row 1: clock time
+    s += `<text x="${x}" y="${NP_PAD_T+_npCH+18}" text-anchor="middle" fill="#555" font-size="10" font-weight="600">${npHHMM(onset+frac*nightH)}</text>`;
+    // Row 2: % of night
+    s += `<text x="${x}" y="${NP_PAD_T+_npCH+32}" text-anchor="middle" fill="#b0b0b0" font-size="9">${Math.round(frac*100)}%</text>`;
+  }
+  // Night info row
+  s += `<text x="${NP_PAD_L+_npCW/2}" y="${NP_PAD_T+_npCH+46}" text-anchor="middle" fill="#c8c8c8" font-size="9">Noche ${NP_MONTHS[_npMo]}: ${nightH.toFixed(1)}h · ${npHHMM(onset)} → ${npHHMM(onset+nightH)}</text>`;
+
+  // "Without presence" area + dashed line
+  if (showNoP) {
+    let pathD = `M${npX(0)},${npY(0)}`;
+    for (let i=0;i<N;i++) pathD+=` L${npX(_npBP[i])},${npY(_npDN[i])} L${npX(_npBP[i+1])},${npY(_npDN[i])}`;
+    pathD += ` L${npX(1)},${npY(0)} Z`;
+    s += `<path d="${pathD}" fill="rgba(183,121,31,0.13)" stroke="none"/>`;
+    let lineD='';
+    for (let i=0;i<N;i++) {
+      const x1=npX(_npBP[i]),x2=npX(_npBP[i+1]),y=npY(_npDN[i]);
+      lineD += (i===0?`M${x1},${y}`:`L${x1},${y}`) + ` L${x2},${y}`;
+      if(i<N-1) lineD+=` L${x2},${npY(_npDN[i+1])}`;
+    }
+    s += `<path d="${lineD}" fill="none" stroke="rgba(183,121,31,0.85)" stroke-width="2" stroke-dasharray="6,4"/>`;
+  }
+
+  // "With presence" area + solid line
+  const presAlpha = showNoP ? 0.16 : 0.28;
+  let pathP = `M${npX(0)},${npY(0)}`;
+  for (let i=0;i<N;i++) pathP+=` L${npX(_npBP[i])},${npY(_npDP[i])} L${npX(_npBP[i+1])},${npY(_npDP[i])}`;
+  pathP += ` L${npX(1)},${npY(0)} Z`;
+  s += `<path d="${pathP}" fill="rgba(31,122,77,${presAlpha})" stroke="none"/>`;
+  let lineP='';
+  for (let i=0;i<N;i++) {
+    const x1=npX(_npBP[i]),x2=npX(_npBP[i+1]),y=npY(_npDP[i]);
+    lineP += (i===0?`M${x1},${y}`:`L${x1},${y}`) + ` L${x2},${y}`;
+    if(i<N-1) lineP+=` L${x2},${npY(_npDP[i+1])}`;
+  }
+  s += `<path d="${lineP}" fill="none" stroke="rgba(31,122,77,0.9)" stroke-width="2.5"/>`;
+
+  // Segment dividers (draggable, indices 1..N-1)
+  for (let i=1;i<N;i++) {
+    const x = npX(_npBP[i]);
+    const tLabel = npHHMM(onset+_npBP[i]*nightH);
+    s += `<line x1="${x}" y1="${NP_PAD_T}" x2="${x}" y2="${NP_PAD_T+_npCH}" stroke="rgba(30,30,30,0.22)" stroke-width="1.5" stroke-dasharray="4,4"/>`;
+    s += `<text x="${x}" y="${NP_PAD_T-5}" text-anchor="middle" fill="#777" font-size="9">${tLabel}</text>`;
+    const midY = NP_PAD_T + _npCH*0.48;
+    s += `<circle cx="${x}" cy="${midY}" r="9" fill="white" stroke="#999" stroke-width="1.5"
+             class="np-handle" data-np-drag="divider" data-np-idx="${i}" style="cursor:ew-resize"/>`;
+    s += `<text x="${x}" y="${midY+4}" text-anchor="middle" fill="#999" font-size="10" pointer-events="none">⋮</text>`;
+    if (N > 1) {
+      s += `<circle cx="${x}" cy="${NP_PAD_T+_npCH+6}" r="7" fill="#f0f0f0" stroke="#ccc" stroke-width="1"
+               class="np-handle" data-np-action="remove-seg" data-np-idx="${i}" style="cursor:pointer"/>`;
+      s += `<text x="${x}" y="${NP_PAD_T+_npCH+10}" text-anchor="middle" fill="#bbb" font-size="9" pointer-events="none">✕</text>`;
+    }
+  }
+
+  // Dimming handles per segment
+  for (let i=0;i<N;i++) {
+    const xM = npX((_npBP[i]+_npBP[i+1])/2);
+    s += `<circle cx="${xM}" cy="${npY(_npDP[i])}" r="9" fill="white" stroke="rgba(31,122,77,0.9)" stroke-width="2"
+             class="np-handle" data-np-drag="presence" data-np-idx="${i}" style="cursor:ns-resize"/>`;
+    s += `<text x="${xM}" y="${npY(_npDP[i])+4}" text-anchor="middle" fill="rgba(31,122,77,0.9)" font-size="10" font-weight="600" pointer-events="none">${Math.round(_npDP[i]*100)}</text>`;
+    if (showNoP) {
+      s += `<circle cx="${xM}" cy="${npY(_npDN[i])}" r="9" fill="white" stroke="rgba(183,121,31,0.9)" stroke-width="2"
+               class="np-handle" data-np-drag="nopresence" data-np-idx="${i}" style="cursor:ns-resize"/>`;
+      s += `<text x="${xM}" y="${npY(_npDN[i])+4}" text-anchor="middle" fill="rgba(183,121,31,0.9)" font-size="10" font-weight="600" pointer-events="none">${Math.round(_npDN[i]*100)}</text>`;
+    }
+  }
+
+  // Border frame
+  s += `<rect x="${NP_PAD_L}" y="${NP_PAD_T}" width="${_npCW}" height="${_npCH}" fill="none" stroke="rgba(30,30,30,0.1)" rx="2" stroke-width="1"/>`;
+
+  svg.innerHTML = s;
+
+  // Attach event listeners
+  svg.querySelectorAll('.np-handle').forEach(el => {
+    if (el.dataset.npAction) {
+      el.addEventListener('click', _npHandleClick);
+    } else {
+      el.addEventListener('mousedown', _npHandleMouseDown);
+      el.addEventListener('touchstart', _npHandleTouchStart, {passive:false});
+    }
+  });
+
+  // Energy badge
+  let weighted = 0;
+  for (let i=0;i<N;i++) {
+    const dur = _npBP[i+1]-_npBP[i];
+    weighted += dur * (_npPR*_npDP[i] + (1-_npPR)*_npDN[i]);
+  }
+  const badge = document.getElementById('np-energy-badge');
+  if (badge) badge.textContent = `⚡ ${Math.round((1-weighted)*100)}% ahorro energético`;
+}
+
+function _npHandleClick(e) {
+  if (e.currentTarget.dataset.npAction === 'remove-seg')
+    npRemoveSegment(+e.currentTarget.dataset.npIdx);
+}
+
+function _npHandleMouseDown(e) {
+  if (e.button !== 0) return;
+  e.preventDefault(); e.stopPropagation();
+  _npDrag = { type: e.currentTarget.dataset.npDrag, idx: +e.currentTarget.dataset.npIdx };
+  _npChartRect = document.getElementById('np-chart').getBoundingClientRect();
+  document.addEventListener('mousemove', _npOnMouseMove);
+  document.addEventListener('mouseup', _npOnMouseUp);
+}
+
+function _npHandleTouchStart(e) {
+  e.preventDefault();
+  _npDrag = { type: e.currentTarget.dataset.npDrag, idx: +e.currentTarget.dataset.npIdx };
+  _npChartRect = document.getElementById('np-chart').getBoundingClientRect();
+  document.addEventListener('touchmove', _npOnTouchMove, {passive:false});
+  document.addEventListener('touchend', _npOnTouchEnd);
+}
+
+function _npGetSVGXY(cx, cy) {
+  const r = _npChartRect;
+  return { x:(cx-r.left)*_npW/r.width, y:(cy-r.top)*_npH/r.height };
+}
+
+function _npApplyDrag(cx, cy) {
+  if (!_npDrag) return;
+  const {x,y} = _npGetSVGXY(cx,cy);
+  const {type,idx} = _npDrag;
+  if (type === 'divider') {
+    const lo=_npBP[idx-1]+0.04, hi=_npBP[idx+1]-0.04;
+    _npBP[idx] = Math.max(lo, Math.min(hi, npFrac(x)));
+  } else if (type === 'presence') {
+    _npDP[idx] = Math.max(0.01, Math.min(1, npDim(y)));
+    if (_npDN[idx] > _npDP[idx]) _npDN[idx] = _npDP[idx];
+  } else if (type === 'nopresence') {
+    _npDN[idx] = Math.max(0, Math.min(_npDP[idx], npDim(y)));
+  }
+  npRenderChart();
+  npSyncToApp();
+}
+
+function _npOnMouseMove(e) { _npApplyDrag(e.clientX, e.clientY); }
+function _npOnTouchMove(e) { e.preventDefault(); _npApplyDrag(e.touches[0].clientX, e.touches[0].clientY); }
+function _npOnMouseUp()  { _npDrag=null; document.removeEventListener('mousemove',_npOnMouseMove); document.removeEventListener('mouseup',_npOnMouseUp); }
+function _npOnTouchEnd() { _npDrag=null; document.removeEventListener('touchmove',_npOnTouchMove); document.removeEventListener('touchend',_npOnTouchEnd); }
+
+function npSetMonth(mo) {
+  _npMo = +mo;
+  const el = document.getElementById('np-month-val');
+  if (el) el.textContent = NP_MONTHS[+mo];
+  npRenderChart();
+}
+
+function npSetPresence(pct) {
+  _npPR = +pct/100;
+  const el = document.getElementById('np-presence-val');
+  if (el) el.textContent = pct+'%';
+  npRenderChart();
+  npSyncToApp();
+}
+
+function npAddSegment() {
+  let longest=0, li=0;
+  for (let i=0;i<_npDP.length;i++) { const l=_npBP[i+1]-_npBP[i]; if(l>longest){longest=l;li=i;} }
+  const bp = (_npBP[li]+_npBP[li+1])/2;
+  _npBP.splice(li+1,0,bp);
+  _npDP.splice(li+1,0,_npDP[li]);
+  _npDN.splice(li+1,0,_npDN[li]);
+  npRenderChart(); npSyncToApp();
+}
+
+function npRemoveSegment(bpIdx) {
+  if (_npDP.length <= 1) { showToast('Debe haber al menos un segmento','warning'); return; }
+  const li=bpIdx-1, ri=bpIdx;
+  const ll=_npBP[bpIdx]-_npBP[bpIdx-1], rl=_npBP[bpIdx+1]-_npBP[bpIdx], tot=ll+rl;
+  const avgP=(ll*_npDP[li]+rl*_npDP[ri])/tot, avgN=(ll*_npDN[li]+rl*_npDN[ri])/tot;
+  _npBP.splice(bpIdx,1); _npDP.splice(li,2,avgP); _npDN.splice(li,2,avgN);
+  npRenderChart(); npSyncToApp();
+}
+
+function npReset() {
+  _npBP=[0,0.333,0.666,1.0]; _npDP=[1.0,0.8,0.5]; _npDN=[0.3,0.2,0.1]; _npPR=0.5; _npMo=5;
+  const mo=document.getElementById('np-month-slider');
+  if(mo){mo.value=5; document.getElementById('np-month-val').textContent=NP_MONTHS[5];}
+  const ps=document.getElementById('np-presence-slider');
+  if(ps){ps.value=50; document.getElementById('np-presence-val').textContent='50%';}
+  npRenderChart(); npSyncToApp();
+}
+
+// ─────────────────────────────────────────────
+// CANDIDATES GRID
+// ─────────────────────────────────────────────
+function renderCandidatesGrid() {
+  const grid = document.getElementById('candidates-grid');
+  if (!grid) return;
+  if (!APP.products || APP.products.length === 0) {
+    // Fallback demo products
+    APP.products = getDemoProducts();
+  }
+  grid.innerHTML = APP.products.map(p => {
+    const selected = APP.candidates.includes(p.id);
+    return `<div class="candidate-card ${selected ? 'selected' : ''}" 
+                 onclick="toggleCandidate('${p.id}', this)"
+                 data-id="${p.id}">
+      <span class="card-check">${selected ? '☑' : '☐'}</span>
+      <div class="card-name">${p.name || p.id}</div>
+      <div class="card-spec">
+        ${p.pv_peak_power_wp ? p.pv_peak_power_wp + ' Wp' : ''}
+        ${p.battery_nominal_wh ? ' · ' + p.battery_nominal_wh + ' Wh' : ''}
+        ${p.weight_kg ? ' · ' + p.weight_kg + ' kg' : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function toggleCandidate(id, cardEl) {
+  const idx = APP.candidates.indexOf(id);
+  if (idx === -1) {
+    APP.candidates.push(id);
+    cardEl.classList.add('selected');
+    cardEl.querySelector('.card-check').textContent = '☑';
+  } else {
+    APP.candidates.splice(idx, 1);
+    cardEl.classList.remove('selected');
+    cardEl.querySelector('.card-check').textContent = '☐';
+  }
+  updateDisplay();
+}
+
+function selectAllCandidates() {
+  APP.candidates = APP.products.map(p => p.id);
+  renderCandidatesGrid();
+  updateDisplay();
+}
+
+function selectSILOnly() {
+  APP.candidates = APP.products.filter(p => (p.id||'').toLowerCase().startsWith('sil')).map(p => p.id);
+  renderCandidatesGrid();
+  updateDisplay();
+}
+
+function clearCandidates() {
+  APP.candidates = [];
+  renderCandidatesGrid();
+  updateDisplay();
+}
+
+function getDemoProducts() {
+  return [
+    { id:'SIL_M_60',  name:'SIL M 60',  pv_peak_power_wp:60,  battery_nominal_wh:300, weight_kg:4.5 },
+    { id:'SIL_M_90',  name:'SIL M 90',  pv_peak_power_wp:90,  battery_nominal_wh:500, weight_kg:5.8 },
+    { id:'SIL_L_200', name:'SIL L 200', pv_peak_power_wp:200, battery_nominal_wh:900, weight_kg:10.2 },
+    { id:'SIL_L_260', name:'SIL L 260', pv_peak_power_wp:260, battery_nominal_wh:1200, weight_kg:12.4 },
+    { id:'IND_200',   name:'IND 200',   pv_peak_power_wp:200, battery_nominal_wh:800, weight_kg:9.1 },
+    { id:'IND_300',   name:'IND 300',   pv_peak_power_wp:300, battery_nominal_wh:1100, weight_kg:11.5 },
+  ];
+}
+
+// ─────────────────────────────────────────────
+// COUNTRY CHANGE
+// ─────────────────────────────────────────────
+function onCountryChange(code) {
+  APP.project.country = code;
+  const d = COUNTRY_CO2[code];
+  if (d) {
+    APP.env.country_co2_factor = d.co2;
+    APP.env.electricity_cost = d.cost;
+    const fco2 = document.getElementById('f-co2');
+    const fecost = document.getElementById('f-ecost');
+    if (fco2) fco2.value = d.co2;
+    if (fecost) fecost.value = d.cost;
+  }
+}
+
+// ─────────────────────────────────────────────
+// GEOLOCATION
+// ─────────────────────────────────────────────
+function detectLocation() {
+  if (!navigator.geolocation) { showToast('Geolocalización no disponible', 'error'); return; }
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      APP.project.lat = Math.round(pos.coords.latitude * 10000) / 10000;
+      APP.project.lon = Math.round(pos.coords.longitude * 10000) / 10000;
+      const fLat = document.getElementById('f-lat');
+      const fLon = document.getElementById('f-lon');
+      if (fLat) fLat.value = APP.project.lat;
+      if (fLon) fLon.value = APP.project.lon;
+      updateDisplay();
+      showToast('Ubicación detectada: ' + APP.project.lat + ', ' + APP.project.lon, 'success');
+    },
+    err => showToast('No se pudo obtener la ubicación: ' + err.message, 'error')
+  );
+}
+
+// ─────────────────────────────────────────────
+// SIMULATION
+// ─────────────────────────────────────────────
+function updateSimSummary() {
+  const simLoc = document.getElementById('sim-location');
+  const simPower = document.getElementById('sim-power');
+  const simCount = document.getElementById('sim-candidates-count');
+  if (simLoc) {
+    const locStr = APP.project.city
+      ? APP.project.city + (APP.project.lat ? ' (' + APP.project.lat + ', ' + APP.project.lon + ')' : '')
+      : (APP.project.lat ? APP.project.lat + ', ' + APP.project.lon : '–');
+    simLoc.textContent = locStr || '–';
+  }
+  if (simPower) simPower.textContent = APP.photometry.system_power_w + ' W';
+  if (simCount) simCount.textContent = APP.candidates.length + ' productos';
+}
+
+function setSimProgress(show) {
+  const pre = document.getElementById('sim-pre');
+  const prog = document.getElementById('sim-progress');
+  const canvasSim = document.getElementById('canvas-simulation');
+  const canvasWelcome = document.getElementById('canvas-welcome');
+  if (show) {
+    if (pre) pre.style.display = 'none';
+    if (prog) prog.style.display = 'block';
+    // Show canvas sim
+    canvasWelcome.style.display = 'none';
+    canvasSim.style.display = 'flex';
+  } else {
+    if (pre) pre.style.display = 'block';
+    if (prog) prog.style.display = 'none';
+    canvasSim.style.display = 'none';
+  }
+}
+
+function addProgressLog(msg) {
+  const el = document.getElementById('progress-log');
+  if (el) el.innerHTML += `<div>◆ ${msg}</div>`;
+  const el2 = document.getElementById('canvas-progress-log');
+  if (el2) el2.innerHTML += `<div>◆ ${msg}</div>`;
+}
+
+async function runSimulation() {
+  if (!APP.project.lat || !APP.project.lon) {
+    showToast('Define latitud y longitud del proyecto', 'error'); return;
+  }
+  if (APP.candidates.length === 0) {
+    showToast('Selecciona al menos una solución candidata', 'error'); return;
+  }
+
+  // Clear log
+  const logEl = document.getElementById('progress-log');
+  if (logEl) logEl.innerHTML = '';
+  const logEl2 = document.getElementById('canvas-progress-log');
+  if (logEl2) logEl2.innerHTML = '';
+
+  setSimProgress(true);
+  addProgressLog('Calculando perfil de consumo nocturno...');
+
+  const body = {
+    lat: APP.project.lat,
+    lon: APP.project.lon,
+    system_power_w: APP.photometry.system_power_w,
+    night_profile: APP.nightProfile.periods,
+    margin_on_min: APP.nightProfile.margin_on_min,
+    margin_off_min: APP.nightProfile.margin_off_min,
+    candidates: APP.candidates,
+    soiling_env: APP.env.soiling_env,
+    electricity_cost: APP.env.electricity_cost,
+    country_co2_factor: APP.env.country_co2_factor,
+    optimization_objective: 'min_tco_10y',
+    max_failure_rate_pct: APP.env.max_failure_rate_pct,
+    aux_consumption_wh: APP.nightProfile.aux_wh,
+    smartec_enabled: true,
+    year: 2024,
+  };
+
+  try {
+    addProgressLog('Consultando PVGIS/JRC y simulando baterías...');
+    const result = await apiPost('/simulate', body);
+    APP.simulation = result;
+    addProgressLog('✓ Simulación completada — ' + (result.candidates ? result.candidates.length : 0) + ' soluciones procesadas');
+    setTimeout(() => {
+      setSimProgress(false);
+      goToStep(7);
+      renderResults(result);
+      renderRightPanelResults(result);
+    }, 800);
+  } catch(e) {
+    setSimProgress(false);
+    showToast('Error en simulación: ' + e.message, 'error');
+    const btn = document.getElementById('btn-simulate');
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ─────────────────────────────────────────────
+// DEBUG / DIAGNOSTICS
+// ─────────────────────────────────────────────
+async function runDebugSim() {
+  const pid = APP.selectedProductId || APP.candidates[0] || 'SIL_M_60';
+  const body = {
+    lat: APP.project.lat, lon: APP.project.lon,
+    system_power_w: APP.photometry.system_power_w,
+    product_id: pid,
+    night_profile: APP.nightProfile.periods,
+    margin_on_min: APP.nightProfile.margin_on_min,
+    margin_off_min: APP.nightProfile.margin_off_min,
+    soiling_env: APP.env.soiling_env,
+    year: 2024,
+  };
+  try {
+    const r = await apiPost('/debug-sim', body);
+    // Print full report to console
+    console.group('%c🔍 SALVI Solar — Diagnóstico de simulación', 'color:#1f7a4d;font-size:14px;font-weight:bold');
+    console.log('Producto:', r.product);
+    console.log('Schedule (muestra):', r.schedule);
+    console.log('Consumo:', r.consumption);
+    console.log('  → nonzero_hours esperado ~', Math.round(r.schedule.avg_night_h * 1.1 * 365));
+    console.log('Solar:', r.solar);
+    console.log('Night map:', r.night_map);
+    console.log('  → night_hours_with_load debe ser ~= night_map.total_entries');
+    console.log('Simulación:', r.simulation);
+    console.log('  → annual_failure_rate_pct:', r.simulation.annual_failure_rate_pct, '%');
+    console.log('Trace (primeras 72h):', r.trace_hours_0_72);
+    console.groupEnd();
+    // Show quick summary in UI
+    const summary = [
+      `Producto: ${r.product.name} (${r.product.pv_wp}Wp / ${r.product.bat_wh}Wh)`,
+      `Consumo anual: ${(r.consumption.total_annual_wh/1000).toFixed(1)} kWh  |  Noche media: ${r.consumption.avg_night_wh} Wh`,
+      `Producción anual: ${(r.solar.total_annual_wh/1000).toFixed(1)} kWh  |  Soiling: ${r.solar.soiling_loss_pct}%`,
+      `Night-map horas: ${r.night_map.total_entries}  |  Con consumo: ${r.night_map.night_hours_with_load}`,
+      `h=16 en night_map: ${r.night_map.h16_in_map}  |  consumo_h[16]: ${r.consumption.h16_jan1} Wh`,
+      `⚠️ Tasa de fallo: ${r.simulation.annual_failure_rate_pct}%  (${r.simulation.critical_nights} noches de 365)`,
+    ].join('\n');
+    alert('DIAGNÓSTICO (ver consola para detalle):\n\n' + summary);
+  } catch(e) {
+    alert('Error diagnóstico: ' + e.message);
+    console.error(e);
+  }
+}
+
+// ─────────────────────────────────────────────
+// RESULTS
+// ─────────────────────────────────────────────
+function renderResults(result) {
+  if (!result || !result.candidates) return;
+
+  const countEl = document.getElementById('results-count');
+  if (countEl) countEl.textContent = result.candidates.length;
+
+  const tbody = document.getElementById('results-tbody');
+  if (!tbody) return;
+
+  const candidates = getSortedCandidates(result.candidates);
+  tbody.innerHTML = candidates.map(c => renderResultsRow(c)).join('');
+
+  // Populate chart selector
+  const sel = document.getElementById('chart-product-selector');
+  if (sel) {
+    sel.innerHTML = '<option value="">– Seleccionar producto –</option>' +
+      result.candidates.map(c => `<option value="${c.product_id}">${c.product_name || c.product_id}</option>`).join('');
+  }
+
+  // Select recommended
+  const recommended = result.candidates.find(c => c.recommended);
+  if (recommended) {
+    if (sel) sel.value = recommended.product_id;
+    updateCharts(recommended.product_id);
+  }
+
+  // Update canvas title
+  const titleEl = document.getElementById('results-canvas-title');
+  if (titleEl) {
+    const loc = APP.project.city ? ' · ' + APP.project.city : '';
+    titleEl.textContent = 'Comparativa de soluciones' + loc;
+  }
+}
+
+const SCENARIO_BADGE_CFG = {
+  recommended:     { label: '★ Recomendada',      cls: 'scenario-recommended' },
+  low_capex:       { label: '💰 Bajo CAPEX',       cls: 'scenario-lowcapex'    },
+  max_reliability: { label: '🛡 Máx. Fiabilidad',  cls: 'scenario-maxrel'      },
+  hybrid:          { label: '⚡ Híbrida',           cls: 'scenario-hybrid'      },
+};
+
+function buildScenarioBadges(c) {
+  const tags = c.scenario_tags || (c.recommended ? ['recommended'] : []);
+  if (!tags.length) return '';
+  const badges = tags.map(tag => {
+    const cfg = SCENARIO_BADGE_CFG[tag];
+    return cfg ? `<span class="scenario-badge ${cfg.cls}">${cfg.label}</span>` : '';
+  }).join('');
+  return badges ? `<div class="scenario-badges-row">${badges}</div>` : '';
+}
+
+function renderResultsRow(c) {
+  // Error candidate: simulation failed for this product
+  if (c.error) {
+    return `<tr class="row-unreliable" data-product="${c.product_id}">
+      <td colspan="9" style="padding:8px 12px;">
+        <strong>${c.product_name || c.product_id}</strong>
+        <span style="margin-left:8px;color:var(--color-error,#c00);font-size:11px;">
+          ⚠ Error de simulación: ${c.error}
+        </span>
+        ${Array.isArray(c.warnings) && c.warnings.length ? `<div style="font-size:10px;opacity:0.7;margin-top:2px">${c.warnings.join(' · ')}</div>` : ''}
+      </td>
+    </tr>`;
+  }
+  const failPct    = c.annual_failure_rate_pct || 0;
+  const relPct     = 100 - failPct;
+  const relClass   = relPct >= 98 ? 'good' : relPct >= 95 ? 'warn' : 'bad';
+  const y10fail    = c.annual_failure_rate_pct_y10 != null ? (100 - c.annual_failure_rate_pct_y10).toFixed(1) + '%' : '–';
+  const tcoSale    = c.tco_10y_sale != null ? `<strong>${formatEur(c.tco_10y_sale)}</strong><div class="cost-note">${formatEur(c.tco_10y_cost || 0)} coste</div>` : '–';
+  const co2        = c.co2_saved_10y_kg != null ? Math.round(c.co2_saved_10y_kg) + ' kg' : '–';
+  const unitsBadge = (c.n_units && c.n_units > 1)
+    ? `<span style="display:inline-block;margin-left:5px;padding:1px 6px;background:#1E1E1E;color:#FCF9F5;border-radius:4px;font-size:10px;font-weight:700;vertical-align:middle;">×${c.n_units}</span>`
+    : '';
+  const customBadge = c.is_custom_sized
+    ? `<span style="display:inline-block;margin-left:5px;padding:1px 6px;background:var(--state-info,#4A5568);color:#fff;border-radius:4px;font-size:10px;font-weight:600;vertical-align:middle;">⚙ a medida</span>`
+    : '';
+  return `<tr class="${c.recommended ? 'row-recommended' : ''} ${c.meets_reliability === false ? 'row-unreliable' : ''}"
+              data-product="${c.product_id}">
+    <td>
+      <strong>${c.product_name || c.product_id}</strong>${unitsBadge}${customBadge}
+      ${buildScenarioBadges(c)}
+      ${c.meets_reliability === false ? '<div style="margin-top:3px"><span class="badge badge-warn">⚠ Baja fiabilidad</span></div>' : ''}
+    </td>
+    <td>${c.pv_peak_power_wp || '–'}</td>
+    <td>${c.battery_nominal_wh || '–'}</td>
+    <td>${c.weight_kg || '–'}</td>
+    <td>
+      <span class="reliability-badge ${relClass}">${relPct.toFixed(1)}%</span>
+      <div class="failure-nights">${failPct.toFixed(1)}% noches fallo</div>
+    </td>
+    <td>${tcoSale}</td>
+    <td>${co2}</td>
+    <td>${y10fail}</td>
+    <td><button class="btn-sm btn-secondary" onclick="showDetail('${c.product_id}')">Ver</button></td>
+  </tr>`;
+}
+
+function getSortedCandidates(candidates) {
+  if (!APP.sortField) return candidates;
+  return [...candidates].sort((a, b) => {
+    const av = a[APP.sortField] ?? 0;
+    const bv = b[APP.sortField] ?? 0;
+    return APP.sortAsc ? av - bv : bv - av;
+  });
+}
+
+function sortTable(field) {
+  if (APP.sortField === field) {
+    APP.sortAsc = !APP.sortAsc;
+  } else {
+    APP.sortField = field;
+    APP.sortAsc = true;
+  }
+  // Update header indicators
+  document.querySelectorAll('.results-table th.sortable').forEach(th => {
+    th.classList.remove('sorted-asc', 'sorted-desc');
+  });
+  const thMap = { annual_failure_rate_pct: 'th-reliability', tco_10y_sale: 'th-tco', co2_saved_10y_kg: 'th-co2' };
+  const thEl = document.getElementById(thMap[field]);
+  if (thEl) thEl.classList.add(APP.sortAsc ? 'sorted-asc' : 'sorted-desc');
+
+  if (APP.simulation) renderResults(APP.simulation);
+}
+
+// ─────────────────────────────────────────────
+// CHARTS
+// ─────────────────────────────────────────────
+function updateCharts(productId) {
+  if (!productId || !APP.simulation) return;
+  const candidate = APP.simulation.candidates.find(c => c.product_id === productId);
+  if (!candidate) return;
+
+  // Update chart title
+  const titleEl = document.getElementById('chart1-title');
+  if (titleEl) titleEl.textContent = 'Producción vs Consumo mensual – ' + (candidate.product_name || productId);
+
+  // Build monthly arrays from real backend data (Wh → kWh)
+  const prodKwh = (candidate.monthly_production_wh  || []).map(v => +(v / 1000).toFixed(2));
+  const consKwh = (candidate.monthly_consumption_wh || []).map(v => +(v / 1000).toFixed(2));
+  const socNew  = candidate.monthly_soc_avg_pct     || [];
+  const socY10  = candidate.monthly_soc_avg_pct_y10 || [];
+
+  // Monthly chart
+  if (APP.charts.monthly) { APP.charts.monthly.destroy(); APP.charts.monthly = null; }
+  const ctxM = document.getElementById('chart-monthly');
+  if (ctxM) {
+    APP.charts.monthly = new Chart(ctxM, {
+      type: 'bar',
+      data: {
+        labels: MONTHS,
+        datasets: [
+          {
+            label: 'Producción solar (kWh)',
+            data: prodKwh.length ? prodKwh : generateDemoMonthly(candidate).map(m => m.production_kwh),
+            backgroundColor: 'rgba(31,122,77,0.7)',
+            borderRadius: 3,
+          },
+          {
+            label: 'Consumo (kWh)',
+            data: consKwh.length ? consKwh : generateDemoMonthly(candidate).map(m => m.consumption_kwh),
+            backgroundColor: 'rgba(30,30,30,0.5)',
+            borderRadius: 3,
+          }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom', labels: { font: { size: 11 }, boxWidth: 12 } } },
+        scales: {
+          y: { beginAtZero: true, ticks: { font: { size: 11 } }, grid: { color: 'rgba(0,0,0,0.05)' } },
+          x: { ticks: { font: { size: 11 } }, grid: { display: false } }
+        }
+      }
+    });
+  }
+
+  // SOC chart
+  if (APP.charts.soc) { APP.charts.soc.destroy(); APP.charts.soc = null; }
+  const ctxS = document.getElementById('chart-soc');
+  if (ctxS) {
+    const demoMonthly = generateDemoMonthly(candidate);
+    APP.charts.soc = new Chart(ctxS, {
+      type: 'line',
+      data: {
+        labels: MONTHS,
+        datasets: [
+          {
+            label: 'SOC mín. año 1',
+            data: socNew.length ? socNew : demoMonthly.map(m => m.soc_min_pct),
+            borderColor: 'rgba(31,122,77,0.9)',
+            backgroundColor: 'rgba(31,122,77,0.1)',
+            fill: true, tension: 0.4, pointRadius: 3,
+          },
+          {
+            label: 'SOC mín. año 10',
+            data: socY10.length ? socY10 : demoMonthly.map(m => m.soc_min_y10),
+            borderColor: 'rgba(183,121,31,0.9)',
+            backgroundColor: 'rgba(183,121,31,0.08)',
+            fill: false, tension: 0.4, pointRadius: 3, borderDash: [4,4],
+          }
+        ]
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom', labels: { font: { size: 11 }, boxWidth: 12 } } },
+        scales: {
+          y: {
+            beginAtZero: true, max: 100,
+            ticks: { callback: v => v + '%', font: { size: 11 } },
+            grid: { color: 'rgba(0,0,0,0.05)' }
+          },
+          x: { ticks: { font: { size: 11 } }, grid: { display: false } }
+        }
+      }
+    });
+  }
+}
+
+function generateDemoMonthly(candidate) {
+  // Generate plausible demo monthly data when API doesn't return it
+  const cons = calcularConsumoLive() / 1000; // kWh/night
+  const baseProduction = [0.8, 1.0, 1.4, 1.8, 2.1, 2.3, 2.2, 2.0, 1.6, 1.2, 0.9, 0.7];
+  const nightHours = [14.5, 13.5, 12.5, 11.5, 10.5, 10.0, 10.5, 11.5, 12.5, 13.5, 14.5, 15.0];
+  const pv = (candidate.pv_peak_power_wp || 90) / 90;
+  return MONTHS.map((m, i) => ({
+    production_kwh: +(baseProduction[i] * pv * 30).toFixed(1),
+    consumption_kwh: +(cons * nightHours[i]).toFixed(1),
+    soc_min_pct: Math.min(95, Math.max(15, 50 + (baseProduction[i] - 1.5) * 25)),
+    soc_min_y10: Math.min(90, Math.max(10, 40 + (baseProduction[i] - 1.5) * 22)),
+  }));
+}
+
+// ─────────────────────────────────────────────
+// LOSS TREE
+// ─────────────────────────────────────────────
+function buildLossTreeHTML(lt) {
+  const rows = [
+    { label: 'Recurso PV teórico',   val: lt.pv_theoretical_pct,       bar: 'bar-available',   isBase: true  },
+    { label: '− Geometría / tilt',   val: -lt.geometry_loss_pct,       bar: 'bar-geometry',    isLoss: true  },
+    { label: '− Suciedad (soiling)', val: -lt.soiling_loss_pct,        bar: 'bar-soiling',     isLoss: true  },
+    { label: '− Temperatura',        val: -lt.temperature_loss_pct,    bar: 'bar-temp',        isLoss: true  },
+    { label: '− Controlador / cableado', val: -lt.controller_loss_pct, bar: 'bar-controller',  isLoss: true  },
+    { label: '− Batería (ida+vuelta)', val: -lt.battery_roundtrip_loss_pct, bar: 'bar-battery', isLoss: true  },
+    { label: '− Degradación (prom.)',  val: -lt.degradation_loss_pct,  bar: 'bar-degradation', isLoss: true  },
+  ];
+  const avail = lt.energy_available_pct;
+
+  let html = `<div class="detail-section">
+    <div class="detail-section-title">Árbol de pérdidas <span style="font-size:10px;font-weight:400;color:var(--salvi-muted);">(estimado F1)</span></div>
+    <div class="loss-tree-wrap">`;
+
+  rows.forEach(r => {
+    const absVal = Math.abs(r.val);
+    const barWidth = r.isBase ? 100 : Math.min(100, absVal * 4);  // scale losses for visibility
+    const sign = r.isLoss ? '−' : '';
+    html += `
+      <div class="loss-tree-row">
+        <span class="loss-tree-label">${r.label}</span>
+        <div class="loss-tree-bar-wrap">
+          <div class="loss-tree-bar ${r.bar}" style="width:${barWidth}%"></div>
+        </div>
+        <span class="loss-tree-val ${r.isLoss ? 'val-loss' : ''}">${r.isLoss ? '−' : ''}${absVal.toFixed(1)}%</span>
+      </div>`;
+  });
+
+  html += `<hr class="loss-tree-divider">
+      <div class="loss-tree-row">
+        <span class="loss-tree-label total-label">▶ Energía disponible útil</span>
+        <div class="loss-tree-bar-wrap">
+          <div class="loss-tree-bar bar-available" style="width:${avail}%"></div>
+        </div>
+        <span class="loss-tree-val val-avail">${avail.toFixed(1)}%</span>
+      </div>
+    </div>
+  </div>`;
+  return html;
+}
+
+// ─────────────────────────────────────────────
+// DETAIL
+// ─────────────────────────────────────────────
+// ─────────────────────────────────────────────
+// SMARTEC PROFILE SUMMARY (visual, replaces raw JSON)
+// ─────────────────────────────────────────────
+function buildSmartecSummaryHTML() {
+  const periods = APP.nightProfile.periods || [];
+  const presGlobal = periods[0]?.presence_ratio ?? 0;
+  const hasSensor  = presGlobal < 0.995;
+  const mo  = APP.nightProfile.margin_on_min  ?? -15;
+  const mof = APP.nightProfile.margin_off_min ??  15;
+  const lat = APP.project.lat || 41.4;
+  const nightH = npNightHours(lat, _npMo || 5);
+
+  const sensorBadge = hasSensor
+    ? `<span class="scenario-badge scenario-recommended" style="font-size:11px;">🔆 Sensor presencia · ratio ${Math.round(presGlobal*100)}%</span>`
+    : `<span class="scenario-badge scenario-lowcapex"    style="font-size:11px;">Sin sensor de presencia</span>`;
+
+  const moLabel = `${mo > 0 ? '+' : ''}${mo} min respecto al ocaso`;
+  const mofLabel = `+${mof} min respecto al alba`;
+
+  const rows = periods.map((p, i) => {
+    const durH  = (p.duration_pct * nightH).toFixed(1);
+    const durPct = (p.duration_pct * 100).toFixed(0);
+    const dpPct  = (p.dimming_presence * 100).toFixed(0);
+    const dnPct  = (p.dimming_no_presence * 100).toFixed(0);
+    const wh = Math.round((APP.photometry.system_power_w || 90) * p.duration_pct * nightH
+               * (presGlobal * p.dimming_presence + (1-presGlobal) * p.dimming_no_presence));
+    return `<tr>
+      <td style="font-weight:700;color:var(--salvi-grey);text-align:center">${i+1}</td>
+      <td>${durPct}% <span style="color:var(--salvi-muted);font-size:10px;">(~${durH}h)</span></td>
+      <td style="color:rgba(31,122,77,0.9);font-weight:600">${dpPct}%</td>
+      ${hasSensor ? `<td style="color:rgba(183,121,31,0.9);font-weight:600">${dnPct}%</td>` : ''}
+      <td style="color:var(--salvi-grey)">${wh} Wh</td>
+    </tr>`;
+  }).join('');
+
+  const thSensor = hasSensor ? '<th>Sin presencia</th>' : '';
+  const noteSmartec = `<div class="result-note" style="margin-top:8px;">
+    ℹ️ Estos parámetros se envían al nodo Smartec para programar el dimming automático.
+    El nodo adapta el encendido/apagado según el amanecer/atardecer real del día.
+  </div>`;
+
+  return `
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+      ${sensorBadge}
+      <span style="font-size:11px;color:var(--salvi-grey);">⏱ Encendido: ${moLabel}</span>
+      <span style="font-size:11px;color:var(--salvi-grey);">⏱ Apagado: ${mofLabel}</span>
+    </div>
+    <table class="detail-monthly-table" style="width:auto;">
+      <thead>
+        <tr>
+          <th style="text-align:center">#</th>
+          <th>Duración</th>
+          <th>Con presencia</th>
+          ${thSensor}
+          <th>Consumo</th>
+        </tr>
+      </thead>
+      <tbody>${rows}</tbody>
+    </table>
+    ${noteSmartec}`;
+}
+
+function showDetail(productId) {
+  if (!APP.simulation) return;
+  const c = APP.simulation.candidates.find(cc => cc.product_id === productId);
+  if (!c) return;
+  APP.selectedProductId = productId;
+
+  const detailHeader = document.getElementById('detail-product-header');
+  if (detailHeader) detailHeader.innerHTML = '<strong>' + (c.product_name || productId) + '</strong>';
+
+  const reliabilityPct = 100 - (c.annual_failure_rate_pct || 0);
+  const reliabilityClass = reliabilityPct >= 98 ? 'success' : reliabilityPct >= 95 ? 'warning' : 'danger';
+  const monthly = c.monthly_data || generateDemoMonthly(c);
+
+  const detailContent = document.getElementById('detail-content');
+  if (!detailContent) return;
+
+  detailContent.innerHTML = `
+    <div style="padding:16px;">
+      <div class="detail-back" onclick="goToStep(7)">← Volver a comparativa</div>
+
+      <div class="detail-header">
+        <div>
+          <div class="detail-product-name">${c.product_name || c.product_id}
+            ${c.n_units && c.n_units > 1 ? `<span style="display:inline-block;margin-left:6px;padding:2px 8px;background:#1E1E1E;color:#FCF9F5;border-radius:5px;font-size:12px;font-weight:700;vertical-align:middle;">×${c.n_units} unidades</span>` : ''}
+            ${c.recommended ? '<span class="badge badge-success" style="font-size:12px;vertical-align:middle;margin-left:8px;">★ Recomendado</span>' : ''}
+          </div>
+          <div class="detail-product-sub">
+            ${c.pv_peak_power_wp || '–'} Wp · ${c.battery_nominal_wh || '–'} Wh · ${c.weight_kg ? c.weight_kg + ' kg est.' : '–'}
+            ${c.n_units && c.n_units > 1 ? `<span style="opacity:0.6;font-size:11px;">(${c.n_units} luminarias)</span>` : ''}
+            ${c.is_custom_sized && c.optimal_tilt_deg ? `<span style="opacity:0.6;font-size:11px;">· inclinación óptima ${c.optimal_tilt_deg}° sur</span>` : ''}
+          </div>
+        </div>
+        <button class="btn-secondary" onclick="goToStep(7)">← Volver</button>
+      </div>
+
+      <div class="detail-kpis">
+        <div class="detail-kpi">
+          <div class="detail-kpi-label">Fiabilidad año 1</div>
+          <div class="detail-kpi-value ${reliabilityClass}">${reliabilityPct.toFixed(1)}%</div>
+          <div class="detail-kpi-sub">${(c.annual_failure_rate_pct||0).toFixed(1)}% noches con fallo</div>
+        </div>
+        <div class="detail-kpi">
+          <div class="detail-kpi-label">TCO 10 años (venta)</div>
+          <div class="detail-kpi-value">${c.tco_10y_sale != null ? formatEur(c.tco_10y_sale) : '–'}</div>
+          <div class="detail-kpi-sub">${c.tco_10y_cost != null ? formatEur(c.tco_10y_cost) + ' coste' : ''}</div>
+        </div>
+        <div class="detail-kpi">
+          <div class="detail-kpi-label">CO₂ evitado 10a</div>
+          <div class="detail-kpi-value success">${c.co2_saved_10y_kg != null ? Math.round(c.co2_saved_10y_kg) + ' kg' : '–'}</div>
+          <div class="detail-kpi-sub">vs red eléctrica</div>
+        </div>
+        <div class="detail-kpi">
+          <div class="detail-kpi-label">Autonomía diseño</div>
+          <div class="detail-kpi-value">${c.autonomy_days != null ? c.autonomy_days + ' días' : '–'}</div>
+          <div class="detail-kpi-sub">sin sol</div>
+        </div>
+        <div class="detail-kpi">
+          <div class="detail-kpi-label">Fiabilidad año 10</div>
+          <div class="detail-kpi-value ${c.annual_failure_rate_pct_y10 != null && (100-c.annual_failure_rate_pct_y10) >= 95 ? 'success' : 'warning'}">
+            ${c.annual_failure_rate_pct_y10 != null ? (100 - c.annual_failure_rate_pct_y10).toFixed(1) + '%' : '–'}
+          </div>
+          <div class="detail-kpi-sub">degradación batería</div>
+        </div>
+        <div class="detail-kpi">
+          <div class="detail-kpi-label">Consumo estimado</div>
+          <div class="detail-kpi-value">${calcularConsumoLive()} Wh</div>
+          <div class="detail-kpi-sub">por noche (~12h)</div>
+        </div>
+      </div>
+
+      ${c.loss_tree ? buildLossTreeHTML(c.loss_tree) : ''}
+
+      <details class="methodology-note" style="margin:0 0 10px;font-size:11px;color:var(--salvi-muted);border:1px solid var(--salvi-line);border-radius:var(--radius-sm);padding:6px 10px;">
+        <summary style="cursor:pointer;font-weight:600;color:var(--salvi-grey);user-select:none;">ℹ️ Metodología de cálculo</summary>
+        <div style="padding-top:6px;line-height:1.7;">
+          <strong>Tasa de fallo (noches críticas):</strong> porcentaje de noches en que el SOC de la batería cae por debajo del mínimo en algún momento. Es un criterio exigente para alumbrado — si la batería se agota a las 5am, la noche cuenta como fallo aunque 10h anteriores funcionaran perfectamente.<br>
+          <strong>PVGIS off-grid f<sub>e</sub>:</strong> fracción de <em>energía</em> no suministrada (déficit Wh / demanda total Wh). Con los mismos parámetros de referencia (Barcelona, 260Wp, 1330Wh, 0°, 400Wh/noche, pérdidas 14%) PVGIS reporta f<sub>e</sub> = 7,25%. Nuestro % puede diferir porque: (1) usamos perfil de consumo real con dimming variable, (2) nuestro criterio noche/fallo es más conservador, (3) incluimos degradación de batería a 10 años.<br>
+          <span style="color:var(--salvi-black);font-weight:600;">Panel horizontal SIL:</span> modelado con inclinación 0° (horizontal puro) + factor de suciedad ×1,25 respecto a paneles inclinados.
+        </div>
+      </details>
+
+      <div class="detail-section">
+        <div class="detail-section-title">Datos mensuales</div>
+        <table class="detail-monthly-table">
+          <thead>
+            <tr>
+              <th>Mes</th>
+              <th>Producción kWh</th>
+              <th>Consumo kWh</th>
+              <th>Balance kWh</th>
+              <th>SOC mín. %</th>
+              <th>SOC mín. a10 %</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${monthly.map((m, i) => {
+              const prod = m.production_kwh || m.prod_kwh || 0;
+              const cons = m.consumption_kwh || m.cons_kwh || 0;
+              const bal = prod - cons;
+              const balClass = bal >= 0 ? 'color:var(--state-success)' : 'color:var(--state-danger)';
+              return `<tr>
+                <td style="font-weight:600">${MONTHS[i]}</td>
+                <td>${prod.toFixed(1)}</td>
+                <td>${cons.toFixed(1)}</td>
+                <td style="${balClass}">${bal >= 0 ? '+' : ''}${bal.toFixed(1)}</td>
+                <td>${(m.soc_min_pct || m.soc_new || 0).toFixed(0)}%</td>
+                <td>${(m.soc_min_y10 || m.soc_y10 || 0).toFixed(0)}%</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="detail-section">
+        <div class="detail-section-title">Perfil de control nocturno (Smartec)</div>
+        ${buildSmartecSummaryHTML()}
+      </div>
+
+      <div class="detail-charts-row">
+        <div class="chart-card">
+          <div class="chart-title">Producción vs Consumo mensual</div>
+          <div style="position:relative;height:160px;">
+            <canvas id="chart-detail-monthly"></canvas>
+          </div>
+        </div>
+        <div class="chart-card">
+          <div class="chart-title">SOC mínimo mensual (batería)</div>
+          <div style="position:relative;height:160px;">
+            <canvas id="chart-detail-soc"></canvas>
+          </div>
+        </div>
+      </div>
+    </div>`;
+
+  // Render detail charts
+  setTimeout(() => {
+    const ctxDM = document.getElementById('chart-detail-monthly');
+    if (ctxDM) {
+      new Chart(ctxDM, {
+        type: 'bar',
+        data: {
+          labels: MONTHS,
+          datasets: [
+            {
+              label: 'Producción (kWh)',
+              data: monthly.map(m => +((m.production_kwh || m.prod_kwh || 0)).toFixed(1)),
+              backgroundColor: 'rgba(31,122,77,0.7)', borderRadius: 3,
+            },
+            {
+              label: 'Consumo (kWh)',
+              data: monthly.map(m => +((m.consumption_kwh || m.cons_kwh || 0)).toFixed(1)),
+              backgroundColor: 'rgba(30,30,30,0.45)', borderRadius: 3,
+            }
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { position: 'bottom', labels: { font: { size: 10 }, boxWidth: 10 } } },
+          scales: {
+            y: { beginAtZero: true, ticks: { font: { size: 10 } }, grid: { color: 'rgba(0,0,0,0.05)' } },
+            x: { ticks: { font: { size: 10 } }, grid: { display: false } }
+          }
+        }
+      });
+    }
+    const ctxDS = document.getElementById('chart-detail-soc');
+    if (ctxDS) {
+      new Chart(ctxDS, {
+        type: 'line',
+        data: {
+          labels: MONTHS,
+          datasets: [
+            {
+              label: 'SOC mín. año 1',
+              data: monthly.map(m => m.soc_min_pct || m.soc_new || 50),
+              borderColor: 'rgba(31,122,77,0.9)', backgroundColor: 'rgba(31,122,77,0.1)',
+              fill: true, tension: 0.4, pointRadius: 3,
+            },
+            {
+              label: 'SOC mín. año 10',
+              data: monthly.map(m => m.soc_min_y10 || m.soc_y10 || (m.soc_min_pct || m.soc_new || 50)*0.8),
+              borderColor: 'rgba(183,121,31,0.9)', fill: false, tension: 0.4, pointRadius: 3, borderDash: [4,4],
+            }
+          ]
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { position: 'bottom', labels: { font: { size: 10 }, boxWidth: 10 } } },
+          scales: {
+            y: {
+              beginAtZero: true, max: 100,
+              ticks: { callback: v => v + '%', font: { size: 10 } },
+              grid: { color: 'rgba(0,0,0,0.05)' }
+            },
+            x: { ticks: { font: { size: 10 } }, grid: { display: false } }
+          }
+        }
+      });
+    }
+  }, 100);
+
+  updateStepStatuses();
+  updateCanvasView(8);
+}
+
+// ─────────────────────────────────────────────
+// RIGHT PANEL RESULTS
+// ─────────────────────────────────────────────
+function renderRightPanelResults(result) {
+  const preSim = document.getElementById('rp-pre-sim');
+  const rpResults = document.getElementById('rp-results');
+  if (preSim) preSim.style.display = 'none';
+  if (rpResults) rpResults.style.display = 'block';
+
+  const recommended = result.candidates ? result.candidates.find(c => c.recommended) : null;
+  if (!recommended) return;
+
+  const nameEl = document.getElementById('rp-recommended-name');
+  const specsEl = document.getElementById('rp-recommended-specs');
+  const kpisEl = document.getElementById('rp-kpis');
+
+  if (nameEl) nameEl.textContent = recommended.product_name || recommended.product_id;
+  if (specsEl) {
+    specsEl.innerHTML = [
+      recommended.pv_peak_power_wp ? recommended.pv_peak_power_wp + ' Wp' : null,
+      recommended.battery_nominal_wh ? recommended.battery_nominal_wh + ' Wh' : null,
+      recommended.weight_kg ? recommended.weight_kg + ' kg' : null,
+    ].filter(Boolean).join(' · ');
+  }
+
+  if (kpisEl) {
+    const relPct = 100 - (recommended.annual_failure_rate_pct || 0);
+    const relClass = relPct >= 98 ? 'success' : relPct >= 95 ? 'warning' : 'danger';
+    const y10rel = recommended.annual_failure_rate_pct_y10 != null
+      ? (100 - recommended.annual_failure_rate_pct_y10).toFixed(1) + '%'
+      : '–';
+    kpisEl.innerHTML = `
+      <div class="rp-kpi">
+        <div class="rp-kpi-label">Fiabilidad año 1</div>
+        <div class="rp-kpi-value ${relClass}">${relPct.toFixed(1)}%</div>
+      </div>
+      <div class="rp-kpi">
+        <div class="rp-kpi-label">TCO 10 años</div>
+        <div class="rp-kpi-value">${recommended.tco_10y_sale != null ? formatEur(recommended.tco_10y_sale) : '–'}</div>
+      </div>
+      <div class="rp-kpi">
+        <div class="rp-kpi-label">CO₂ evitado</div>
+        <div class="rp-kpi-value success">${recommended.co2_saved_10y_kg != null ? Math.round(recommended.co2_saved_10y_kg) + ' kg' : '–'}</div>
+      </div>
+      <div class="rp-kpi">
+        <div class="rp-kpi-label">Batería año 10</div>
+        <div class="rp-kpi-value">${y10rel}</div>
+      </div>`;
+  }
+}
+
+// ─────────────────────────────────────────────
+// EXPORT
+// ─────────────────────────────────────────────
+function exportCSV() {
+  if (!APP.simulation || !APP.simulation.candidates) {
+    showToast('No hay datos de simulación para exportar', 'warning'); return;
+  }
+  const headers = ['Producto','Panel Wp','Batería Wh','Peso kg','Fiabilidad %','TCO 10a €','CO2 10a kg','Fiab. año 10 %','Recomendado'];
+  const rows = APP.simulation.candidates.map(c => [
+    c.product_name || c.product_id,
+    c.pv_peak_power_wp || '',
+    c.battery_nominal_wh || '',
+    c.weight_kg || '',
+    (100 - (c.annual_failure_rate_pct || 0)).toFixed(1),
+    c.tco_10y_sale != null ? c.tco_10y_sale.toFixed(0) : '',
+    c.co2_saved_10y_kg != null ? Math.round(c.co2_saved_10y_kg) : '',
+    c.annual_failure_rate_pct_y10 != null ? (100 - c.annual_failure_rate_pct_y10).toFixed(1) : '',
+    c.recommended ? 'Sí' : 'No',
+  ]);
+  const csv = [headers, ...rows].map(r => r.map(v => '"' + String(v).replace(/"/g,'""') + '"').join(',')).join('\n');
+  downloadFile('SALVI_Solar_' + (APP.project.name || 'resultados').replace(/\s+/g,'_') + '.csv', csv, 'text/csv');
+  showToast('CSV exportado', 'success');
+}
+
+function exportJSON() {
+  if (!APP.simulation) { showToast('No hay datos de simulación', 'warning'); return; }
+  const data = {
+    meta: { exported: new Date().toISOString(), project: APP.project },
+    params: { photometry: APP.photometry, nightProfile: APP.nightProfile, env: APP.env },
+    simulation: APP.simulation,
+  };
+  downloadFile('SALVI_Solar_' + (APP.project.name || 'proyecto').replace(/\s+/g,'_') + '.json',
+    JSON.stringify(data, null, 2), 'application/json');
+  showToast('JSON exportado', 'success');
+}
+
+function generateReport() {
+  showToast('Función de PDF disponible cuando el backend está conectado', 'warning');
+}
+
+function showExport() { goToStep(9); }
+
+function updateExportInfo() {
+  const el = document.getElementById('export-params');
+  if (!el) return;
+  if (!APP.simulation) {
+    el.textContent = 'Ejecuta la simulación para habilitar la exportación.';
+    return;
+  }
+  const rec = APP.simulation.candidates ? APP.simulation.candidates.find(c => c.recommended) : null;
+  el.innerHTML = `
+    Proyecto: <strong>${APP.project.name || '–'}</strong><br>
+    Ubicación: ${APP.project.city || ''} (${APP.project.lat}, ${APP.project.lon})<br>
+    Soluciones: ${APP.simulation.candidates ? APP.simulation.candidates.length : 0}<br>
+    Recomendada: <strong>${rec ? (rec.product_name || rec.product_id) : '–'}</strong>
+  `;
+}
+
+// ─────────────────────────────────────────────
+// SAVE / LOAD PROJECT
+// ─────────────────────────────────────────────
+function saveProject() {
+  const data = {
+    version: '1.0.0',
+    saved: new Date().toISOString(),
+    project: APP.project,
+    photometry: APP.photometry,
+    nightProfile: APP.nightProfile,
+    env: APP.env,
+    candidates: APP.candidates,
+  };
+  const key = 'salvi_solar_' + (APP.project.name || 'default').replace(/\s+/g,'_');
+  try {
+    localStorage.setItem(key, JSON.stringify(data));
+    showToast('Proyecto guardado en navegador', 'success');
+  } catch(e) {
+    showToast('Error al guardar: ' + e.message, 'error');
+  }
+}
+
+// ─────────────────────────────────────────────
+// UTILITIES
+// ─────────────────────────────────────────────
+function formatEur(n) {
+  return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n);
+}
+function formatKWh(wh) { return (wh / 1000).toFixed(1) + ' kWh'; }
+
+function escapeHtml(str) {
+  return str.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function downloadFile(filename, content, mimeType) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function showToast(msg, type = 'info') {
+  const container = document.getElementById('toast-container');
+  if (!container) return;
+  const toast = document.createElement('div');
+  toast.className = 'toast ' + (type || '');
+  toast.textContent = msg;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transition = 'opacity 0.3s';
+    setTimeout(() => { if (toast.parentNode) container.removeChild(toast); }, 350);
+  }, 3500);
+}
+
+function showError(msg) { showToast(msg, 'error'); }
+
+// ─────────────────────────────────────────────
+// API
+// ─────────────────────────────────────────────
+async function apiGet(path) {
+  const r = await fetch(API + path, { signal: AbortSignal.timeout(10000) });
+  if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  return r.json();
+}
+
+async function apiPost(path, body) {
+  const r = await fetch(API + path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(120000),
+  });
+  if (!r.ok) { const t = await r.text(); throw new Error(t || `HTTP ${r.status}`); }
+  return r.json();
+}
+
+// ─────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────
+async function init() {
+  // Check API health
+  const statusEl = document.getElementById('api-status');
+  const statusText = document.getElementById('api-status-text');
+  try {
+    const h = await apiGet('/health');
+    if (statusEl) { statusEl.classList.remove('err'); statusEl.classList.add('ok'); }
+    if (statusText) statusText.textContent = 'API v' + (h.version || '1.0');
+  } catch(e) {
+    if (statusEl) { statusEl.classList.remove('ok'); statusEl.classList.add('err'); }
+    if (statusText) statusText.textContent = 'Sin conexión';
+  }
+
+  // Load products from API
+  try {
+    const r = await apiGet('/products');
+    APP.products = r.products || r;
+    if (APP.products && APP.products.length > 0) {
+      // Pre-select first 4 SIL products as default candidates
+      const silProducts = APP.products.filter(p => (p.id||'').toUpperCase().startsWith('SIL')).slice(0, 4);
+      if (silProducts.length > 0) APP.candidates = silProducts.map(p => p.id);
+    }
+  } catch(e) {
+    console.warn('Could not load products from API, using demo products', e);
+    APP.products = getDemoProducts();
+  }
+
+  // Initialize UI
+  initPanelResize();
+  renderCandidatesGrid();
+  renderPeriodsTable();
+  updateDisplay();
+  updateNavButtons();
+
+  // Show step 1 (map) on startup
+  try { goToStep(1); } catch(e) { console.warn('goToStep error:', e); }
+
+  // Re-init Lucide icons (in case any were added dynamically)
+  if (window.lucide) lucide.createIcons();
+}
+
+// ─────────────────────────────────────────────
+// LEFT PANEL RESIZE (identical to GIS)
+// ─────────────────────────────────────────────
+function initPanelResize() {
+  const handle = document.getElementById('panel-resize');
+  const panel = document.getElementById('left-panel');
+  const app = document.getElementById('app');
+  if (!handle || !panel) return;
+  let dragging = false, startX = 0, startW = 0;
+  handle.addEventListener('mousedown', e => {
+    dragging = true;
+    startX = e.clientX;
+    startW = panel.offsetWidth;
+    handle.classList.add('dragging');
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    e.preventDefault();
+  });
+  document.addEventListener('mousemove', e => {
+    if (!dragging) return;
+    const maxW = Math.floor(window.innerWidth * 0.45);
+    const newW = Math.min(maxW, Math.max(220, startW + (e.clientX - startX)));
+    app.style.setProperty('--left-w', newW + 'px');
+  });
+  document.addEventListener('mouseup', () => {
+    if (!dragging) return;
+    dragging = false;
+    handle.classList.remove('dragging');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+  });
+}
+
+// ─────────────────────────────────────────────
+// MAP PICKER (Leaflet + Nominatim)
+// ─────────────────────────────────────────────
+let _map = null;
+let _mapMarker = null;
+let _mapPendingLat = null;
+let _mapPendingLon = null;
+
+function openMapPicker() {
+  document.getElementById('map-modal').classList.add('open');
+  setTimeout(() => {
+    if (!_map) {
+      const defaultLat = APP.project.lat || 41.3851;
+      const defaultLon = APP.project.lon || 2.1734;
+      _map = L.map('map-container').setView([defaultLat, defaultLon], APP.project.lat ? 12 : 5);
+      L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '© OpenStreetMap contributors', maxZoom: 19
+      }).addTo(_map);
+      _map.on('click', function(e) {
+        const lat = Math.round(e.latlng.lat * 10000) / 10000;
+        const lon = Math.round(e.latlng.lng * 10000) / 10000;
+        setMapPin(lat, lon);
+      });
+      // If already has coords, place marker
+      if (APP.project.lat && APP.project.lon) {
+        setMapPin(APP.project.lat, APP.project.lon);
+      }
+    } else {
+      _map.invalidateSize();
+      if (APP.project.lat && APP.project.lon) {
+        _map.setView([APP.project.lat, APP.project.lon], 12);
+      }
+    }
+  }, 100);
+}
+
+function closeMapPicker() {
+  document.getElementById('map-modal').classList.remove('open');
+  _mapPendingLat = null;
+  _mapPendingLon = null;
+}
+
+function setMapPin(lat, lon) {
+  _mapPendingLat = lat;
+  _mapPendingLon = lon;
+  if (_mapMarker) {
+    _mapMarker.setLatLng([lat, lon]);
+  } else {
+    _mapMarker = L.marker([lat, lon], { draggable: true }).addTo(_map);
+    _mapMarker.on('dragend', function(e) {
+      const pos = e.target.getLatLng();
+      const la = Math.round(pos.lat * 10000) / 10000;
+      const lo = Math.round(pos.lng * 10000) / 10000;
+      setMapPin(la, lo);
+    });
+  }
+  document.getElementById('map-coords-display').innerHTML =
+    'Pin: <strong>' + lat + ', ' + lon + '</strong>';
+  document.getElementById('btn-confirm-map').disabled = false;
+  // Reverse geocode city name
+  fetch('https://nominatim.openstreetmap.org/reverse?lat=' + lat + '&lon=' + lon + '&format=json')
+    .then(r => r.json())
+    .then(data => {
+      const city = data.address.city || data.address.town || data.address.village || data.address.county || '';
+      const country = data.address.country_code ? data.address.country_code.toUpperCase() : '';
+      if (city) {
+        document.getElementById('map-coords-display').innerHTML =
+          '<strong>' + city + '</strong> · ' + lat + ', ' + lon;
+        _mapPendingCity = city;
+        _mapPendingCountry = country;
+      }
+    }).catch(() => {});
+}
+let _mapPendingCity = '';
+let _mapPendingCountry = '';
+
+function confirmMapLocation() {
+  if (_mapPendingLat === null) return;
+  APP.project.lat = _mapPendingLat;
+  APP.project.lon = _mapPendingLon;
+  if (_mapPendingCity) APP.project.city = _mapPendingCity;
+  const fLat = document.getElementById('f-lat');
+  const fLon = document.getElementById('f-lon');
+  const fCity = document.getElementById('f-city');
+  if (fLat) fLat.value = APP.project.lat;
+  if (fLon) fLon.value = APP.project.lon;
+  if (fCity && _mapPendingCity) fCity.value = _mapPendingCity;
+  updateDisplay();
+  closeMapPicker();
+  showToast('Ubicación confirmada: ' + APP.project.lat + ', ' + APP.project.lon, 'success');
+}
+
+async function searchMapCity() {
+  const q = document.getElementById('map-search-input').value.trim();
+  if (!q) return;
+  try {
+    const url = 'https://nominatim.openstreetmap.org/search?q=' + encodeURIComponent(q) + '&format=json&limit=1';
+    const r = await fetch(url);
+    const results = await r.json();
+    if (results.length === 0) { showToast('No se encontró la ubicación', 'error'); return; }
+    const res = results[0];
+    const lat = Math.round(parseFloat(res.lat) * 10000) / 10000;
+    const lon = Math.round(parseFloat(res.lon) * 10000) / 10000;
+    _map.setView([lat, lon], 13);
+    setMapPin(lat, lon);
+  } catch(e) {
+    showToast('Error buscando ubicación: ' + e.message, 'error');
+  }
+}
+
+// ─────────────────────────────────────────────
+// GIS IMPORT
+// ─────────────────────────────────────────────
+function openGISImport() {
+  document.getElementById('gis-modal').classList.add('open');
+  const body = document.getElementById('gis-modal-body');
+  body.innerHTML = '<div style="padding:20px;text-align:center;color:var(--salvi-muted);">Conectando con SALVI GIS (puerto 8733)...</div>';
+  fetch('http://localhost:8733/api/projects')
+    .then(r => r.json())
+    .then(data => {
+      const projects = data.projects || data;
+      if (!projects || projects.length === 0) {
+        body.innerHTML = '<div style="padding:20px;text-align:center;color:var(--salvi-muted);">No hay proyectos en SALVI GIS.</div>';
+        return;
+      }
+      body.innerHTML = projects.map(p => {
+        const lat = p.latitude || p.lat || '–';
+        const lon = p.longitude || p.lon || '–';
+        const hasCoords = (lat !== '–' && lon !== '–');
+        return '<div class="gis-project-item" onclick="' + (hasCoords ? 'importGISProject(' + JSON.stringify(p).replace(/"/g,'&quot;') + ')' : '') + '" style="' + (!hasCoords ? 'opacity:0.5;cursor:default;' : '') + '">' +
+          '<div><div class="gis-project-name">' + (p.name || p.project_name || 'Proyecto sin nombre') + '</div>' +
+          '<div class="gis-project-coords">' + (hasCoords ? lat + ', ' + lon : 'Sin coordenadas') + '</div></div>' +
+          (hasCoords ? '<span style="font-size:11px;color:var(--state-success);">Importar →</span>' : '') +
+          '</div>';
+      }).join('');
+    })
+    .catch(e => {
+      body.innerHTML = '<div style="padding:20px;text-align:center;">' +
+        '<div style="color:var(--state-danger);font-weight:600;margin-bottom:8px;">SALVI GIS no está abierto</div>' +
+        '<div style="color:var(--salvi-muted);font-size:12px;">Abre SALVI GIS primero y vuelve a intentarlo.</div>' +
+        '</div>';
+    });
+}
+
+function closeGISImport() {
+  document.getElementById('gis-modal').classList.remove('open');
+}
+
+function importGISProject(p) {
+  APP.project.lat = parseFloat(p.latitude || p.lat);
+  APP.project.lon = parseFloat(p.longitude || p.lon);
+  if (p.name || p.project_name) {
+    const projName = p.name || p.project_name;
+    if (!APP.project.name) {
+      APP.project.name = projName;
+      const fName = document.getElementById('f-name');
+      if (fName) fName.value = projName;
+    }
+  }
+  if (p.city) {
+    APP.project.city = p.city;
+    const fCity = document.getElementById('f-city');
+    if (fCity) fCity.value = p.city;
+  }
+  const fLat = document.getElementById('f-lat');
+  const fLon = document.getElementById('f-lon');
+  if (fLat) fLat.value = APP.project.lat;
+  if (fLon) fLon.value = APP.project.lon;
+  updateDisplay();
+  closeGISImport();
+  showToast('Importado desde GIS: ' + APP.project.lat + ', ' + APP.project.lon, 'success');
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+
+<!-- ── MAP PICKER MODAL ── -->
+<div id="map-modal">
+  <div class="map-modal-box">
+    <div class="map-modal-header">
+      <span class="map-modal-title">🗺 Seleccionar ubicación del proyecto</span>
+      <button class="map-modal-close" onclick="closeMapPicker()">✕</button>
+    </div>
+    <div class="map-search-bar">
+      <input type="text" id="map-search-input" placeholder="Buscar ciudad o dirección... (Ej: Barcelona, España)"
+             onkeydown="if(event.key==='Enter') searchMapCity()">
+      <button class="btn-primary btn-sm" onclick="searchMapCity()">Buscar</button>
+    </div>
+    <div id="map-container"></div>
+    <div class="map-modal-footer">
+      <span class="map-coords-display" id="map-coords-display">Haz clic en el mapa para colocar el pin</span>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-secondary btn-sm" onclick="closeMapPicker()">Cancelar</button>
+        <button class="btn-primary btn-sm" id="btn-confirm-map" onclick="confirmMapLocation()" disabled>Confirmar ubicación</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ── GIS IMPORT MODAL ── -->
+<div id="gis-modal">
+  <div class="gis-modal-box">
+    <div class="map-modal-header">
+      <span class="map-modal-title">↗ Importar proyecto desde SALVI GIS</span>
+      <button class="map-modal-close" onclick="closeGISImport()">✕</button>
+    </div>
+    <div id="gis-modal-body" class="gis-project-list">
+      <div style="padding:20px;text-align:center;color:var(--salvi-muted);">Conectando con SALVI GIS...</div>
+    </div>
+    <div class="map-modal-footer">
+      <span style="font-size:12px;color:var(--salvi-muted);">SALVI GIS · puerto 8733</span>
+      <button class="btn-secondary btn-sm" onclick="closeGISImport()">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,202 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                  NUEVO FLUJO DE TRABAJO - SALVILUX v2.0                    ║
+║              Con Cálculo Fotométrico EN 13201:2015 Integrado               ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+
+🎯 NUEVO FLUJO DE TRABAJO (3 PASOS)
+═════════════════════════════════════════════════════════════════════════════
+
+ANTES (Flujo antiguo):
+   1. Llenar formulario
+   2. Hacer clic en "CALCULAR & GENERAR"
+   3. Descarga Excel/PDF (sin cálculos, solo datos)
+
+AHORA (Nuevo flujo):
+   PASO 1️⃣ : CALCULAR
+      • Llenar formulario (Secciones 1-5)
+      • Hacer clic en botón "CALCULAR"
+      • Sistema realiza cálculos fotométricos EN 13201
+      ✓ Se muestran resultados en nueva sección
+
+   PASO 2️⃣ : REVISAR RESULTADOS
+      • Nueva sección "6. Resultados del Cálculo Fotométrico"
+      • Aparecen todos los valores calculados:
+        - Iluminancia (Em) [lux]
+        - Luminancia (L) [cd/m²]
+        - Uniformidad transversal (Uo)
+        - Uniformidad longitudinal (Ul)
+        - Deslumbramiento (TI) [%]
+        - Cociente de brillo (SR)
+        - Consumo energético [kWh/año]
+        - Costo anual [€]
+        - Emisiones CO₂ [kg/año]
+      • Indicadores ✓ Cumple / ✗ No cumple para cada parámetro
+
+   PASO 3️⃣ : GENERAR INFORMES
+      • Si los resultados son correctos:
+      • Hacer clic en botón "GENERAR INFORMES"
+      • Se generan y descargan:
+        ✓ Excel con datos + cálculos
+        ✓ PDF con resultados (si está marcado)
+
+
+📊 PARÁMETROS CALCULADOS (EN 13201:2015)
+═════════════════════════════════════════════════════════════════════════════
+
+ILUMINANCIA Y LUMINANCIA:
+   • Em (Iluminancia Media) [lux]
+     Fórmula: Em = (Φ * η) / A
+     Φ = flujo luminoso total (lm)
+     η = factor de utilización (~0.5)
+     A = área (m²)
+
+   • L (Luminancia Media) [cd/m²]
+     Fórmula: L = (Em * q₀) / π
+     q₀ = coeficiente pavimento
+
+UNIFORMIDAD:
+   • Uo (Uniformidad Transversal) = L_min / L_media
+     Valores típicos: 0.4 - 0.6
+     Norma: Uo ≥ 0.4
+
+   • Ul (Uniformidad Longitudinal) = L_min / L_max
+     Valores típicos: 0.5 - 0.8
+     Norma: Ul ≥ 0.5
+
+DESLUMBRAMIENTO:
+   • TI (Incremento de Deslumbramiento) [%]
+     Depende de altura de montaje y óptica
+     Norma: TI ≤ 40 %
+
+   • SR (Cociente de Brillo)
+     SR = L_max / L_media
+     Norma: SR ≤ 1.0
+
+CONSUMO ENERGÉTICO:
+   • Potencia total [W]
+   • Potencia unitaria [W/luminaria]
+   • Consumo anual [kWh/año]
+     Fórmula: E = (P * h * 1.05) / 1000
+     P = potencia (W)
+     h = horas/año (3650 por defecto)
+
+   • Costo anual [€/año]
+     Costo = E * tarifa (€/kWh)
+
+   • Emisiones CO₂ [kg/año]
+     Emisiones = E * factor_CO₂ (kg/kWh)
+
+   • Consumo específico [W/m²]
+     = Potencia total / Área de calzada
+
+   • Costo 15 años [€]
+     = Costo anual * 15
+
+
+🔧 INSTALACIÓN Y EJECUCIÓN
+═════════════════════════════════════════════════════════════════════════════
+
+PASO 1: Instalar librerías
+────────────────────────────
+   Ejecuta: INSTALL_REPORTLAB.bat
+   (Instala ReportLab para PDFs)
+
+
+PASO 2: Iniciar servidor
+────────────────────────
+   Ejecuta: TEST_APP.bat
+   Espera mensaje: "Running on http://0.0.0.0:5000"
+
+
+PASO 3: Abrir formulario
+────────────────────────
+   Abre navegador: http://localhost:5000
+
+
+PASO 4: Usar el nuevo flujo
+────────────────────────
+   a) Llena todas las secciones del formulario
+   b) Haz clic en "CALCULAR"
+      → Se ejecutan cálculos fotométricos
+      → Aparecen resultados
+   c) Revisa que los valores cumplan la norma
+   d) Haz clic en "GENERAR INFORMES"
+      → Descarga Excel + PDF con todo
+
+
+📝 ARCHIVOS NUEVOS/MODIFICADOS
+═════════════════════════════════════════════════════════════════════════════
+
+NUEVOS:
+   • photometry.py
+     Módulo de cálculos fotométricos EN 13201
+     Clase CalculoFotometrico
+     Funciones de cálculo para cada parámetro
+
+MODIFICADOS:
+   • test_app.py
+     + Importa photometry.py
+     + Nuevo endpoint: /api/calcular
+       POST con datos → devuelve resultados
+     + Mantiene /api/submit-form
+       POST con datos → genera Excel + PDF
+
+   • templates/index.html
+     + Nueva sección 6: "Resultados"
+     + Botón "CALCULAR" (type="button", no submit)
+     + Botón "GENERAR INFORMES" (aparece tras calcular)
+     + Funciones JavaScript:
+       - calcularFotometria()
+       - mostrarResultados()
+       - mostrarCumplimiento()
+       - generarInformes()
+     + Variables globales:
+       - datosFormulario
+       - resultadosCalculo
+
+
+🐛 SOLUCIÓN DE PROBLEMAS
+═════════════════════════════════════════════════════════════════════════════
+
+Q: El botón CALCULAR no hace nada
+A: • Verifica que tengas al menos 1 luminaria
+   • Revisa consola (F12) para errores
+
+Q: No aparecen los resultados
+A: • Abre consola (F12)
+   • Busca mensaje de error en red (Network tab)
+   • Revisa ventana de TEST_APP.bat
+
+Q: Los valores calculados parecen incorrectos
+A: • Los cálculos son aproximados (sin datos ópticos LDT)
+   • Se usan estimaciones basadas en:
+     - Altura de montaje
+     - Interdistancia
+     - Flujo luminoso
+     - Coef. pavimento (q₀)
+   • Para valores reales, se necesaría análisis más completo
+
+Q: Excel/PDF vacío después de generar
+A: • Los resultados calculados deberían incluirse
+   • Corregiremos esto en la próxima versión
+   • Ahora Excel tiene datos del proyecto + cálculos
+
+
+✅ PRÓXIMOS PASOS
+═════════════════════════════════════════════════════════════════════════════
+
+En futuras versiones:
+   • Integración con archivos LDT reales
+   • Cálculos más precisos de distribución
+   • Gráficos de isolíneas
+   • Exportación de cálculos detallados a PDF
+   • Comparación con normativas internacionales
+   • Simulación de escenarios
+
+
+═════════════════════════════════════════════════════════════════════════════
+
+¡Listo para usar! Ejecuta TEST_APP.bat y prueba el nuevo flujo 🚀
+
+═════════════════════════════════════════════════════════════════════════════

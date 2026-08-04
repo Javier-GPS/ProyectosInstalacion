@@ -1,0 +1,158 @@
+.app-shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--salvi-cream);
+}
+
+.app-topbar {
+  height: 60px;
+  min-height: 60px;
+  background: var(--salvi-surface-white);
+  border-bottom: 1px solid var(--salvi-line);
+  color: var(--salvi-black);
+  display: flex;
+  align-items: center;
+  padding: 0 20px;
+  gap: 16px;
+}
+
+.app-topbar-brand {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 200px;
+}
+
+.app-topbar-brand-mark {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--salvi-grey);
+  font-weight: 700;
+}
+
+.app-topbar-brand-app {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--salvi-black);
+}
+
+.app-topbar-context {
+  flex: 1;
+  font-size: 12.5px;
+  color: var(--salvi-grey);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.app-topbar-project {
+  color: var(--salvi-black);
+  font-weight: 600;
+}
+
+.app-topbar-project--empty {
+  color: var(--salvi-muted);
+  font-weight: 400;
+  font-style: italic;
+}
+
+.app-topbar-sep {
+  opacity: 0.5;
+}
+
+.app-topbar-logout {
+  background: var(--salvi-surface-white);
+  border: 1px solid var(--salvi-black);
+  color: var(--salvi-black);
+  padding: 7px 14px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 12.5px;
+  font-weight: 500;
+}
+
+.app-topbar-logout:hover {
+  background: var(--salvi-black);
+  color: var(--salvi-surface-white);
+}
+
+.app-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.app-sidenav {
+  width: 240px;
+  background: var(--salvi-surface);
+  border-right: 1px solid var(--salvi-line);
+  color: var(--salvi-black);
+  overflow-y: auto;
+  padding: 12px 0 16px;
+  flex-shrink: 0;
+  transition: width 0.15s ease;
+}
+
+.app-sidenav--collapsed {
+  width: 56px;
+}
+
+.app-sidenav-toggle {
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--salvi-grey);
+  text-align: left;
+  padding: 6px 16px 14px;
+  cursor: pointer;
+  font-size: 11.5px;
+}
+
+.app-sidenav-group {
+  margin-bottom: 12px;
+}
+
+.app-sidenav-group-title {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--salvi-muted);
+  padding: 8px 16px 4px;
+}
+
+.app-sidenav-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 9px 16px;
+  color: var(--salvi-black);
+  text-decoration: none;
+  font-size: 13px;
+  border-left: 3px solid transparent;
+}
+
+.app-sidenav-item:hover {
+  background: var(--salvi-line);
+}
+
+.app-sidenav-item--active {
+  background: var(--salvi-surface-white);
+  border-left-color: var(--salvi-black);
+  font-weight: 600;
+}
+
+.app-sidenav-badge {
+  font-size: 10px;
+  color: var(--salvi-muted);
+  font-weight: 400;
+  text-transform: none;
+}
+
+.app-main {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px 32px;
+  min-width: 0;
+  background: var(--salvi-cream);
+}

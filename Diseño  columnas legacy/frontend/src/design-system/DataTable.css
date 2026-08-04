@@ -1,0 +1,10 @@
+.data-table-row--clickable {
+  cursor: pointer;
+}
+
+.data-table-empty {
+  text-align: center;
+  padding: 32px 20px;
+  color: var(--salvi-grey);
+  font-size: 13px;
+}

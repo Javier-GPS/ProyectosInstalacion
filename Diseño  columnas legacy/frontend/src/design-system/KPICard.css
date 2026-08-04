@@ -1,0 +1,18 @@
+.kpi-card {
+  background: var(--salvi-surface-white);
+  border: 1px solid var(--salvi-line);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+}
+
+.kpi-card-value {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--salvi-black);
+}
+
+.kpi-card-label {
+  font-size: 11px;
+  color: var(--salvi-grey);
+  margin-top: 2px;
+}

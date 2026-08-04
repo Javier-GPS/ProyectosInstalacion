@@ -1,0 +1,151 @@
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                                                                           ║
+║              USAR TEST_APP - VERSIÓN SIMPLIFICADA Y ROBUSTA              ║
+║                                                                           ║
+║  El app principal tiene demasiadas dependencias. Test_App es más simple  ║
+║  y mejor para diagnosticar el problema.                                   ║
+║                                                                           ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+
+¿QUÉ ES TEST_APP?
+═════════════════════════════════════════════════════════════════════════════
+
+Una versión SIMPLIFICADA de la aplicación que:
+✓ No depende de módulos complicados (excel_handler, validators)
+✓ Genera un Excel básico pero funcional
+✓ Es mucho más fácil de debuggear
+✓ Te ayuda a identificar exactamente dónde está el problema
+
+
+PASO 1: CIERRA TODO
+═════════════════════════════════════════════════════════════════════════════
+
+- Si CORRER.bat está abierto, ciérralo (Ctrl+C)
+- Espera 2 segundos
+- Cierra la ventana de terminal
+
+
+PASO 2: ABRE TEST_APP.bat
+═════════════════════════════════════════════════════════════════════════════
+
+En la carpeta del proyecto, haz doble clic en:
+   📄 TEST_APP.bat
+
+Deberías ver:
+   ============================================================
+   SalviLux - TEST APP (Simplificado)
+   ============================================================
+
+   ✓ Download folder: [RUTA]
+
+   🌐 ABRE EN TU NAVEGADOR:
+      → http://localhost:5000
+
+   ⏹️  PARA DETENER: Presiona Ctrl+C
+
+
+PASO 3: ABRE EN TU NAVEGADOR
+═════════════════════════════════════════════════════════════════════════════
+
+Ve a:  http://localhost:5000
+
+
+PASO 4: PRUEBA SIMPLE
+═════════════════════════════════════════════════════════════════════════════
+
+En la Sección 1, llena SOLO esto:
+
+   ✓ Nombre del proyecto:  TEST
+   ✓ Cliente final:        TEST
+   Fecha: (hoy - selecciona del calendario)
+
+TODO LO DEMÁS puedes dejarlo vacío.
+
+
+PASO 5: HAZ CLIC EN "CALCULAR & GENERAR"
+═════════════════════════════════════════════════════════════════════════════
+
+Deberías ver:
+   ✓ Mensaje verde: "✓ Excel generado correctamente (XXXX bytes)"
+
+El archivo se descargará automáticamente a tu carpeta Descargas.
+
+
+PASO 6: VERIFICA EL ARCHIVO
+═════════════════════════════════════════════════════════════════════════════
+
+En tu PC, ve a: Descargas
+
+Deberías ver un archivo como:
+   test_20260516_153045.xlsx  (la fecha y hora serán diferentes)
+
+
+SI FUNCIONA TEST_APP
+═════════════════════════════════════════════════════════════════════════════
+
+Entonces el problema está en:
+   ❌ modules/excel_handler.py (complicado)
+   ❌ modules/validators.py (estricto)
+   ❌ app.py (app original)
+
+Solución: Usaremos la versión de app.py simplificada basada en test_app.py
+
+
+SI NO FUNCIONA TEST_APP
+═════════════════════════════════════════════════════════════════════════════
+
+1. Mira la consola del navegador (F12):
+   ¿Qué error dice?
+
+2. Mira la ventana de terminal (donde corre TEST_APP.bat):
+   ¿Qué dice en rojo o en ERROR?
+
+3. Abre en navegador:
+   http://localhost:5000/api/debug/files
+
+   Verifica:
+   ✓ "download_folder_exists": true
+   ✓ Los archivos generados aparecen en "files_in_downloads"
+
+
+INFORMACIÓN TÉCNICA
+═════════════════════════════════════════════════════════════════════════════
+
+Test_App hace exactamente esto:
+
+1. Recibe los datos del formulario como JSON
+2. Valida que tengas nombre_proyecto y cliente_final
+3. Crea un Workbook con openpyxl
+4. Agrega los datos como simple tabla
+5. Guarda en carpeta /downloads
+6. Devuelve URL para descargar
+
+Sin dependencias complicadas. Si esto no funciona, hay un problema
+fundamental con Python o Flask.
+
+
+COMANDO ALTERNATIVO (sin .bat)
+═════════════════════════════════════════════════════════════════════════════
+
+Si TEST_APP.bat no abre, prueba manualmente en PowerShell:
+
+1. Abre PowerShell en la carpeta del proyecto
+2. Ejecuta:
+   .\venv\Scripts\activate.bat
+   python test_app.py
+
+3. Si ves "Running on http://127.0.0.1:5000", está funcionando
+
+
+NEXT STEPS
+═════════════════════════════════════════════════════════════════════════════
+
+Después de probar test_app.py:
+
+1. Si FUNCIONA: Usaremos este como base para arreglar app.py original
+2. Si NO FUNCIONA: Hay un problema de dependencias o Python
+
+═════════════════════════════════════════════════════════════════════════════
+¡Prueba TEST_APP.bat AHORA!
+═════════════════════════════════════════════════════════════════════════════

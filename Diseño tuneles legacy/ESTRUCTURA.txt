@@ -1,0 +1,429 @@
+ESTRUCTURA DEL PROYECTO - CÁLCULO FOTOMÉTRICO v1.0
+═══════════════════════════════════════════════════════════════════════════
+
+CALCULO FOTOMETRICO SALVI/
+│
+├─ 📋 RAÍZ (Archivos principales)
+│  ├─ 🐍 app.py                       [5.6 KB] - Servidor Flask principal
+│  ├─ 🔧 config.py                    [2.1 KB] - Configuración centralizada
+│  ├─ 📦 requirements.txt              [80 B]   - Dependencias Python
+│  ├─ 🧪 test_setup.py                [4.3 KB] - Script de verificación
+│  ├─ 📄 .env.example                 [666 B]  - Template de variables
+│  ├─ 🚫 .gitignore                   [1.1 KB] - Git configuration
+│  │
+│  ├─ 📚 DOCUMENTACIÓN
+│  │  ├─ README.md                    [7.5 KB] - Documentación completa
+│  │  ├─ QUICKSTART.md                [4.8 KB] - Guía rápida
+│  │  ├─ INSTALL.md                   [6.4 KB] - Instalación y deployment
+│  │  ├─ ARCHITECTURE.md              [11.1 KB] - Arquitectura técnica
+│  │  ├─ SUMMARY.md                   [11.3 KB] - Resumen ejecutivo
+│  │  ├─ DELIVERABLES.md              [12 KB]  - Lista de entregables
+│  │  ├─ ESTRUCTURA.txt               [Este]   - Esta archivo
+│  │  └─ (Total: 8 documentos, 52+ KB)
+│  │
+│  ├─ 📁 modules/                      [Módulos Python reutilizables]
+│  │  ├─ 🐍 __init__.py               [29 B]   - Inicializador de paquete
+│  │  ├─ 🐍 validators.py             [4.3 KB] - Validación de datos
+│  │  │  ├─ validate_form_data()      - Valida formularios manuales
+│  │  │  ├─ validate_excel_data()     - Valida datos de Excel
+│  │  │  └─ sanitize_data()           - Limpia y normaliza
+│  │  │
+│  │  └─ 🐍 excel_handler.py          [9.3 KB] - Procesamiento Excel
+│  │     ├─ create_study_from_form()  - Genera Excel desde formulario
+│  │     ├─ process_imported_excel()  - Procesa Excel importado
+│  │     ├─ create_results_excel()    - Crea hoja de resultados
+│  │     └─ _style_cell(), _write_header()
+│  │
+│  ├─ 📁 templates/                    [Frontend HTML/CSS/JavaScript]
+│  │  └─ 🌐 index.html                [40.5 KB] - Interfaz web completa
+│  │     │
+│  │     ├─ HTML (Estructura)
+│  │     │  ├─ Sección 1: Proyecto/Cliente
+│  │     │  ├─ Sección 2: Geometría
+│  │     │  ├─ Sección 3: Luminarias
+│  │     │  ├─ Sección 4: Energía
+│  │     │  └─ Sección 5: Entregables
+│  │     │
+│  │     ├─ CSS (Estilos)
+│  │     │  ├─ Gradiente morado SALVI
+│  │     │  ├─ Grid layout 3 columnas
+│  │     │  ├─ Responsive design
+│  │     │  └─ Alertas y animaciones
+│  │     │
+│  │     └─ JavaScript (Lógica)
+│  │        ├─ Modo manual/Excel switching
+│  │        ├─ Dinámicas de luminarias
+│  │        ├─ Validación de campos
+│  │        ├─ Envío asíncrono (Fetch API)
+│  │        └─ Manejo de alertas
+│  │
+│  ├─ 📁 assets/                       [Recursos estáticos]
+│  │  ├─ 📊 plantilla_app_salvilux.xlsx  [5.3 KB] - Plantilla Excel importación
+│  │  │  ├─ 11 columnas preformateadas
+│  │  │  ├─ Encabezados estilizados
+│  │  │  └─ 5 filas de ejemplo
+│  │  │
+│  │  └─ 📦 LDTs_luminarias.zip        [1.9 KB] - Librería LDT comprimida
+│  │     ├─ README.txt
+│  │     └─ Carpetas por fabricante
+│  │
+│  ├─ 📁 uploads/                      [Archivos temporales importados]
+│  │  └─ [Se llena automáticamente y se limpia]
+│  │
+│  └─ 📁 downloads/                    [Archivos generados por usuario]
+│     └─ [Excels generados del formulario e importación]
+
+
+═══════════════════════════════════════════════════════════════════════════
+DETALLES POR SECCIÓN
+═══════════════════════════════════════════════════════════════════════════
+
+🐍 BACKEND PYTHON (7 ARCHIVOS, 27.3 KB)
+──────────────────────────────────────────────────────────────────────────
+
+app.py (5.6 KB)
+├─ Imports: Flask, openpyxl, pandas, werkzeug
+├─ Configuración Flask y CORS
+├─ Routes:
+│  ├─ @app.route('/')                - GET principal
+│  ├─ @app.route('/api/submit-form', methods=['POST'])
+│  ├─ @app.route('/api/upload-excel', methods=['POST'])
+│  ├─ @app.route('/api/download-template', methods=['GET'])
+│  ├─ @app.route('/api/download-ldts', methods=['GET'])
+│  ├─ @app.route('/api/download/<filename>', methods=['GET'])
+│  └─ @app.route('/api/health', methods=['GET'])
+├─ Error handlers (413, 404, 500)
+└─ Main: app.run(debug=True, host='0.0.0.0', port=5000)
+
+config.py (2.1 KB)
+├─ Rutas de archivos (uploads, downloads, assets)
+├─ Límites de tamaño
+├─ Configuración de sesión
+├─ Validaciones (rangos numéricos)
+├─ Listas de opciones (disposiciones, pavimentos, clases, etc.)
+└─ Producción vs Desarrollo
+
+modules/validators.py (4.3 KB)
+├─ class DataValidator
+│  ├─ validate_form_data(data)
+│  │  └─ Valida 20+ campos del formulario
+│  ├─ validate_excel_data(df)
+│  │  └─ Valida columnas y filas de Excel
+│  └─ sanitize_data(data)
+│     └─ Limpia inputs (trim, conversiones)
+└─ Dependencia: pandas
+
+modules/excel_handler.py (9.3 KB)
+├─ class ExcelHandler
+│  ├─ create_study_from_form(form_data, output_path)
+│  │  ├─ Hoja "Proyecto" (datos básicos)
+│  │  ├─ Hoja "Geometría" (vías y aceras)
+│  │  ├─ Hoja "Luminarias" (tabla)
+│  │  └─ Hoja "Energía" (parámetros)
+│  │
+│  ├─ process_imported_excel(excel_path)
+│  │  ├─ Lee encabezados
+│  │  ├─ Mapea columnas
+│  │  └─ Retorna lista de estudios
+│  │
+│  ├─ create_results_excel(results, output_path)
+│  │  └─ Crea Excel de resultados
+│  │
+│  └─ Métodos auxiliares
+│     ├─ _write_header()
+│     └─ _style_cell()
+└─ Dependencia: openpyxl
+
+modules/__init__.py (29 B)
+└─ # Módulos de la aplicación
+
+
+🌐 FRONTEND WEB (1 ARCHIVO, 40.5 KB)
+──────────────────────────────────────────────────────────────────────────
+
+templates/index.html (40.5 KB)
+├─ HTML Structure
+│  ├─ DOCTYPE html5
+│  ├─ Head
+│  │  ├─ Meta charset, viewport
+│  │  ├─ Inline CSS (~400 líneas)
+│  │  ├─ Title: "Cálculo Fotométrico"
+│  │  └─ Estilos responsive
+│  │
+│  └─ Body
+│     ├─ Header con gradiente SALVI
+│     └─ Main Form (#fotometricoForm)
+│        ├─ SECCIÓN 1: PROYECTO/CLIENTE
+│        │  ├─ Nombre proyecto
+│        │  ├─ Cliente final
+│        │  ├─ Localización
+│        │  ├─ Proyectista
+│        │  ├─ Fecha estudio
+│        │  ├─ Número referencia
+│        │  ├─ Norma aplicable (dropdown)
+│        │  ├─ Selector Modo (Manual/Excel)
+│        │  ├─ Botón Descargar LDT
+│        │  ├─ Sección Importar Excel (hidden)
+│        │  │  └─ Input archivo
+│        │  └─ Notas
+│        │
+│        ├─ SECCIÓN 2: GEOMETRÍA (hidden en modo Excel)
+│        │  ├─ Identificador modelo
+│        │  ├─ Disposición (dropdown)
+│        │  ├─ Altura montaje
+│        │  ├─ Interdistancia
+│        │  ├─ Saliente brazo
+│        │  ├─ Inclinación brazo
+│        │  ├─ Subsección CALZADA 1
+│        │  │  ├─ Ancho
+│        │  │  ├─ Carriles
+│        │  │  ├─ Tipo pavimento (dropdown)
+│        │  │  ├─ Q0
+│        │  │  └─ Clase (dropdown)
+│        │  ├─ Subsección ACERA 1
+│        │  │  ├─ Ancho
+│        │  │  ├─ Pavimento
+│        │  │  ├─ Reflectancia
+│        │  │  └─ Clase
+│        │  ├─ Toggle "Segunda Calzada"
+│        │  └─ Subsección SEGUNDA CALZADA (hidden)
+│        │     ├─ Mediana
+│        │     ├─ Calzada 2
+│        │     └─ Acera 2
+│        │
+│        ├─ SECCIÓN 3: LUMINARIAS (hidden en modo Excel)
+│        │  ├─ Contenedor dinámico
+│        │  └─ Botón "+ Añadir Luminaria"
+│        │     └─ Cards dinámicas con
+│        │        ├─ Modelo
+│        │        ├─ Óptica LDT
+│        │        ├─ Potencia
+│        │        ├─ Objetivo
+│        │        └─ Botón eliminar
+│        │
+│        ├─ SECCIÓN 4: ENERGÍA (hidden en modo Excel)
+│        │  ├─ Horas funcionamiento
+│        │  ├─ Tarifa eléctrica
+│        │  ├─ Factor CO2
+│        │  ├─ Zona ambiental (dropdown)
+│        │  ├─ ULOR máximo
+│        │  └─ Sensibilidad fauna
+│        │
+│        └─ SECCIÓN 5: ENTREGABLES
+│           ├─ Checkboxes: PDF, Excel, Isolíneas
+│           ├─ Dropdown idioma
+│           └─ Botón ENVIAR
+│
+├─ CSS Inline (~400 líneas)
+│  ├─ :root variables (colores SALVI)
+│  ├─ Reset y normalizaciones
+│  ├─ Body y contenedor general
+│  ├─ Header con gradiente
+│  ├─ Form y secciones
+│  ├─ Grid layout 3 columnas
+│  ├─ Inputs, buttons, selects
+│  ├─ Cards de luminarias
+│  ├─ Alertas (success/error)
+│  ├─ Loading spinner
+│  ├─ Media queries responsivo
+│  └─ Efectos hover/focus
+│
+└─ JavaScript Vanilla (~300 líneas)
+   ├─ DOMContentLoaded event
+   ├─ Funciones globales
+   │  ├─ initializeForm()
+   │  ├─ setupModeSelector()
+   │  ├─ setupSecondRoadwayToggle()
+   │  ├─ setupLuminarias()
+   │  ├─ addLuminaria()
+   │  ├─ removeLuminaria()
+   │  ├─ updateLuminariaIndex()
+   │  ├─ handleFormSubmit()
+   │  ├─ handleExcelUpload()
+   │  ├─ showAlert(message, type)
+   │  ├─ hideAlert()
+   │  ├─ validateForm()
+   │  ├─ downloadTemplate()
+   │  ├─ downloadLDTs()
+   │  └─ toggleSection(section, show)
+   │
+   └─ Event listeners
+      ├─ form submit
+      ├─ file input change
+      ├─ mode selector change
+      ├─ luminaria buttons
+      └─ alert close
+
+
+📊 ASSETS (2 ARCHIVOS, 7.2 KB)
+──────────────────────────────────────────────────────────────────────────
+
+plantilla_app_salvilux.xlsx (5.3 KB)
+├─ Hoja "Plantilla"
+├─ 11 columnas:
+│  1. Identificador modelo
+│  2. Disposición de las luminarias
+│  3. Altura de montaje (h)
+│  4. Interdistancia (d)
+│  5. Ancho de calzada 1 (W1)
+│  6. Clase calzada
+│  7. Modelo luminaria
+│  8. Óptica / código LDT
+│  9. Potencia nominal
+│  10. Q0 (lux.m2)
+│  11. Tipo pavimento
+├─ Encabezados con relleno azul
+├─ 5 filas de ejemplo vacías
+└─ Ancho de columnas ajustado
+
+LDTs_luminarias.zip (1.9 KB)
+├─ README.txt (instrucciones)
+└─ Carpetas por fabricante
+   ├─ PHILIPS/
+   ├─ SIEMENS/
+   ├─ OSRAM/
+   └─ GENERIC/
+
+
+📚 DOCUMENTACIÓN (8 ARCHIVOS, 52+ KB)
+──────────────────────────────────────────────────────────────────────────
+
+README.md (7.5 KB)
+├─ Descripción general
+├─ Características
+├─ Estructura del proyecto
+├─ Requisitos
+├─ Instalación
+├─ Uso (modo manual + Excel)
+├─ API endpoints
+├─ Validaciones
+├─ Errores comunes
+└─ Extensiones futuras
+
+QUICKSTART.md (4.8 KB)
+├─ 10 secciones prácticas
+├─ Instalación rápida
+├─ Modo manual (paso a paso)
+├─ Modo Excel (paso a paso)
+├─ Descargar LDTs
+├─ Validaciones automáticas
+├─ Mensajes de éxito
+├─ Problemas comunes
+├─ Atajos teclado
+└─ Documentación completa
+
+INSTALL.md (6.4 KB)
+├─ Prerrequisitos
+├─ Verificación Python
+├─ Pasos instalación (5 pasos)
+├─ Ejecución
+├─ Estructura proyecto
+├─ Solución problemas (8 casos)
+├─ Modo desarrollo vs producción
+├─ Despliegue en servidor
+├─ Variables de entorno
+└─ Mantenimiento
+
+ARCHITECTURE.md (11.1 KB)
+├─ Descripción general
+├─ Stack tecnológico
+├─ Estructura carpetas detallada
+├─ Flujo de datos (manual + Excel)
+├─ Endpoints API (detalle)
+├─ Validaciones
+├─ Gestión de archivos
+├─ Seguridad
+├─ Performance
+├─ Escalabilidad
+├─ Monitoreo
+└─ Roadmap
+
+SUMMARY.md (11.3 KB)
+├─ Objetivo alcanzado
+├─ Lo que recibiste
+├─ Inicio rápido
+├─ Características principales
+├─ Validaciones
+├─ Tecnologías
+├─ Estadísticas
+├─ Documentación completa
+├─ Puntos destacados
+├─ Flujo de trabajo
+├─ Casos de error
+├─ Checklist entrega
+└─ Conclusión
+
+DELIVERABLES.md (12 KB)
+├─ Lista de entregables
+├─ Backend (7 archivos)
+├─ Frontend (1 archivo)
+├─ Assets (2 archivos)
+├─ Documentación (8 archivos)
+├─ Configuración (2 archivos)
+├─ Herramientas (1 script)
+├─ Estadísticas
+├─ Características implementadas
+├─ Endpoints API
+├─ Validaciones
+├─ Seguridad
+├─ Métricas
+└─ Checklist completo
+
+ESTRUCTURA.txt (Este)
+└─ Visualización de estructura del proyecto
+
+
+═══════════════════════════════════════════════════════════════════════════
+RESUMEN RÁPIDO
+═══════════════════════════════════════════════════════════════════════════
+
+Total de Archivos:          20
+Total de Directorios:       5
+Tamaño Total:              ~127 KB
+
+Breakdown:
+├─ Backend:                21.3 KB (7 archivos Python)
+├─ Frontend:               40.5 KB (1 archivo HTML)
+├─ Assets:                 7.2 KB (2 archivos)
+├─ Documentación:          52+ KB (8 archivos)
+└─ Configuración:          1.8 KB (2 archivos)
+
+Líneas de Código:
+├─ Python:                 ~520 líneas
+├─ HTML/CSS/JS:            ~1,200 líneas
+├─ Documentación:          ~2,500 líneas
+└─ Total:                  ~4,220 líneas
+
+Estado: ✅ COMPLETO Y FUNCIONAL
+
+
+═══════════════════════════════════════════════════════════════════════════
+NOTAS
+═══════════════════════════════════════════════════════════════════════════
+
+1. Los directorios uploads/ y downloads/ se crean automáticamente
+   cuando ejecutas la aplicación.
+
+2. Los archivos en uploads/ se eliminan automáticamente después del
+   procesamiento (seguridad y limpieza).
+
+3. Los archivos en downloads/ se mantienen para que el usuario pueda
+   descargarlos. Considera limpiar periódicamente.
+
+4. Todos los imports están en la parte superior de cada archivo.
+   Las dependencias están listadas en requirements.txt
+
+5. El archivo index.html contiene TODO el frontend: HTML + CSS + JavaScript
+   en un solo archivo para facilitar deployment.
+
+6. Las configuraciones están centralizadas en config.py para fácil
+   modificación sin tocar el código principal.
+
+7. Los módulos en la carpeta modules/ son reutilizables en otros
+   proyectos Flask si es necesario.
+
+═══════════════════════════════════════════════════════════════════════════
+Documento generado: 16 de Mayo, 2026
+Versión: 1.0
+Estado: Final
+═══════════════════════════════════════════════════════════════════════════

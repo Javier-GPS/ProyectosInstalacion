@@ -1,0 +1,70 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                    PRUEBA EL DROPDOWN DE LDTS AHORA                         ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+
+✅ PASOS SIMPLES
+═════════════════════════════════════════════════════════════════════════════
+
+1. CIERRA TEST_APP.bat si está abierto
+   (Presiona Ctrl+C)
+
+2. ABRE TEST_APP.bat de nuevo
+
+   Deberías ver en la ventana:
+   ✓ "📚 Cargando biblioteca de luminarias..."
+   ✓ "DEBUG: Encontrados X archivos en ZIP"
+   ✓ "✓ LDT leído: ..." (varios)
+   ✓ "✓ X luminarias cargadas"
+
+3. ABRE NAVEGADOR
+   http://localhost:5000
+
+4. VE A SECCIÓN 3 "LUMINARIAS"
+
+   ¿Ves un dropdown azul que dice:
+   "-- Cargando luminarias..."
+
+   Espera 2 segundos...
+
+   ¿Se cambia a:
+   "-- Seleccionar luminaria --"
+
+   Con lista de luminarias?
+
+5. SI VES LA LISTA:
+   ✓ Sistema funcionando correctamente
+   ✓ Selecciona una luminaria
+   ✓ ¡Debe auto-llenar la tarjeta!
+
+6. SI NO VES LISTA:
+   a) Presiona F12 (consola)
+   b) ¿Hay errores rojos?
+   c) ¿Dice "Cargando luminarias..."?
+   d) Copia el error y envía
+
+
+═════════════════════════════════════════════════════════════════════════════
+
+SI ALGO FALLA, REVISAR:
+
+1. TEST_APP.bat muestra:
+   ✓ "Encontrados X archivos en ZIP"
+   ✓ "Luminarias cargadas"
+   ✓ SIN errores rojo
+
+2. Navegador http://localhost:5000/api/debug/ldts:
+   ✓ "ldts_zip_exists": true
+   ✓ "ldts_cache_loaded": true
+   ✓ "success": true en ldts_cache
+
+3. Consola navegador (F12):
+   ✓ Sin errores rojos
+   ✓ Ve el mensaje de carga
+
+
+═════════════════════════════════════════════════════════════════════════════
+
+¡PRUEBA AHORA! 🚀
+
+═════════════════════════════════════════════════════════════════════════════

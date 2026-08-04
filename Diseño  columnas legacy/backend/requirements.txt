@@ -1,0 +1,45 @@
+# Salvi Studio · Columns — Backend
+# Python 3.12+
+
+# Web framework
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+
+# Database
+sqlalchemy==2.0.35
+alembic==1.13.3
+asyncpg==0.29.0          # async PostgreSQL driver
+psycopg2-binary==2.9.9   # sync driver for Alembic
+
+# Validation & serialization
+pydantic[email]==2.9.2
+pydantic-settings==2.5.2
+email-validator==2.2.0
+
+# Authentication & security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1  # passlib 1.7.4 es incompatible con bcrypt>=4.1 (rompe el hash de contraseñas)
+python-multipart==0.0.12
+
+# Async job queue
+arq==0.26.1              # Redis-backed async jobs (lightweight, FastAPI-friendly)
+redis==5.1.0
+
+# Object storage
+boto3==1.35.0            # S3-compatible (MinIO in dev)
+
+# Hashing & integrity
+xxhash==3.5.0
+
+# Utilities
+python-dateutil==2.9.0
+babel==2.16.0            # i18n / locale-aware formatting
+structlog==24.4.0        # structured logging
+
+# Testing
+pytest==8.3.3
+pytest-asyncio==0.24.0
+pytest-cov==5.0.0
+httpx==0.27.2            # async test client for FastAPI
+factory-boy==3.3.1       # test fixtures

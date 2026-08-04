@@ -1,0 +1,161 @@
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                                                                           ║
+║                      SalviLux - PRIMEROS PASOS                           ║
+║                   Cálculo Fotométrico v1.0                              ║
+║                                                                           ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+
+⚠ IMPORTANTE: LEER ESTO PRIMERO
+═══════════════════════════════════════════════════════════════════════════
+
+La aplicación requiere Python instalado en tu computadora.
+Si aún no lo tienes, descárgalo desde: https://www.python.org/downloads/
+
+IMPORTANTE durante la instalación de Python:
+  ✓ Marca la casilla "Add Python to PATH"
+  ✓ Marca la casilla "Install pip"
+  ✓ Reinicia tu PC después
+
+
+PROCESO DE INSTALACION (SOLO LA PRIMERA VEZ)
+═══════════════════════════════════════════════════════════════════════════
+
+PASO 1: Instalar dependencias
+┌─────────────────────────────────────────────────────────────────────────┐
+│ OPCION A (Recomendado - Si la A falla, intenta la B):                  │
+│   Haz doble clic en:  SETUP.bat                                         │
+│                                                                         │
+│ OPCION B (Alternativa):                                                 │
+│   Haz doble clic en:  INSTALAR_FACIL.bat                                │
+│                                                                         │
+│ Esto instalará todos los paquetes necesarios.                           │
+│ Puede tomar 2-5 minutos.                                                │
+│                                                                         │
+│ Espera hasta ver: "INSTALACION COMPLETADA"                              │
+│                                                                         │
+│ Si hay errores, lee SOLUCIONAR_PROBLEMAS.md                            │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+PROCESO DE EJECUCION (CADA VEZ QUE QUIERAS USAR LA APP)
+═══════════════════════════════════════════════════════════════════════════
+
+PASO 1: Ejecutar la aplicación
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Haz doble clic en:  CORRER.bat                                          │
+│                                                                         │
+│ Verás en la terminal:                                                   │
+│   "Iniciando servidor Flask..."                                         │
+│   "ABRE EN TU NAVEGADOR: http://localhost:5000"                         │
+│                                                                         │
+│ NO CIERRES esta ventana mientras uses la aplicación                    │
+└─────────────────────────────────────────────────────────────────────────┘
+
+PASO 2: Abre en tu navegador
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Abre tu navegador favorito (Chrome, Firefox, Edge, Safari)              │
+│                                                                         │
+│ En la barra de dirección, escribe:                                      │
+│   http://localhost:5000                                                 │
+│                                                                         │
+│ Presiona Enter                                                          │
+│                                                                         │
+│ ¡La aplicación aparecerá!                                               │
+└─────────────────────────────────────────────────────────────────────────┘
+
+
+PARA DETENER LA APLICACION
+═══════════════════════════════════════════════════════════════════════════
+
+En la ventana de terminal:
+  Presiona: Ctrl + C
+
+La aplicación se cerrará.
+
+
+ESTRUCTURA DE ARCHIVOS
+═══════════════════════════════════════════════════════════════════════════
+
+PRIMEROS PASOS (tu estás aquí)
+└─ INSTALAR.bat              ← Haz doble clic PRIMERO (solo 1 vez)
+└─ CORRER.bat                ← Haz doble clic cada vez que quieras usar
+
+
+DOCUMENTACION
+└─ SOLUCIONAR_PROBLEMAS.md   ← Si tienes errores
+└─ INSTALAR_Y_EJECUTAR.md    ← Guía detallada
+└─ QUICKSTART.md             ← Cómo usar la aplicación
+
+
+APLICACION
+└─ app.py                    ← Servidor Flask
+└─ templates/index.html      ← Interfaz web
+└─ modules/                  ← Módulos Python
+└─ assets/                   ← Plantillas y librerías
+
+
+VERIFICACION: ¿Está todo correcto?
+═══════════════════════════════════════════════════════════════════════════
+
+Después de INSTALAR.bat:
+  ✓ Debe decir "INSTALACION COMPLETADA"
+  ✓ Se crea una carpeta "venv" en el proyecto
+
+Después de CORRER.bat:
+  ✓ Debe decir "ABRE EN TU NAVEGADOR: http://localhost:5000"
+  ✓ Puedes acceder a la aplicación en el navegador
+
+
+PROBLEMAS COMUNES
+═══════════════════════════════════════════════════════════════════════════
+
+P: "Python no reconocido"
+R: Python no está instalado o no está en PATH
+   → Descarga desde https://www.python.org/downloads/
+   → Marca "Add Python to PATH"
+   → Reinicia tu PC
+
+P: INSTALAR.bat falla
+R: Hay un problema con setuptools
+   → Lee SOLUCIONAR_PROBLEMAS.md sección "pip build fails"
+
+P: CORRER.bat no abre la aplicación
+R: La terminal se cierra muy rápido
+   → Abre CMD/PowerShell manualmente
+   → Ve a la carpeta del proyecto
+   → Ejecuta: python app.py
+   → Abre navegador: http://localhost:5000
+
+P: "Port 5000 already in use"
+R: Otro programa usa el puerto 5000
+   → Edita app.py última línea
+   → Cambia port=5000 a port=5001
+   → Abre navegador: http://localhost:5001
+
+
+CONTACTO
+═══════════════════════════════════════════════════════════════════════════
+
+Si los scripts no funcionan:
+  📧 Email: elizalde@salvi.es
+
+Incluye:
+  - Captura de pantalla del error
+  - El mensaje exacto de error
+  - Tu versión de Python: python --version
+  - Tu sistema operativo
+
+
+SIGUIENTES PASOS
+═══════════════════════════════════════════════════════════════════════════
+
+1. ✓ Lee esto                          ← Estás aquí
+2. ☐ Ejecuta INSTALAR.bat              ← Siguiente
+3. ☐ Ejecuta CORRER.bat                ← Después
+4. ☐ Lee QUICKSTART.md para aprender a usar
+
+
+═══════════════════════════════════════════════════════════════════════════
+¡Listo! Sigue estos pasos y la aplicación funcionará.
+═══════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,2514 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>SALVI Tunnel Engine — CIE 88:2004</title>
+
+  <!-- React + Babel CDN -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <!-- prop-types must load before Recharts (react-smooth dependency) -->
+  <script crossorigin src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <!-- Recharts — use 2.12.7 for React 18 compatibility -->
+  <script src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.js"></script>
+
+  <!-- STE i18n + Help Content -->
+  <script src="/static/js/ste-data.js"></script>
+
+  <style>
+    /* ─── Reset & Variables ─── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --brand:     #0066cc;
+      --brand-dk:  #004a99;
+      --brand-lt:  #e8f0fb;
+      --success:   #198754;
+      --warning:   #f0a500;
+      --danger:    #dc3545;
+      --gray-50:   #f8f9fa;
+      --gray-100:  #f0f1f3;
+      --gray-200:  #e0e2e6;
+      --gray-300:  #ced4da;
+      --gray-400:  #adb5bd;
+      --gray-500:  #9ca3af;
+      --gray-600:  #6c757d;
+      --gray-700:  #495057;
+      --gray-800:  #343a40;
+      --radius:    8px;
+      --shadow:    0 2px 8px rgba(0,0,0,.10);
+      --font:      'Segoe UI', system-ui, sans-serif;
+    }
+
+    body { font-family: var(--font); background: var(--gray-50); color: var(--gray-800); }
+
+    /* ─── Layout ─── */
+    .app-shell {
+      display: grid;
+      grid-template-rows: 56px 1fr;
+      min-height: 100vh;
+    }
+    .topbar {
+      background: var(--brand);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      padding: 0 24px;
+      gap: 12px;
+      box-shadow: 0 2px 6px rgba(0,0,0,.2);
+    }
+    .topbar .logo { font-size: 1.1rem; font-weight: 700; letter-spacing: .5px; }
+    .topbar .badge {
+      background: rgba(255,255,255,.2);
+      font-size: .72rem;
+      padding: 2px 8px;
+      border-radius: 12px;
+    }
+    .topbar .back-link {
+      margin-left: auto;
+      color: rgba(255,255,255,.8);
+      text-decoration: none;
+      font-size: .85rem;
+    }
+    .topbar .back-link:hover { color: #fff; }
+
+    /* ── Barra de proyecto ───────────────────────── */
+    .project-bar {
+      background: var(--gray-50);
+      border-bottom: 1px solid var(--gray-200);
+      padding: 6px 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: .82rem;
+    }
+    .project-bar .proj-name {
+      font-weight: 600;
+      color: var(--gray-700);
+      max-width: 260px;
+      overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+    }
+    .project-bar .proj-sep { color: var(--gray-300); margin: 0 2px; }
+    .project-bar .proj-tube {
+      background: var(--brand-lt);
+      color: var(--brand);
+      font-weight: 700;
+      padding: 1px 8px;
+      border-radius: 10px;
+      font-size: .78rem;
+    }
+    .project-bar .proj-actions { margin-left: auto; display: flex; gap: 6px; }
+    .btn-xs {
+      font-size: .78rem;
+      padding: 3px 10px;
+      border-radius: 5px;
+      border: 1px solid var(--gray-300);
+      background: #fff;
+      color: var(--gray-700);
+      cursor: pointer;
+      display: inline-flex; align-items: center; gap: 4px;
+      transition: background .15s, border-color .15s;
+    }
+    .btn-xs:hover { background: var(--gray-50); border-color: var(--brand); color: var(--brand); }
+    .btn-xs.btn-xs-primary {
+      background: var(--brand); color: #fff; border-color: var(--brand);
+    }
+    .btn-xs.btn-xs-primary:hover { background: var(--brand-dk); }
+
+    /* Notificación toast */
+    .toast {
+      position: fixed; bottom: 24px; right: 24px;
+      background: #1a3a6b; color: #fff;
+      padding: 10px 18px; border-radius: 8px;
+      font-size: .85rem; font-weight: 500;
+      box-shadow: 0 4px 16px rgba(0,0,0,.18);
+      z-index: 9999;
+      animation: slideIn .2s ease;
+    }
+    @keyframes slideIn {
+      from { transform: translateY(12px); opacity: 0; }
+      to   { transform: translateY(0);    opacity: 1; }
+    }
+
+    .main-content { padding: 24px; max-width: 1200px; margin: 0 auto; width: 100%; }
+
+    /* ─── Wizard Steps ─── */
+    .stepper {
+      display: flex;
+      gap: 0;
+      margin-bottom: 24px;
+      border-radius: var(--radius);
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }
+    .step-btn {
+      flex: 1;
+      border: none;
+      padding: 10px 6px;
+      cursor: pointer;
+      font-size: .80rem;
+      font-weight: 500;
+      background: var(--gray-100);
+      color: var(--gray-600);
+      border-right: 1px solid var(--gray-200);
+      transition: background .15s;
+      text-align: center;
+      line-height: 1.3;
+    }
+    .step-btn:last-child { border-right: none; }
+    .step-btn.active { background: var(--brand); color: #fff; }
+    .step-btn.done   { background: var(--brand-lt); color: var(--brand-dk); }
+    .step-num { display: block; font-size: .70rem; opacity: .75; margin-bottom: 2px; }
+
+    /* ─── Cards ─── */
+    .card {
+      background: #fff;
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+    .card-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--brand-dk);
+      margin-bottom: 16px;
+      padding-bottom: 10px;
+      border-bottom: 2px solid var(--brand-lt);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .section-icon { font-size: 1.1rem; }
+
+    /* ─── Form Grid ─── */
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 14px;
+    }
+    .form-grid.col-3 { grid-template-columns: repeat(3, 1fr); }
+    .form-grid.col-2 { grid-template-columns: repeat(2, 1fr); }
+
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field label {
+      font-size: .78rem;
+      font-weight: 600;
+      color: var(--gray-600);
+      text-transform: uppercase;
+      letter-spacing: .3px;
+    }
+    .field input,
+    .field select {
+      padding: 7px 10px;
+      border: 1.5px solid var(--gray-200);
+      border-radius: 5px;
+      font-size: .90rem;
+      color: var(--gray-800);
+      background: #fff;
+      transition: border-color .15s;
+    }
+    .field input:focus,
+    .field select:focus {
+      outline: none;
+      border-color: var(--brand);
+      box-shadow: 0 0 0 3px rgba(0,102,204,.12);
+    }
+    .field .hint {
+      font-size: .72rem;
+      color: var(--gray-600);
+      margin-top: 2px;
+    }
+
+    /* ─── Toggle switches ─── */
+    .toggle-row { display: flex; align-items: center; gap: 10px; }
+    .toggle-label { font-size: .85rem; color: var(--gray-800); }
+    .toggle {
+      position: relative; width: 40px; height: 22px;
+      display: inline-block;
+    }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle-slider {
+      position: absolute; inset: 0;
+      background: var(--gray-200); border-radius: 22px;
+      cursor: pointer; transition: background .2s;
+    }
+    .toggle-slider::before {
+      content: ''; position: absolute;
+      width: 16px; height: 16px;
+      left: 3px; bottom: 3px;
+      background: #fff; border-radius: 50%;
+      transition: transform .2s;
+    }
+    .toggle input:checked + .toggle-slider { background: var(--brand); }
+    .toggle input:checked + .toggle-slider::before { transform: translateX(18px); }
+
+    /* ─── Buttons ─── */
+    .btn {
+      padding: 9px 20px;
+      border-radius: 5px;
+      border: none;
+      font-size: .90rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity .15s, transform .1s;
+    }
+    .btn:hover { opacity: .88; transform: translateY(-1px); }
+    .btn:active { transform: translateY(0); }
+    .btn-primary { background: var(--brand); color: #fff; }
+    .btn-success { background: var(--success); color: #fff; }
+    .btn-outline { background: transparent; color: var(--brand); border: 1.5px solid var(--brand); }
+    .btn-lg { padding: 11px 28px; font-size: 1rem; }
+    .btn:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+
+    .btn-row { display: flex; gap: 10px; margin-top: 20px; align-items: center; }
+
+    /* ─── KPI cards ─── */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .kpi-card {
+      background: var(--gray-50);
+      border: 1.5px solid var(--gray-200);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      text-align: center;
+    }
+    .kpi-label { font-size: .72rem; color: var(--gray-600); text-transform: uppercase; letter-spacing: .3px; }
+    .kpi-value { font-size: 1.55rem; font-weight: 700; color: var(--brand-dk); margin: 4px 0; }
+    .kpi-unit  { font-size: .78rem; color: var(--gray-600); }
+
+    .kpi-card.highlight { background: var(--brand-lt); border-color: var(--brand); }
+    .kpi-card.highlight .kpi-value { color: var(--brand); }
+
+    /* ─── Results table ─── */
+    .result-table { width: 100%; border-collapse: collapse; font-size: .87rem; }
+    .result-table th {
+      background: var(--gray-100);
+      padding: 8px 12px;
+      text-align: left;
+      font-size: .75rem;
+      text-transform: uppercase;
+      color: var(--gray-600);
+      border-bottom: 2px solid var(--gray-200);
+    }
+    .result-table td { padding: 8px 12px; border-bottom: 1px solid var(--gray-100); }
+    .result-table tr:hover td { background: var(--brand-lt); }
+
+    .badge-zone {
+      display: inline-block;
+      padding: 2px 8px; border-radius: 12px;
+      font-size: .72rem; font-weight: 600;
+    }
+    .z-THRESHOLD  { background: #fff3cd; color: #856404; }
+    .z-TRANSITION { background: #cff4fc; color: #055160; }
+    .z-INTERIOR   { background: #d1e7dd; color: #0a3622; }
+    .z-EXIT       { background: #e2d9f3; color: #432874; }
+    .z-ACCESS     { background: #f8d7da; color: #842029; }
+    .z-PARTING    { background: #f8d7da; color: #842029; }
+
+    /* ─── Alerts ─── */
+    .alert { padding: 10px 14px; border-radius: var(--radius); font-size: .87rem; margin-bottom: 10px; }
+    .alert-warning { background: #fff8e6; border-left: 4px solid var(--warning); }
+    .alert-danger  { background: #fdecea; border-left: 4px solid var(--danger);  }
+    .alert-success { background: #e8f5e9; border-left: 4px solid var(--success); }
+    .alert-info    { background: var(--brand-lt); border-left: 4px solid var(--brand); }
+
+    /* ─── Classification badge ─── */
+    .cls-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 12px; border-radius: 20px;
+      font-size: .80rem; font-weight: 600;
+    }
+    .cls-long    { background: #fdecea; color: var(--danger); }
+    .cls-short   { background: #e8f5e9; color: var(--success); }
+    .cls-normal  { background: #fff3cd; color: #856404; }
+
+    /* ─── Spinner ─── */
+    .spinner {
+      width: 36px; height: 36px;
+      border: 4px solid var(--gray-200);
+      border-top-color: var(--brand);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 30px auto;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ─── Control module ─── */
+    .dimming-cell {
+      display: inline-block; border-radius: 5px; padding: 4px 8px;
+      text-align: center; min-width: 58px;
+    }
+    .dimming-pct { font-weight: 700; font-size: .92rem; color: var(--brand-dk); }
+    .dali-level  { font-size: .68rem; color: var(--gray-600); display: block; }
+
+    .scene-header {
+      writing-mode: horizontal-tb;
+      white-space: nowrap;
+      font-size: .72rem;
+      text-transform: uppercase;
+    }
+    .scene-l20 { font-weight: 400; color: var(--gray-600); font-size: .68rem; }
+
+    /* ─── Responsive ─── */
+    @media (max-width: 700px) {
+      .form-grid.col-3 { grid-template-columns: 1fr 1fr; }
+      .form-grid.col-2 { grid-template-columns: 1fr; }
+      .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+      .step-btn { font-size: .70rem; padding: 8px 3px; }
+    }
+
+    /* ─── Language switcher ─── */
+    .lang-switcher {
+      display: flex; align-items: center; gap: 3px;
+    }
+    .lang-btn {
+      padding: 2px 7px; border: 1px solid rgba(255,255,255,.25);
+      border-radius: 5px; background: transparent; color: rgba(255,255,255,.75);
+      font-size: .72rem; font-weight: 600; cursor: pointer; transition: all .15s;
+    }
+    .lang-btn:hover, .lang-btn.active {
+      background: rgba(255,255,255,.18); color: #fff; border-color: rgba(255,255,255,.5);
+    }
+    .help-btn {
+      padding: 3px 10px; border: 1px solid rgba(255,255,255,.3);
+      border-radius: 5px; background: rgba(255,255,255,.12); color: #fff;
+      font-size: .75rem; cursor: pointer; transition: all .15s; margin-left: 8px;
+    }
+    .help-btn:hover { background: rgba(255,255,255,.25); }
+
+    /* ─── Help Panel ─── */
+    .help-overlay {
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,.35);
+      z-index: 1000;
+      display: flex; justify-content: flex-end;
+      animation: fadeIn .18s ease;
+    }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+    .help-panel {
+      width: min(720px, 92vw);
+      background: #fff;
+      display: flex; flex-direction: column;
+      box-shadow: -6px 0 32px rgba(0,0,0,.18);
+      animation: slideFromRight .22s ease;
+    }
+    @keyframes slideFromRight {
+      from { transform: translateX(40px); opacity: 0; }
+      to   { transform: translateX(0);    opacity: 1; }
+    }
+    .help-header {
+      padding: 14px 20px;
+      background: var(--brand); color: #fff;
+      display: flex; justify-content: space-between; align-items: center;
+      flex-shrink: 0;
+    }
+    .help-body {
+      display: flex; flex: 1; overflow: hidden;
+    }
+    .help-nav {
+      width: 170px; flex-shrink: 0;
+      background: var(--gray-50);
+      border-right: 1px solid var(--gray-200);
+      overflow-y: auto; padding: 8px 0;
+    }
+    .help-nav-btn {
+      width: 100%; text-align: left;
+      padding: 8px 12px; border: none;
+      background: transparent; cursor: pointer;
+      font-size: .80rem; color: var(--gray-600);
+      border-left: 3px solid transparent;
+      transition: all .12s;
+    }
+    .help-nav-btn:hover { background: var(--gray-100); color: var(--gray-800); }
+    .help-nav-btn.active {
+      background: var(--brand-lt); color: var(--brand-dk);
+      font-weight: 700; border-left-color: var(--brand);
+    }
+    .help-content {
+      flex: 1; overflow-y: auto; padding: 24px 28px;
+      line-height: 1.65;
+    }
+    .help-content h1 { font-size: 1.15rem; font-weight: 700; margin-bottom: 14px; color: var(--brand-dk); }
+    .help-content h2 { font-size: .93rem; font-weight: 700; margin: 18px 0 8px; color: var(--gray-800); border-bottom: 1px solid var(--gray-200); padding-bottom: 4px; }
+    .help-content p  { font-size: .87rem; color: var(--gray-700); margin-bottom: 10px; }
+    .help-content ul { padding-left: 18px; margin-bottom: 10px; }
+    .help-content li { font-size: .85rem; color: var(--gray-700); margin-bottom: 4px; }
+    .help-tip  { background: #e8f4fd; border-left: 4px solid var(--brand); padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 12px 0; font-size: .84rem; color: #0c4a6e; }
+    .help-warn { background: #fff8e1; border-left: 4px solid var(--warning); padding: 10px 14px; border-radius: 0 6px 6px 0; margin: 12px 0; font-size: .84rem; color: #7a4800; }
+    .help-table { width: 100%; border-collapse: collapse; font-size: .82rem; margin: 12px 0; }
+    .help-table th { background: var(--gray-100); padding: 6px 10px; text-align: left; font-weight: 600; border: 1px solid var(--gray-200); }
+    .help-table td { padding: 5px 10px; border: 1px solid var(--gray-200); vertical-align: top; }
+    .help-keys { width: 100%; border-collapse: collapse; font-size: .83rem; margin: 8px 0; }
+    .help-keys tr:nth-child(even) td { background: var(--gray-50); }
+    .help-keys td { padding: 5px 10px; border-bottom: 1px solid var(--gray-100); }
+    .help-keys td:first-child { font-family: monospace; background: var(--gray-100); border-radius: 4px; white-space: nowrap; color: var(--brand-dk); font-weight: 600; width: 160px; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useCallback, useMemo, useRef } = React;
+const {
+  LineChart, BarChart, Bar, ComposedChart, Area,
+  Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  Legend, ReferenceLine, ReferenceArea, ResponsiveContainer
+} = Recharts;
+
+// ─── i18n helpers ──────────────────────────────────────────────
+const LANGS     = window.STE_LANGS    || { es:{ label:'Español', flag:'ES' } };
+const TR        = window.STE_TR       || {};
+const HELP_DATA = window.STE_HELP_DATA || {};
+
+// t(key, lang) — lookup translation; fallback chain: lang → es → key
+function t(key, lang) {
+  const entry = TR[key];
+  if (!entry) return key;
+  return entry[lang] || entry['es'] || key;
+}
+
+// ─── CONSTANTES ────────────────────────────────────────────────
+// STEPS: built dynamically using t() — see App where lang is known
+const STEP_IDS = [0, 1, 2, 3, 4, 5, 6, 7];
+
+// Static fallback (used outside App before lang is known)
+const STEPS = STEP_IDS.map(id => ({ id, label: t(`step.${id}`, 'es') }));
+
+const ZONE_COLORS = {
+  ACCESS:     "#e74c3c",
+  THRESHOLD:  "#f39c12",
+  TRANSITION: "#17a2b8",
+  INTERIOR:   "#27ae60",
+  EXIT:       "#8e44ad",
+  PARTING:    "#e74c3c",
+  NIGHT:      "#2c3e50",
+};
+
+const ENV_OPTIONS = [
+  { value: "open_country_flat",  label: "Campo abierto plano" },
+  { value: "open_country_hilly", label: "Campo abierto ondulado" },
+  { value: "forest",             label: "Entorno forestal" },
+  { value: "urban",              label: "Urbano" },
+  { value: "mountain",           label: "Montaña" },
+  { value: "coastal",            label: "Costero" },
+  { value: "desert",             label: "Desierto" },
+];
+
+const ORIENT_OPTIONS = [
+  "N","NE","E","SE","S","SW","W","NW"
+];
+
+// ─── LANG SWITCHER ──────────────────────────────────────────────
+
+function LangSwitcher({ lang, onChange }) {
+  return (
+    <div className="lang-switcher">
+      {Object.entries(LANGS).map(([code, { flag }]) => (
+        <button key={code}
+          className={`lang-btn ${lang === code ? 'active' : ''}`}
+          onClick={() => onChange(code)}
+          title={LANGS[code].label}>
+          {flag}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─── HELP PANEL ─────────────────────────────────────────────────
+
+function HelpBlock({ blocks }) {
+  if (!blocks || !blocks.length) return null;
+  return (
+    <div>
+      {blocks.map((b, i) => {
+        if (b.h1)   return <h1 key={i}>{b.h1}</h1>;
+        if (b.h2)   return <h2 key={i}>{b.h2}</h2>;
+        if (b.p)    return <p  key={i}>{b.p}</p>;
+        if (b.ul)   return (
+          <ul key={i}>
+            {b.ul.map((item, j) => <li key={j}>{item}</li>)}
+          </ul>
+        );
+        if (b.tip)  return <div key={i} className="help-tip">💡 {b.tip}</div>;
+        if (b.warn) return <div key={i} className="help-warn">⚠️ {b.warn}</div>;
+        if (b.table) return (
+          <table key={i} className="help-table">
+            <thead>
+              <tr>{b.table.heads.map((h, j) => <th key={j}>{h}</th>)}</tr>
+            </thead>
+            <tbody>
+              {b.table.rows.map((row, j) => (
+                <tr key={j}>{row.map((cell, k) => <td key={k}>{cell}</td>)}</tr>
+              ))}
+            </tbody>
+          </table>
+        );
+        if (b.keys) return (
+          <table key={i} className="help-keys">
+            <tbody>
+              {b.keys.map(({ k, d }, j) => (
+                <tr key={j}><td>{k}</td><td>{d}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        );
+        return null;
+      })}
+    </div>
+  );
+}
+
+function HelpPanel({ lang, onClose }) {
+  const [section, setSection] = useState('overview');
+
+  const NAV = [
+    { id: 'overview',  icon: '🎯' },
+    { id: 'guide',     icon: '📋' },
+    { id: 'normativa', icon: '📐' },
+    { id: 'concepts',  icon: '💡' },
+    { id: 'limits',    icon: '⚠️' },
+    { id: 'faq',       icon: '❓' },
+    { id: 'ai',        icon: '🤖' },
+    { id: 'shortcuts', icon: '⌨️' },
+  ];
+
+  const blocks = (HELP_DATA[section] || {})[lang]
+              || (HELP_DATA[section] || {})['es']
+              || [];
+
+  return (
+    <div className="help-overlay" onClick={e => e.target === e.currentTarget && onClose()}>
+      <div className="help-panel">
+        {/* Header */}
+        <div className="help-header">
+          <div>
+            <div style={{fontWeight:700, fontSize:'.95rem'}}>{t('help.title', lang)}</div>
+            <div style={{fontSize:'.72rem', opacity:.75}}>{t('help.sub', lang)}</div>
+          </div>
+          <button className="help-btn" onClick={onClose}>{t('help.close', lang)}</button>
+        </div>
+
+        {/* Body */}
+        <div className="help-body">
+          {/* Sidebar nav */}
+          <nav className="help-nav">
+            {NAV.map(({ id, icon }) => (
+              <button key={id}
+                className={`help-nav-btn ${section === id ? 'active' : ''}`}
+                onClick={() => setSection(id)}>
+                <span style={{marginRight:5}}>{icon}</span>
+                {t(`help.nav.${id}`, lang)}
+              </button>
+            ))}
+          </nav>
+
+          {/* Content */}
+          <div className="help-content">
+            <HelpBlock blocks={blocks} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── COMPONENTES AUXILIARES ─────────────────────────────────────
+
+function Field({ label, hint, children }) {
+  return (
+    <div className="field">
+      <label>{label}</label>
+      {children}
+      {hint && <span className="hint">{hint}</span>}
+    </div>
+  );
+}
+
+function KpiCard({ label, value, unit, highlight }) {
+  return (
+    <div className={`kpi-card ${highlight ? "highlight" : ""}`}>
+      <div className="kpi-label">{label}</div>
+      <div className="kpi-value">{value}</div>
+      <div className="kpi-unit">{unit}</div>
+    </div>
+  );
+}
+
+function ZoneBadge({ zone }) {
+  return (
+    <span className={`badge-zone z-${zone}`}>
+      {zone.replace("_", " ")}
+    </span>
+  );
+}
+
+function Alert({ type, children }) {
+  return <div className={`alert alert-${type}`}>{children}</div>;
+}
+
+// ─── GRÁFICA CURVA DE REGULACIÓN ───────────────────────────────
+
+function RegulationCurveChart({ curve }) {
+  if (!curve || !curve.points || curve.points.length === 0) return null;
+  return (
+    <div style={{width:"100%", height:240}}>
+      <ResponsiveContainer>
+        <LineChart data={curve.points} margin={{top:10, right:30, left:0, bottom:20}}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e0e2e6" />
+          <XAxis
+            dataKey="L20"
+            label={{ value: "L₂₀ (cd/m²)", position: "insideBottom", offset: -8, fontSize: 12 }}
+            tick={{ fontSize: 11 }}
+          />
+          <YAxis
+            domain={[0, 105]}
+            label={{ value: "Regulación (%)", angle: -90, position: "insideLeft", fontSize: 12 }}
+            tick={{ fontSize: 11 }}
+          />
+          <Tooltip
+            formatter={(val) => [`${val}%`, "Regulación"]}
+            labelFormatter={(l20) => `L₂₀ = ${l20} cd/m²`}
+          />
+          <Line
+            type="monotone" dataKey="dimming_pct"
+            stroke="#0066cc" strokeWidth={2.5}
+            dot={{ fill:"#0066cc", r:3 }}
+            name="Regulación (%)"
+          />
+        </LineChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+// ─── PASO 5: CONTROL ───────────────────────────────────────────
+
+function StepControl({ result, form, onChange }) {
+  const [protocol, setProtocol] = React.useState(form.control_protocol || 'DALI');
+
+  if (!result || !result.success) {
+    return <Alert type="info">Completa el cálculo primero (paso Calcular).</Alert>;
+  }
+
+  const control = result.control;
+  if (!control) {
+    return <Alert type="warning">Plan de control no disponible en este resultado.</Alert>;
+  }
+
+  const { scenes, groups, regulation_curves, warnings: ctlWarnings } = control;
+
+  // Curva de regulación del grupo Umbral (más importante)
+  const thrCurve = (regulation_curves || []).find(c => c.zone_type === 'threshold');
+
+  const SCENE_BG = {
+    sunny: '#fffde7', normal: '#f5f5f5', overcast: '#eceff1',
+    dusk: '#fce4ec',  night: '#e8eaf6'
+  };
+
+  const handleExportJSON = () => {
+    const json = JSON.stringify(control, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `control_${form.tube_id || 'T1'}.json`;
+    a.click();
+  };
+
+  const handleExportCSV = () => {
+    const header = ['Grupo', 'L_diseno(cd/m2)',
+      ...scenes.map(s => `${s.name}_%`),
+      ...(protocol === 'DALI' ? scenes.map(s => `${s.name}_DALI`) : [])
+    ];
+    const rows = groups.map(g => [
+      g.name, g.L_design,
+      ...scenes.map(s => g.dimming_levels[String(s.scene_id)] ?? ''),
+      ...(protocol === 'DALI' ? scenes.map(s => g.dali_levels[String(s.scene_id)] ?? '') : [])
+    ]);
+    const csv = [header, ...rows].map(r => r.join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `control_${form.tube_id || 'T1'}.csv`;
+    a.click();
+  };
+
+  return (
+    <div>
+      {/* Warnings */}
+      {ctlWarnings && ctlWarnings.map((w, i) =>
+        <Alert key={i} type="warning">⚠️ {w}</Alert>
+      )}
+
+      {/* Config */}
+      <div className="card">
+        <div className="card-title"><span className="section-icon">⚙️</span>Sistema de Control — CIE 88:2004 §87–111</div>
+        <div className="form-grid col-2">
+          <Field label="Protocolo de control">
+            <select value={protocol} onChange={e => {
+              setProtocol(e.target.value);
+              onChange('control_protocol', e.target.value);
+            }}>
+              <option value="DALI">DALI (IEC 62386)</option>
+              <option value="Smartec">Smartec</option>
+              <option value="0-10V">Analógico 0-10V</option>
+            </select>
+          </Field>
+          <Field label="Grupos en zona transición" hint="Sub-grupos independientes en transición">
+            <select value={form.n_transition_groups || 2} onChange={e => onChange('n_transition_groups', +e.target.value)}>
+              <option value={1}>1 grupo — CTR1</option>
+              <option value={2}>2 grupos — CTR1, CTR2</option>
+              <option value={3}>3 grupos — CTR1–CTR3</option>
+              <option value={4}>4 grupos — CTR1–CTR4</option>
+            </select>
+          </Field>
+        </div>
+        <Alert type="info" style={{marginTop:12}}>
+          Nota: el número de grupos de transición requiere recalcular para actualizarse en la tabla.
+        </Alert>
+      </div>
+
+      {/* Tabla grupos × escenas */}
+      <div className="card">
+        <div className="card-title"><span className="section-icon">🎛️</span>Tabla de Regulación — Grupos × Escenas</div>
+        <div style={{overflowX:'auto'}}>
+          <table className="result-table">
+            <thead>
+              <tr>
+                <th style={{textAlign:'left', minWidth:180}}>Grupo</th>
+                <th style={{textAlign:'center', minWidth:80}}>L diseño<br/><span style={{fontWeight:400}}>(cd/m²)</span></th>
+                {scenes.map(s => (
+                  <th key={s.scene_id} style={{textAlign:'center', minWidth:88, background: SCENE_BG[s.scene_type] || '#fff'}}>
+                    <div className="scene-header">{s.name}</div>
+                    <div className="scene-l20">L₂₀ = {s.L20} cd/m²</div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {groups.map(g => (
+                <tr key={g.group_id}>
+                  <td>
+                    <ZoneBadge zone={g.zone_type.toUpperCase()} />
+                    <span style={{marginLeft:6, fontSize:'.82rem', fontWeight:600}}>{g.name}</span>
+                    {g.notes && <div style={{fontSize:'.70rem',color:'var(--gray-600)',marginTop:2}}>{g.notes}</div>}
+                  </td>
+                  <td style={{textAlign:'center', fontWeight:700, color:'var(--brand)'}}>{g.L_design}</td>
+                  {scenes.map(s => {
+                    const pct = g.dimming_levels[String(s.scene_id)];
+                    const dali = g.dali_levels[String(s.scene_id)];
+                    // Color cell: more blue = higher dimming
+                    const lightness = 98 - (pct || 100) * 0.18;
+                    const bg = `hsl(210, 70%, ${lightness}%)`;
+                    return (
+                      <td key={s.scene_id} style={{textAlign:'center', background: SCENE_BG[s.scene_type] || '#fff'}}>
+                        <div className="dimming-cell" style={{background: bg}}>
+                          <div className="dimming-pct">{pct ?? '—'}%</div>
+                          {protocol === 'DALI' && dali !== undefined && (
+                            <span className="dali-level">DALI {dali}</span>
+                          )}
+                        </div>
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p style={{fontSize:'.75rem',color:'var(--gray-600)',marginTop:8}}>
+          CTH=Umbral · CTRn=Transición · CIN=Interior · CEX=Salida.
+          Niveles DALI según IEC 62386 (curva logarítmica). Rango 0-254.
+        </p>
+      </div>
+
+      {/* Curva de regulación adaptativa CTH */}
+      {thrCurve && (
+        <div className="card">
+          <div className="card-title"><span className="section-icon">📉</span>Curva de Regulación Adaptativa — Grupo CTH (Umbral)</div>
+          <p style={{fontSize:'.84rem',color:'var(--gray-600)',marginBottom:12,lineHeight:1.5}}>
+            Control adaptativo con sensor fotométrico de L₂₀: el sensor mide la luminancia
+            del campo de acceso y el controlador ajusta automáticamente el nivel del grupo umbral
+            siguiendo esta curva.
+          </p>
+          <RegulationCurveChart curve={thrCurve} />
+        </div>
+      )}
+
+      {/* KPIs + Export */}
+      <div className="card">
+        <div className="card-title"><span className="section-icon">💾</span>Exportar Plan de Control</div>
+        <div className="kpi-grid" style={{gridTemplateColumns:'repeat(4,1fr)',marginBottom:16}}>
+          <KpiCard label="Protocolo"  value={protocol}         unit="" highlight />
+          <KpiCard label="Grupos"     value={control.n_groups} unit="circuitos" />
+          <KpiCard label="Escenas"    value={control.n_scenes} unit="condiciones" />
+          <KpiCard label="Norma"      value="CIE 88"           unit="§87–111" />
+        </div>
+        <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+          <button className="btn btn-outline" onClick={handleExportJSON}>⬇️ Exportar JSON</button>
+          <button className="btn btn-outline" onClick={handleExportCSV}>📊 Exportar CSV</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── GRÁFICA DE PERFIL LONGITUDINAL ────────────────────────────
+
+function ProfileChart({ chartData, tunnelLength, Lth, Lin }) {
+  if (!chartData || !chartData.data || chartData.data.length === 0) {
+    return <div style={{textAlign:"center",color:"#999",padding:"40px"}}>Sin datos de perfil</div>;
+  }
+
+  const { data } = chartData;
+
+  // Zonas en orden de aparición (izq → der)
+  const ZONE_ORDER = ['ACCESS','THRESHOLD','TRANSITION','INTERIOR','EXIT','PARTING'];
+  const ZONE_LABELS = {
+    ACCESS:'Acceso', THRESHOLD:'Umbral', TRANSITION:'Transición',
+    INTERIOR:'Interior', EXIT:'Salida', PARTING:'Post-salida'
+  };
+
+  // Zonas presentes en los datos
+  const zonesPresent = [...new Set(data.map(d => d.zone.toUpperCase()))]
+    .filter(z => ZONE_ORDER.includes(z))
+    .sort((a, b) => ZONE_ORDER.indexOf(a) - ZONE_ORDER.indexOf(b));
+
+  // Construir dataset unificado: cada zona tiene su propia columna.
+  // Los puntos en el límite entre dos zonas se comparten (valor en ambas)
+  // para evitar huecos entre áreas.
+  const unified = data.map((pt, i) => {
+    const zone = pt.zone.toUpperCase();
+    const row = { s: pt.s };
+    zonesPresent.forEach(z => { row[z] = null; });
+    row[zone] = pt.L;
+
+    // Compartir punto de límite con la zona anterior
+    if (i > 0) {
+      const prev = data[i-1].zone.toUpperCase();
+      if (prev !== zone && zonesPresent.includes(prev)) row[prev] = pt.L;
+    }
+    // Compartir punto de límite con la zona siguiente
+    if (i < data.length - 1) {
+      const next = data[i+1].zone.toUpperCase();
+      if (next !== zone && zonesPresent.includes(next)) row[next] = pt.L;
+    }
+    return row;
+  });
+
+  return (
+    <div style={{width:"100%", height:360}}>
+      <ResponsiveContainer>
+        <ComposedChart data={unified} margin={{top:10, right:90, left:10, bottom:30}}>
+          <CartesianGrid strokeDasharray="3 3" stroke="#e0e2e6" />
+          <XAxis
+            dataKey="s"
+            label={{ value:"Posición (m)", position:"insideBottom", offset:-10, fontSize:12 }}
+            tick={{ fontSize:11 }}
+            tickCount={14}
+          />
+          <YAxis
+            label={{ value:"L (cd/m²)", angle:-90, position:"insideLeft", offset:10, fontSize:12 }}
+            tick={{ fontSize:11 }}
+          />
+          <Tooltip
+            content={({ active, payload, label }) => {
+              if (!active || !payload) return null;
+              const pts = payload.filter(p => p.value != null);
+              if (!pts.length) return null;
+              const pt = pts[0];
+              return (
+                <div style={{
+                  background:'#fff', border:`2px solid ${pt.color}`,
+                  borderRadius:6, padding:'8px 12px', fontSize:13
+                }}>
+                  <div style={{fontWeight:700, marginBottom:4}}>s = {label} m</div>
+                  <div style={{color: pt.color}}>
+                    {ZONE_LABELS[pt.dataKey] || pt.dataKey}
+                  </div>
+                  <div style={{color:'#333', marginTop:2}}>
+                    L = <strong>{Number(pt.value).toFixed(1)} cd/m²</strong>
+                  </div>
+                </div>
+              );
+            }}
+          />
+          <Legend
+            verticalAlign="bottom"
+            height={36}
+            formatter={(value) => ZONE_LABELS[value] || value}
+          />
+
+          {/* Un área por zona, rellena con el color de la zona */}
+          {zonesPresent.map(zone => (
+            <Area
+              key={zone}
+              type="monotone"
+              dataKey={zone}
+              name={zone}
+              fill={ZONE_COLORS[zone] || "#aaa"}
+              stroke={ZONE_COLORS[zone] || "#aaa"}
+              fillOpacity={0.40}
+              strokeWidth={2.5}
+              connectNulls={false}
+              dot={false}
+              legendType="square"
+              activeDot={{ r:4, strokeWidth:0 }}
+            />
+          ))}
+
+          {/* Líneas de referencia Lth y Lin */}
+          <ReferenceLine y={Lth} stroke="#f39c12" strokeDasharray="6 3" strokeWidth={1.5}
+            label={{ value:`Lth = ${Math.round(Lth)} cd/m²`, position:"right",
+                     fontSize:11, fill:"#c87f0a", fontWeight:600 }} />
+          <ReferenceLine y={Lin} stroke="#27ae60" strokeDasharray="6 3" strokeWidth={1.5}
+            label={{ value:`Lin = ${Lin != null ? Lin.toFixed(1) : '—'} cd/m²`,
+                     position:"right", fontSize:11, fill:"#1e8449", fontWeight:600 }} />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
+// ─── PASO 0: GEOMETRÍA ─────────────────────────────────────────
+
+// Estima la distancia de parada según CIE 88 (t_r=1.5s, a=3.5 m/s²)
+function estimateSD(v_kmh) {
+  const v = v_kmh / 3.6;
+  return v * 1.5 + (v * v) / (2 * 3.5);
+}
+
+function StepGeometry({ form, onChange }) {
+  const v   = parseFloat(form.speed_kmh) || 80;
+  const L   = parseFloat(form.length_m)  || 0;
+  const SD  = estimateSD(v);
+  // Longitud mínima teórica: 2×SD (umbral+salida) + 30m (transición mínima)
+  const Lmin = Math.ceil(2 * SD + 30);
+  const lengthStatus =
+    L <= 0      ? null :
+    L < SD      ? "critical" :
+    L < Lmin    ? "warning" :
+    L < Lmin * 1.5 ? "ok" : "good";
+
+  return (
+    <div className="card">
+      <div className="card-title"><span className="section-icon">📐</span>Geometría del Túnel</div>
+      <div className="form-grid">
+        <Field label="Nombre del proyecto">
+          <input type="text" value={form.project_name}
+            onChange={e => onChange("project_name", e.target.value)} />
+        </Field>
+        <Field label="ID del tubo" hint="Ej: T1, T2">
+          <input type="text" value={form.tube_id}
+            onChange={e => onChange("tube_id", e.target.value)} />
+        </Field>
+        <Field label="Velocidad de diseño (km/h)">
+          <select value={form.speed_kmh} onChange={e => onChange("speed_kmh", e.target.value)}>
+            {[40,50,60,70,80,90,100,110,120].map(v =>
+              <option key={v} value={v}>{v} km/h</option>
+            )}
+          </select>
+        </Field>
+        <Field label="Longitud (m)" hint="Longitud total del tubo">
+          <input type="number" min="10" max="10000" step="5" value={form.length_m}
+            onChange={e => onChange("length_m", e.target.value)} />
+          {lengthStatus && (() => {
+            const cfg = {
+              critical: {bg:"#fef2f2", border:"#fca5a5", color:"#b91c1c",
+                         icon:"⛔", text:`Crítico: longitud (${L.toFixed(0)} m) < distancia de parada (${SD.toFixed(0)} m). CIE 88 no aplicable.`},
+              warning:  {bg:"#fffbeb", border:"#fcd34d", color:"#92400e",
+                         icon:"⚠️", text:`Corto: ${L.toFixed(0)} m < mínimo recomendado ${Lmin} m para ${v} km/h. Sin zona interior.`},
+              ok:       {bg:"#f0fdf4", border:"#86efac", color:"#166534",
+                         icon:"✓",  text:`Suficiente para esquema completo CIE 88 a ${v} km/h (mín. ${Lmin} m).`},
+              good:     {bg:"#f0fdf4", border:"#86efac", color:"#166534",
+                         icon:"✓✓", text:`Longitud holgada. SD=${SD.toFixed(0)} m, mín. recomendado ${Lmin} m.`},
+            }[lengthStatus];
+            return (
+              <div style={{marginTop:4, padding:"5px 9px", borderRadius:6, fontSize:".75rem",
+                           background:cfg.bg, border:`1px solid ${cfg.border}`, color:cfg.color}}>
+                {cfg.icon} {cfg.text}
+              </div>
+            );
+          })()}
+        </Field>
+        <Field label="Pendiente (%)" hint="Positivo = bajada">
+          <input type="number" min="-8" max="8" step="0.5" value={form.gradient_pct}
+            onChange={e => onChange("gradient_pct", e.target.value)} />
+        </Field>
+        <Field label="Radio de curvatura (m)" hint="Vacío si recto">
+          <input type="number" min="100" max="99999" step="50"
+            value={form.curvature_radius_m || ""}
+            onChange={e => onChange("curvature_radius_m", e.target.value || null)}
+            placeholder="—" />
+        </Field>
+        <Field label="Circulación">
+          <select value={form.traffic_direction} onChange={e => onChange("traffic_direction", e.target.value)}>
+            <option value="one_way">Un sentido</option>
+            <option value="two_way">Bidireccional</option>
+          </select>
+        </Field>
+        <Field label="Anchura total interior (m)">
+          <input type="number" min="3" max="30" step="0.5" value={form.width_m}
+            onChange={e => onChange("width_m", e.target.value)} />
+        </Field>
+        <Field label="Altura libre (m)">
+          <input type="number" min="2.5" max="10" step="0.1" value={form.height_m}
+            onChange={e => onChange("height_m", e.target.value)} />
+        </Field>
+      </div>
+    </div>
+  );
+}
+
+// ─── PASO 1: ENTORNO ───────────────────────────────────────────
+
+function StepEnvironment({ form, onChange }) {
+  return (
+    <div className="card">
+      <div className="card-title"><span className="section-icon">🌄</span>Entorno y Condiciones Visuales</div>
+      <div className="form-grid">
+        <Field label="Orientación del portal de entrada" hint="Dirección hacia la que mira el portal">
+          <select value={form.portal_orientation} onChange={e => onChange("portal_orientation", e.target.value)}>
+            {ORIENT_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </Field>
+        <Field label="Tipo de entorno">
+          <select value={form.environment_type} onChange={e => onChange("environment_type", e.target.value)}>
+            {ENV_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </Field>
+        <Field label="Condición de cielo de diseño">
+          <select value={form.sky_condition} onChange={e => onChange("sky_condition", e.target.value)}>
+            <option value="clear">Despejado (condición máxima)</option>
+            <option value="intermediate">Parcialmente nublado</option>
+            <option value="overcast">Cubierto</option>
+          </select>
+        </Field>
+        <Field label="Penetración de luz diurna">
+          <select value={form.daylight_penetration} onChange={e => onChange("daylight_penetration", e.target.value)}>
+            <option value="poor">Pobre</option>
+            <option value="good">Buena</option>
+          </select>
+        </Field>
+        <Field label="Reflectancia de paredes (mantenida)" hint="Valor típico: 0.25–0.50">
+          <input type="number" min="0.05" max="0.90" step="0.05" value={form.wall_reflectance}
+            onChange={e => onChange("wall_reflectance", e.target.value)} />
+        </Field>
+        <Field label="Método de cálculo L20">
+          <select value={form.l20_method} onChange={e => onChange("l20_method", e.target.value)}>
+            <option value="model">Modelo de entorno CIE 88</option>
+            <option value="table">Tabla de referencia CIE 88</option>
+          </select>
+        </Field>
+      </div>
+
+      <div style={{marginTop:16}}>
+        <div className="toggle-row" style={{marginBottom:10}}>
+          <label className="toggle">
+            <input type="checkbox" checked={form.exit_visible}
+              onChange={e => onChange("exit_visible", e.target.checked)} />
+            <span className="toggle-slider"></span>
+          </label>
+          <span className="toggle-label">¿La salida es visible desde la distancia de parada?</span>
+        </div>
+        <div className="toggle-row">
+          <label className="toggle">
+            <input type="checkbox" checked={form.illuminated_road}
+              onChange={e => onChange("illuminated_road", e.target.checked)} />
+            <span className="toggle-slider"></span>
+          </label>
+          <span className="toggle-label">Carretera exterior iluminada (afecta nivel nocturno)</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── PASO 2: TRÁFICO ───────────────────────────────────────────
+
+function StepTraffic({ form, onChange }) {
+  return (
+    <div className="card">
+      <div className="card-title"><span className="section-icon">🚗</span>Tráfico y Uso</div>
+      <div className="form-grid col-3">
+        <Field label="Tráfico de diseño (veh/h)" hint="Volumen máximo horario">
+          <input type="number" min="50" max="5000" step="50" value={form.traffic_veh_h}
+            onChange={e => onChange("traffic_veh_h", e.target.value)} />
+        </Field>
+        <Field label="Nº de carriles">
+          <select value={form.num_lanes} onChange={e => onChange("num_lanes", e.target.value)}>
+            {[1,2,3,4].map(n => <option key={n} value={n}>{n} carril{n>1?"es":""}</option>)}
+          </select>
+        </Field>
+        <Field label="Método Lth">
+          <select value={form.lth_method} onChange={e => onChange("lth_method", e.target.value)}>
+            <option value="k_factor">Factor k (tabla CIE 88)</option>
+            <option value="lseq">Lseq / Contraste percibido</option>
+          </select>
+        </Field>
+      </div>
+
+      <div style={{marginTop:16}}>
+        <div className="toggle-row" style={{marginBottom:10}}>
+          <label className="toggle">
+            <input type="checkbox" checked={form.has_pedestrians}
+              onChange={e => onChange("has_pedestrians", e.target.checked)} />
+            <span className="toggle-slider"></span>
+          </label>
+          <span className="toggle-label">Presencia de peatones o ciclistas</span>
+        </div>
+        <div className="toggle-row" style={{marginBottom:10}}>
+          <label className="toggle">
+            <input type="checkbox" checked={form.profile_stepped}
+              onChange={e => onChange("profile_stepped", e.target.checked)} />
+            <span className="toggle-slider"></span>
+          </label>
+          <span className="toggle-label">Perfil escalonado en zona de transición (en lugar de curva continua)</span>
+        </div>
+        {form.profile_stepped && (
+          <div className="form-grid col-2" style={{marginTop:10}}>
+            <Field label="Nº de escalones en transición" hint="Mínimo según ratio CIE 88">
+              <input type="number" min="2" max="8" step="1" value={form.n_steps}
+                onChange={e => onChange("n_steps", e.target.value)} />
+            </Field>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── PASO 3: CALCULAR ──────────────────────────────────────────
+
+function StepCalculate({ form, onCalculate, loading, previewResult }) {
+  return (
+    <div>
+      {/* Resumen de parámetros */}
+      <div className="card">
+        <div className="card-title"><span className="section-icon">📋</span>Resumen de Parámetros</div>
+        <div className="form-grid">
+          {[
+            ["Proyecto",         form.project_name],
+            ["Tubo",             form.tube_id],
+            ["Longitud",         `${form.length_m} m`],
+            ["Velocidad",        `${form.speed_kmh} km/h`],
+            ["Pendiente",        `${form.gradient_pct} %`],
+            ["Tráfico",          `${form.traffic_veh_h} veh/h`],
+            ["Orientación portal",form.portal_orientation],
+            ["Entorno",          form.environment_type],
+            ["Método L20",       form.l20_method],
+            ["Método Lth",       form.lth_method],
+          ].map(([k,v]) => (
+            <div key={k} style={{background:"var(--gray-50)",borderRadius:5,padding:"8px 10px"}}>
+              <div style={{fontSize:".72rem",color:"var(--gray-600)",textTransform:"uppercase"}}>{k}</div>
+              <div style={{fontSize:".90rem",fontWeight:600,color:"var(--gray-800)"}}>{v}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="btn-row" style={{marginTop:20}}>
+          <button className="btn btn-primary btn-lg" onClick={onCalculate} disabled={loading}>
+            {loading ? "⏳ Calculando..." : "⚡ Calcular según CIE 88:2004"}
+          </button>
+        </div>
+      </div>
+
+      {loading && <div className="spinner" />}
+    </div>
+  );
+}
+
+// ─── PASO 4: RESULTADOS ────────────────────────────────────────
+
+// ── Visualización esquemática de zonas ─────────────────────────
+function ZoneLayoutBar({ zones, tunnelLength }) {
+  if (!zones || !tunnelLength) return null;
+
+  const ZONE_META = {
+    access:     { label: "Acceso",     bg: "#e9ecef", border: "#adb5bd", txt: "#495057" },
+    threshold:  { label: "Umbral",     bg: "#fff3cd", border: "#e8a000", txt: "#7a4800" },
+    transition: { label: "Transición", bg: "#cff4fc", border: "#0891b2", txt: "#0c4a6e" },
+    interior:   { label: "Interior",   bg: "#d1fae5", border: "#059669", txt: "#065f46" },
+    exit:       { label: "Salida",     bg: "#ede9fe", border: "#7c3aed", txt: "#4c1d95" },
+    parting:    { label: "Parting",    bg: "#e9ecef", border: "#adb5bd", txt: "#495057" },
+  };
+
+  // Span total: desde -SD hasta L + SD (acceso + túnel + parting)
+  const SD = zones.threshold ? zones.threshold.s_end : 0;
+  const totalSpan = tunnelLength + SD * 2;  // acceso (SD) + túnel + parting (SD)
+  const spanStart = -SD;
+
+  const pct = (s) => ((s - spanStart) / totalSpan * 100).toFixed(3) + "%";
+  const pctW = (len) => (len / totalSpan * 100).toFixed(3) + "%";
+
+  const ZONE_ORDER = ['access','threshold','transition','interior','exit','parting'];
+  const visibleZones = ZONE_ORDER.filter(k => zones[k]);
+
+  const isTruncated = (z) => z.description && z.description.includes('TRUNCADA');
+
+  return (
+    <div style={{marginBottom:16}}>
+      {/* Barra de zonas */}
+      <div style={{position:"relative",height:52,borderRadius:8,overflow:"hidden",
+                   border:"1px solid var(--gray-200)",background:"#f8f9fa"}}>
+        {visibleZones.map(key => {
+          const z = zones[key];
+          const meta = ZONE_META[key] || ZONE_META.access;
+          const trunc = isTruncated(z);
+          return (
+            <div key={key}
+              title={`${meta.label}: ${z.s_start.toFixed(0)}m → ${z.s_end.toFixed(0)}m (${z.length.toFixed(0)} m)`}
+              style={{
+                position:"absolute",
+                left:  pct(z.s_start),
+                width: pctW(z.length),
+                top:0, bottom:0,
+                background: trunc ? "#fef2f2" : meta.bg,
+                borderRight: `2px solid ${trunc ? "#ef4444" : meta.border}`,
+                borderLeft:  key === visibleZones[0] ? `2px solid ${meta.border}` : "none",
+                display:"flex", alignItems:"center", justifyContent:"center",
+                overflow:"hidden",
+                backgroundImage: trunc
+                  ? "repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(239,68,68,.15) 4px, rgba(239,68,68,.15) 8px)"
+                  : "none",
+              }}>
+              <div style={{textAlign:"center",lineHeight:1.2,padding:"0 4px"}}>
+                <div style={{fontSize:".65rem",fontWeight:700,color: trunc ? "#b91c1c" : meta.txt,
+                             whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis",maxWidth:"100%"}}>
+                  {trunc ? "⚠️ " : ""}{meta.label}
+                </div>
+                <div style={{fontSize:".60rem",color: trunc ? "#b91c1c" : meta.txt, opacity:.85}}>
+                  {z.length.toFixed(0)} m
+                </div>
+              </div>
+            </div>
+          );
+        })}
+        {/* Línea del portal de entrada */}
+        {SD > 0 && (
+          <div style={{position:"absolute",left:pct(0),top:0,bottom:0,width:2,
+                       background:"var(--brand)",zIndex:2}} title="Portal entrada (s=0)" />
+        )}
+        {/* Línea del portal de salida */}
+        <div style={{position:"absolute",left:pct(tunnelLength),top:0,bottom:0,width:2,
+                     background:"var(--brand)",zIndex:2}} title="Portal salida" />
+      </div>
+
+      {/* Escala */}
+      <div style={{position:"relative",height:16,marginTop:2}}>
+        {[0, tunnelLength*0.25, tunnelLength*0.5, tunnelLength*0.75, tunnelLength].map(s => (
+          <span key={s} style={{
+            position:"absolute",
+            left:pct(s),
+            transform:"translateX(-50%)",
+            fontSize:".62rem", color:"var(--gray-500)",
+          }}>{s.toFixed(0)}m</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function StepResults({ result }) {
+  if (!result) return <Alert type="info">Ejecuta el cálculo primero (paso Calcular).</Alert>;
+  if (!result.success) {
+    return (
+      <div>
+        <Alert type="danger">
+          <strong>Error en el cálculo:</strong>
+          <ul style={{marginTop:6,paddingLeft:18}}>
+            {(result.errors || []).map((e,i) => <li key={i}>{e}</li>)}
+          </ul>
+        </Alert>
+      </div>
+    );
+  }
+
+  const { summary, classification, speed, l20, lth, interior, zones, validation, chart } = result;
+
+  return (
+    <div>
+      {/* Alertas */}
+      {result.warnings && result.warnings.length > 0 && (
+        <div>
+          {result.warnings.map((w,i) => <Alert key={i} type="warning">⚠️ {w}</Alert>)}
+        </div>
+      )}
+      {validation && !validation.valid && (
+        <div>
+          {validation.errors.map((e,i) => <Alert key={i} type="danger">❌ {e}</Alert>)}
+        </div>
+      )}
+      {validation && validation.valid && (
+        <Alert type="success">✅ Perfil longitudinal válido según CIE 88:2004</Alert>
+      )}
+
+      {/* Esquema de zonas */}
+      <div className="card" style={{paddingBottom:8}}>
+        <div className="card-title" style={{marginBottom:8}}>
+          <span className="section-icon">🗺️</span>Esquema de Zonas CIE 88:2004
+        </div>
+        <ZoneLayoutBar zones={zones} tunnelLength={summary.length_m} />
+        <div style={{display:"flex",gap:8,flexWrap:"wrap",marginTop:4}}>
+          {[['threshold','Umbral','#fff3cd','#e8a000'],
+            ['transition','Transición','#cff4fc','#0891b2'],
+            ['interior','Interior','#d1fae5','#059669'],
+            ['exit','Salida','#ede9fe','#7c3aed']].map(([k,lbl,bg,border]) =>
+            zones[k] ? (
+              <div key={k} style={{display:"flex",alignItems:"center",gap:4,fontSize:".72rem"}}>
+                <div style={{width:11,height:11,borderRadius:2,background:bg,border:`1.5px solid ${border}`}} />
+                <span style={{color:"var(--gray-600)"}}>{lbl} {zones[k].length.toFixed(0)} m</span>
+              </div>
+            ) : null
+          )}
+        </div>
+      </div>
+
+      {/* KPIs principales */}
+      <div className="kpi-grid">
+        <KpiCard label="Velocidad diseño" value={summary.speed_kmh} unit="km/h" />
+        <KpiCard label="Dist. parada SD" value={summary.SD_m} unit="m" />
+        <KpiCard label="L₂₀" value={summary.L20} unit="cd/m²" />
+        <KpiCard label="Lth (Umbral)" value={summary.Lth} unit="cd/m²" highlight />
+        <KpiCard label="Lin (Interior)" value={summary.Lin} unit="cd/m²" />
+        <KpiCard label="L noche" value={summary.L_night} unit="cd/m²" />
+        <KpiCard label="Factor k" value={summary.k_factor} unit="Lth/L20" />
+        <KpiCard label="qc" value={summary.qc} unit="m²·sr/lm" />
+      </div>
+
+      {/* Clasificación */}
+      <div className="card">
+        <div className="card-title"><span className="section-icon">🏷️</span>Clasificación CIE 88:2004</div>
+        <div style={{display:"flex",gap:10,flexWrap:"wrap",marginBottom:12}}>
+          <span className={`cls-badge cls-${classification.optical === 'optically_long' ? 'long' : 'short'}`}>
+            {classification.optical === 'optically_long' ? '🔴 Ópticamente largo' : '🟢 Ópticamente corto'}
+          </span>
+          <span className={`cls-badge cls-${classification.daylighting === 'normal' ? 'long' : classification.daylighting === 'none' ? 'short' : 'normal'}`}>
+            Ilum. diurna: {classification.daylighting}
+          </span>
+          <span style={{fontSize:".80rem",color:"var(--gray-600)",alignSelf:"center"}}>
+            {classification.geometric}
+          </span>
+        </div>
+        <p style={{fontSize:".85rem",color:"var(--gray-600)",lineHeight:1.5}}>
+          {classification.justification}
+        </p>
+      </div>
+
+      {/* Gráfica de perfil */}
+      <div className="card">
+        <div className="card-title"><span className="section-icon">📈</span>Perfil Longitudinal de Luminancia</div>
+        <ProfileChart
+          chartData={chart}
+          tunnelLength={summary.length_m}
+          Lth={summary.Lth}
+          Lin={summary.Lin}
+        />
+      </div>
+
+      {/* Tabla de zonas */}
+      <div className="card">
+        <div className="card-title"><span className="section-icon">📏</span>Zonas Normativas CIE 88</div>
+        <div style={{overflowX:"auto"}}>
+          <table className="result-table">
+            <thead>
+              <tr>
+                <th>Zona</th>
+                <th>s inicio (m)</th>
+                <th>s fin (m)</th>
+                <th>Longitud (m)</th>
+                <th>L inicio (cd/m²)</th>
+                <th>L fin (cd/m²)</th>
+                <th>L mín. req. (cd/m²)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {Object.entries(zones).map(([key, z]) => (
+                <tr key={key}>
+                  <td><ZoneBadge zone={z.type} /></td>
+                  <td>{z.s_start.toFixed(1)}</td>
+                  <td>{z.s_end.toFixed(1)}</td>
+                  <td><strong>{z.length.toFixed(1)}</strong></td>
+                  <td>{z.L_start.toFixed(2)}</td>
+                  <td>{z.L_end.toFixed(2)}</td>
+                  <td style={{fontWeight:600,color:"var(--brand)"}}>{z.L_min_required.toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Criterios de calidad */}
+      <div className="card">
+        <div className="card-title"><span className="section-icon">✅</span>Criterios de Calidad CIE 88</div>
+        <Alert type="info">
+          Los criterios de uniformidad (Uo≥0.40, Ul≥0.60), deslumbramiento (TI≤15%) y
+          luminancia de paredes (Lwall≥0.60·Lroad) requieren cálculo fotométrico completo
+          con archivos LDT de las luminarias. Esta fase se realiza en el módulo fotométrico.
+        </Alert>
+        <table className="result-table" style={{marginTop:10}}>
+          <thead>
+            <tr><th>Criterio</th><th>Norma</th><th>Estado</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Uniformidad general Uo</td>
+              <td>≥ 0.40</td>
+              <td><span style={{color:"var(--gray-600)"}}>Requiere LDT</span></td>
+            </tr>
+            <tr>
+              <td>Uniformidad longitudinal Ul</td>
+              <td>≥ 0.60</td>
+              <td><span style={{color:"var(--gray-600)"}}>Requiere LDT</span></td>
+            </tr>
+            <tr>
+              <td>Deslumbramiento TI</td>
+              <td>≤ 15 %</td>
+              <td><span style={{color:"var(--gray-600)"}}>Requiere LDT</span></td>
+            </tr>
+            <tr>
+              <td>Ratio pared/calzada</td>
+              <td>≥ 0.60</td>
+              <td><span style={{color:"var(--gray-600)"}}>Requiere LDT</span></td>
+            </tr>
+            <tr>
+              <td>Perfil longitudinal normativo</td>
+              <td>CIE 88:2004</td>
+              <td>
+                {validation && validation.valid
+                  ? <span style={{color:"var(--success)"}}>✅ Cumple</span>
+                  : <span style={{color:"var(--danger)"}}>❌ Revisar</span>}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ─── PASO 6: LUMINARIAS ────────────────────────────────────────
+
+const ROAD_SURFACES = {
+  dark_asphalt:    { label: "Asfalto oscuro (R3)",   rho: 0.065 },
+  medium_asphalt:  { label: "Asfalto medio (R2)",    rho: 0.085 },
+  light_asphalt:   { label: "Asfalto claro (R1)",    rho: 0.105 },
+  concrete:        { label: "Hormigón (C1/C2)",       rho: 0.140 },
+  bright_concrete: { label: "Hormigón claro",         rho: 0.165 },
+};
+
+const ARRANGEMENTS = {
+  central_single: "Fila central única",
+  central_double: "Doble fila central",
+  bilateral:      "Bilateral (dos costados)",
+  unilateral:     "Unilateral (un costado)",
+  staggered:      "Tresbolillo",
+};
+
+const ZONE_BG_LUM = {
+  threshold:  "#fff8e1",
+  transition: "#e0f7fa",
+  interior:   "#e8f5e9",
+  exit:       "#f3e5f5",
+};
+
+function StepLuminaires({ result, form, onChange }) {
+  const [lumResult,  setLumResult]  = useState(null);
+  const [loading,    setLoading]    = useState(false);
+  const [error,      setError]      = useState(null);
+
+  // Parámetros de luminaria en estado local (no van al form global)
+  const [lum, setLum] = useState({
+    name:             "",
+    flux_lm:          10000,
+    power_w:          100,
+    efficiency:       0.65,
+    mounting_height_m: form.height_m ? (parseFloat(form.height_m) * 0.85).toFixed(1) : 5.0,
+    arrangement:      "central_single",
+    maintenance_factor: 0.70,
+    road_surface:     "medium_asphalt",
+  });
+
+  const updateLum = (k, v) => setLum(prev => ({ ...prev, [k]: v }));
+
+  if (!result || !result.success) {
+    return <Alert type="info">Completa el cálculo antes de dimensionar las luminarias.</Alert>;
+  }
+
+  const handleCalculate = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const body = { ...form, luminaire: lum };
+      const resp = await fetch('/api/tunnel/luminaires', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body),
+      });
+      const data = await resp.json();
+      if (!data.success) {
+        setError(data.error || 'Error en el cálculo');
+      } else {
+        setLumResult(data.luminaires);
+      }
+    } catch(e) {
+      setError(`Error de conexión: ${e.message}`);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const efficacy = lum.flux_lm > 0 && lum.power_w > 0
+    ? (lum.flux_lm / lum.power_w).toFixed(1)
+    : "—";
+
+  return (
+    <div>
+      {/* ── Parámetros de la luminaria ── */}
+      <div className="card">
+        <div className="card-title"><span className="section-icon">💡</span>Parámetros de la Luminaria</div>
+
+        <div className="form-grid">
+          <div className="form-group">
+            <label className="form-label">Referencia / modelo</label>
+            <input className="form-input" value={lum.name}
+              onChange={e => updateLum('name', e.target.value)}
+              placeholder="ej. SALVI Tünel 100W" />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Flujo luminoso total (lm)</label>
+            <input className="form-input" type="number" min="100" step="500"
+              value={lum.flux_lm}
+              onChange={e => updateLum('flux_lm', parseFloat(e.target.value) || 0)} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Potencia (W)</label>
+            <input className="form-input" type="number" min="1" step="5"
+              value={lum.power_w}
+              onChange={e => updateLum('power_w', parseFloat(e.target.value) || 0)} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">
+              Factor de utilización η
+              <span style={{fontWeight:400,color:"var(--gray-500)",marginLeft:6,fontSize:".80rem"}}>
+                (fracción del flujo que llega a calzada)
+              </span>
+            </label>
+            <input className="form-input" type="number" min="0.1" max="1" step="0.01"
+              value={lum.efficiency}
+              onChange={e => updateLum('efficiency', parseFloat(e.target.value) || 0.65)} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Altura de montaje (m)</label>
+            <input className="form-input" type="number" min="1" max="15" step="0.1"
+              value={lum.mounting_height_m}
+              onChange={e => updateLum('mounting_height_m', parseFloat(e.target.value) || 5)} />
+          </div>
+          <div className="form-group">
+            <label className="form-label">Disposición</label>
+            <select className="form-select" value={lum.arrangement}
+              onChange={e => updateLum('arrangement', e.target.value)}>
+              {Object.entries(ARRANGEMENTS).map(([k, v]) =>
+                <option key={k} value={k}>{v}</option>
+              )}
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Factor de mantenimiento MF</label>
+            <select className="form-select" value={lum.maintenance_factor}
+              onChange={e => updateLum('maintenance_factor', parseFloat(e.target.value))}>
+              <option value={0.60}>0.60 — Bajo (mantenimiento esporádico)</option>
+              <option value={0.65}>0.65 — Medio-bajo</option>
+              <option value={0.70}>0.70 — Estándar (CIE 88 recomendado)</option>
+              <option value={0.75}>0.75 — Bueno</option>
+              <option value={0.80}>0.80 — Muy bueno (túnel limpio)</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label className="form-label">Superficie de calzada</label>
+            <select className="form-select" value={lum.road_surface}
+              onChange={e => updateLum('road_surface', e.target.value)}>
+              {Object.entries(ROAD_SURFACES).map(([k, v]) =>
+                <option key={k} value={k}>{v.label} — ρ={v.rho}</option>
+              )}
+            </select>
+          </div>
+        </div>
+
+        {/* KPI inline: eficacia calculada */}
+        <div style={{display:"flex",gap:12,marginTop:12,flexWrap:"wrap"}}>
+          {[
+            {label:"Eficacia", val:`${efficacy} lm/W`},
+            {label:"Flujo efectivo", val:`${Math.round(lum.flux_lm * lum.efficiency * lum.maintenance_factor)} lm·MF`},
+            {label:"ρ_eff calzada", val:`${(ROAD_SURFACES[lum.road_surface]?.rho || 0.085).toFixed(3)} cd/m²/lux`},
+          ].map(({label, val}) => (
+            <div key={label} style={{background:"var(--brand-lt)",borderRadius:6,padding:"6px 14px",
+                                     fontSize:".82rem",color:"var(--brand-dk)"}}>
+              <span style={{fontWeight:600}}>{label}:</span> {val}
+            </div>
+          ))}
+        </div>
+
+        <div className="btn-row" style={{marginTop:16}}>
+          <button className="btn btn-success btn-lg" onClick={handleCalculate} disabled={loading}>
+            {loading ? "⏳ Calculando…" : "⚡ Calcular Luminarias"}
+          </button>
+        </div>
+        {error && <Alert type="danger" style={{marginTop:10}}>{error}</Alert>}
+      </div>
+
+      {/* ── Resultados ── */}
+      {lumResult && (
+        <>
+          {/* KPIs totales */}
+          <div className="kpi-grid" style={{gridTemplateColumns:"repeat(4,1fr)"}}>
+            {[
+              {label:"Total luminarias", val: lumResult.totals.n_luminaires, unit:"ud"},
+              {label:"Potencia total",   val: lumResult.totals.power_kw,     unit:"kW"},
+              {label:"Densidad media",   val: lumResult.totals.power_density_wm2, unit:"W/m²"},
+              {label:"Flujo instalado",  val: (lumResult.totals.flux_lm/1000).toFixed(0), unit:"klm"},
+            ].map(({label,val,unit}) => (
+              <div key={label} className="kpi-card">
+                <div className="kpi-value">{val}<span className="kpi-unit">{unit}</span></div>
+                <div className="kpi-label">{label}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Tabla por zonas */}
+          <div className="card">
+            <div className="card-title">
+              <span className="section-icon">📊</span>Diseño por Zona
+            </div>
+            <div style={{overflowX:"auto"}}>
+              <table className="result-table" style={{fontSize:".83rem"}}>
+                <thead>
+                  <tr>
+                    <th>Zona</th>
+                    <th>Longitud (m)</th>
+                    <th>L requerida (cd/m²)</th>
+                    <th>E requerida (lux)</th>
+                    <th>Espaciado máx. (m)</th>
+                    <th>Espaciado usado (m)</th>
+                    <th>Nº luminarias</th>
+                    <th>Potencia zona (W)</th>
+                    <th>Densidad (W/m²)</th>
+                    <th>L estimada (cd/m²)</th>
+                    <th>Margen (%)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {lumResult.zones.map((z, i) => {
+                    const bg = ZONE_BG_LUM[z.zone_type] || "#fff";
+                    const marginOk = z.margin_pct >= 0;
+                    return (
+                      <tr key={i} style={{background: bg}}>
+                        <td>
+                          <span className="badge-zone" style={{background:bg,border:"1px solid #ccc",
+                                fontWeight:700,color:"#333"}}>
+                            {z.zone_name}
+                          </span>
+                        </td>
+                        <td style={{textAlign:"center"}}>{z.zone_length}</td>
+                        <td style={{textAlign:"center",fontWeight:600}}>{z.L_required}</td>
+                        <td style={{textAlign:"center"}}>{z.E_required}</td>
+                        <td style={{textAlign:"center"}}>{z.d_max}</td>
+                        <td style={{textAlign:"center",fontWeight:700,color:"var(--brand-dk)"}}>{z.d_used}</td>
+                        <td style={{textAlign:"center",fontWeight:700}}>{z.n_luminaires}</td>
+                        <td style={{textAlign:"center"}}>{z.power_zone_w}</td>
+                        <td style={{textAlign:"center"}}>{z.power_density_wm2}</td>
+                        <td style={{textAlign:"center",fontWeight:600,
+                                    color: marginOk ? "#1a7a3c" : "#c0392b"}}>
+                          {z.L_estimated}
+                        </td>
+                        <td style={{textAlign:"center",
+                                    color: marginOk ? "#1a7a3c" : "#c0392b",
+                                    fontWeight:600}}>
+                          {marginOk ? `+${z.margin_pct}` : z.margin_pct}%
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Gráfica de barras: luminarias por zona */}
+          <div className="card">
+            <div className="card-title">
+              <span className="section-icon">📈</span>Distribución de Luminarias por Zona
+            </div>
+            <ResponsiveContainer width="100%" height={220}>
+              <BarChart data={lumResult.zones}
+                        margin={{top:10,right:20,left:0,bottom:5}}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#eee"/>
+                <XAxis dataKey="zone_name" tick={{fontSize:11}}/>
+                <YAxis yAxisId="left"  orientation="left"  tick={{fontSize:10}}
+                       label={{value:"Luminarias", angle:-90, position:"insideLeft", fontSize:10}}/>
+                <YAxis yAxisId="right" orientation="right" tick={{fontSize:10}}
+                       label={{value:"Espaciado (m)", angle:90, position:"insideRight", fontSize:10}}/>
+                <Tooltip formatter={(v, n) => [v, n === "n_luminaires" ? "Luminarias" : "Espaciado (m)"]}/>
+                <Legend formatter={v => v === "n_luminaires" ? "Luminarias" : "Espaciado (m)"}/>
+                <Bar yAxisId="left"  dataKey="n_luminaires" fill="var(--brand)"    name="n_luminaires" radius={[3,3,0,0]}/>
+                <Bar yAxisId="right" dataKey="d_used"       fill="var(--brand-lt)" name="d_used"       radius={[3,3,0,0]}/>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* Warnings */}
+          {lumResult.warnings?.length > 0 && (
+            <div className="card">
+              {lumResult.warnings.map((w, i) => (
+                <Alert key={i} type="warning">⚠️ {w}</Alert>
+              ))}
+            </div>
+          )}
+
+          {/* Nota metodológica */}
+          <div className="card" style={{background:"var(--gray-50)"}}>
+            <div style={{fontSize:".80rem",color:"var(--gray-500)",lineHeight:1.7}}>
+              <strong>Metodología:</strong> Cálculo simplificado de luminancia media según
+              L = E × ρ<sub>eff</sub>, con E = (Φ × η × MF × n<sub>filas</sub>) / (d × w).
+              El espaciado máximo se determina para que L<sub>media</sub> ≥ L<sub>requerida</sub>.
+              <br/>
+              ρ<sub>eff</sub> seleccionado: <strong>{ROAD_SURFACES[lum.road_surface]?.label}</strong> ({ROAD_SURFACES[lum.road_surface]?.rho} cd/m²/lux).
+              Para un cálculo punto-a-punto completo (uniformidad U<sub>o</sub>, U<sub>l</sub>, TI)
+              utilice el motor LuxStudio con archivo LDT.
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─── PASO 7: INFORME ───────────────────────────────────────────
+
+function StepReport({ result, form, tubes }) {
+  const [generating, setGenerating]       = useState(false);
+  const [generatingXls, setGeneratingXls] = useState(false);
+  const [generatingAll, setGeneratingAll] = useState(false);
+  const [status, setStatus]               = useState(null);
+
+  if (!result || !result.success) {
+    return <Alert type="info">Completa el cálculo antes de generar el informe.</Alert>;
+  }
+
+  const { summary, classification, zones, control } = result;
+
+  // Tubos con resultado calculado
+  const calculatedTubes = tubes
+    ? Object.entries(tubes).filter(([,t]) => t.result?.success)
+    : [];
+  const isMultiTube = calculatedTubes.length > 1;
+
+  const handleGenerate = async () => {
+    setGenerating(true);
+    setStatus({type:"info", msg:"Generando informe Word (CIE 88:2004)…"});
+    try {
+      const resp = await fetch('/api/tunnel/report', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify(form)
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({error: resp.statusText}));
+        setStatus({type:"error", msg:`Error ${resp.status}: ${err.error || resp.statusText}`});
+        return;
+      }
+      // Descargar el blob
+      const blob = await resp.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = `informe_tunel_${form.tube_id || 'T1'}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setStatus({type:"success", msg:"✅ Informe descargado correctamente."});
+    } catch(e) {
+      setStatus({type:"error", msg:`Error de conexión: ${e.message}`});
+    } finally {
+      setGenerating(false);
+    }
+  };
+
+  // Zonas: adaptar tanto formato array como objeto
+  const zonesArr = Array.isArray(zones)
+    ? zones
+    : Object.values(zones || {});
+
+  // Handler informe combinado (multi-tubo)
+  const handleCombined = async () => {
+    setGeneratingAll(true);
+    setStatus({type:"info", msg:`Generando informe combinado (${calculatedTubes.length} tubos)…`});
+    try {
+      // Construir payload con solo los forms de los tubos calculados
+      const tubesPayload = {};
+      calculatedTubes.forEach(([id, t]) => { tubesPayload[id] = { form: t.form }; });
+      const resp = await fetch('/api/tunnel/report-combined', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+          tubes: tubesPayload,
+          project_name: form.project_name || ''
+        })
+      });
+      if (!resp.ok) {
+        const err = await resp.json().catch(() => ({error: resp.statusText}));
+        setStatus({type:"error", msg:`Error ${resp.status}: ${err.error || resp.statusText}`});
+        return;
+      }
+      const blob = await resp.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href     = url;
+      a.download = `informe_${(form.project_name||'tunel').replace(/\s+/g,'_')}_completo.docx`;
+      document.body.appendChild(a); a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setStatus({type:"success", msg:`✅ Informe combinado descargado (${calculatedTubes.length} tubos).`});
+    } catch(e) {
+      setStatus({type:"error", msg:`Error: ${e.message}`});
+    } finally {
+      setGeneratingAll(false);
+    }
+  };
+
+  const anyBusy = generating || generatingXls || generatingAll;
+
+  return (
+    <div>
+      {/* Botón principal */}
+      <div className="card">
+        <div className="card-title"><span className="section-icon">📄</span>Informe Técnico CIE 88:2004</div>
+
+        <p style={{fontSize:".90rem",color:"var(--gray-600)",marginBottom:16,lineHeight:1.6}}>
+          Genera el informe técnico en <strong>Word</strong> (portada, clasificación, luminancias,
+          zonas, plan de control y criterios de calidad) o en <strong>Excel</strong> (6 hojas:
+          Portada, Zonas, Resultados, Control, Luminarias y Perfil longitudinal con gráfica).
+        </p>
+
+        <div className="btn-row" style={{flexWrap:"wrap"}}>
+          <button className="btn btn-primary" onClick={handleGenerate} disabled={anyBusy}
+                  style={{minWidth:220}}>
+            {generating ? "⏳ Generando Word…" : `⬇️ Word — Tubo ${form.tube_id || 'T1'}`}
+          </button>
+          <button className="btn btn-outline" disabled={anyBusy}
+                  style={{minWidth:220}}
+                  onClick={async () => {
+                    setGeneratingXls(true);
+                    setStatus({type:"info", msg:"Generando Excel…"});
+                    try {
+                      const resp = await fetch('/api/tunnel/export-excel', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify(form)
+                      });
+                      if (!resp.ok) {
+                        const err = await resp.json().catch(() => ({error: resp.statusText}));
+                        setStatus({type:"error", msg:`Error ${resp.status}: ${err.error}`});
+                        return;
+                      }
+                      const blob = await resp.blob();
+                      const url  = URL.createObjectURL(blob);
+                      const a    = document.createElement('a');
+                      a.href     = url;
+                      a.download = `calculo_tunel_${form.tube_id || 'T1'}.xlsx`;
+                      document.body.appendChild(a); a.click();
+                      document.body.removeChild(a);
+                      URL.revokeObjectURL(url);
+                      setStatus({type:"success", msg:"✅ Excel descargado correctamente."});
+                    } catch(e) {
+                      setStatus({type:"error", msg:`Error: ${e.message}`});
+                    } finally {
+                      setGeneratingXls(false);
+                    }
+                  }}>
+            {generatingXls ? "⏳ Generando Excel…" : `📊 Excel — Tubo ${form.tube_id || 'T1'}`}
+          </button>
+
+          {/* Informes combinados — solo aparecen si hay ≥2 tubos calculados */}
+          {isMultiTube && (<>
+            <button className="btn btn-success" onClick={handleCombined} disabled={anyBusy}
+                    style={{minWidth:220}}>
+              {generatingAll
+                ? `⏳ Generando…`
+                : `📑 Word (${calculatedTubes.map(([id])=>id).join('+')})`}
+            </button>
+            <button className="btn btn-outline" onClick={async () => {
+                setGeneratingAll(true);
+                setStatus({type:"info", msg:`Generando Excel combinado…`});
+                try {
+                  const tubesPayload = {};
+                  calculatedTubes.forEach(([id, t]) => { tubesPayload[id] = { form: t.form }; });
+                  const resp = await fetch('/api/tunnel/export-excel-combined', {
+                    method:'POST', headers:{'Content-Type':'application/json'},
+                    body: JSON.stringify({ tubes: tubesPayload, project_name: form.project_name||'' })
+                  });
+                  if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({error: resp.statusText}));
+                    setStatus({type:"error", msg:`Error: ${err.error}`}); return;
+                  }
+                  const blob = await resp.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `calculo_${(form.project_name||'tunel').replace(/\s+/g,'_')}_completo.xlsx`;
+                  document.body.appendChild(a); a.click();
+                  document.body.removeChild(a); URL.revokeObjectURL(url);
+                  setStatus({type:"success", msg:"✅ Excel combinado descargado."});
+                } catch(e) {
+                  setStatus({type:"error", msg:`Error: ${e.message}`});
+                } finally { setGeneratingAll(false); }
+              }} disabled={anyBusy} style={{minWidth:220}}>
+              {generatingAll ? "⏳…" : `📊 Excel (${calculatedTubes.map(([id])=>id).join('+')})`}
+            </button>
+          </>)}
+        </div>
+
+        {status && (
+          <Alert type={status.type} style={{marginTop:12}}>{status.msg}</Alert>
+        )}
+      </div>
+
+      {/* Resumen de lo que contiene */}
+      <div className="card">
+        <div className="card-title"><span className="section-icon">📋</span>Contenido del Informe</div>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          {[
+            {icon:"🏷️", title:"Portada", desc:`${form.project_name} · Tubo ${form.tube_id} · ${summary.length_m} m`},
+            {icon:"📐", title:"Clasificación CIE 88", desc:`${classification.geometric} · ${classification.optical}`},
+            {icon:"💡", title:"Luminancias", desc:`L₂₀=${summary.L20} · Lth=${summary.Lth} · Lin=${summary.Lin} cd/m²`},
+            {icon:"🗺️", title:"Zonas normativas", desc:`${zonesArr.length} zonas calculadas`},
+            {icon:"🎛️", title:"Plan de control", desc:control
+              ? `${control.protocol} · ${control.n_groups} grupos · ${control.n_scenes} escenas`
+              : "No disponible"},
+            {icon:"✅", title:"Criterios de calidad", desc:"Uo, Ul, TI, ratio paredes (CIE 88:2004)"},
+          ].map(({icon,title,desc}) => (
+            <div key={title} style={{display:"flex",gap:10,alignItems:"flex-start",
+                                     background:"var(--gray-50)",borderRadius:6,padding:"10px 12px",
+                                     border:"1px solid var(--gray-200)"}}>
+              <span style={{fontSize:"1.1rem"}}>{icon}</span>
+              <div>
+                <div style={{fontWeight:600,fontSize:".85rem",color:"var(--gray-800)"}}>{title}</div>
+                <div style={{fontSize:".80rem",color:"var(--gray-500)",marginTop:2}}>{desc}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Vista previa texto */}
+      <div className="card">
+        <div className="card-title"><span className="section-icon">👁️</span>Vista Previa</div>
+        <div style={{fontFamily:"monospace",fontSize:".80rem",lineHeight:1.9,
+                     background:"var(--gray-50)",padding:16,borderRadius:6,
+                     borderLeft:"3px solid var(--brand)",whiteSpace:"pre-wrap"}}>
+{`SALVI TUNNEL ENGINE — Informe Técnico
+Norma: CIE 88:2004 — Guide for the Lighting of Road Tunnels and Underpasses
+${"─".repeat(58)}
+
+PROYECTO:  ${form.project_name}
+Tubo:      ${summary.tube_id || form.tube_id}   Longitud: ${summary.length_m} m
+Fecha:     ${new Date().toLocaleDateString('es-ES')}
+
+1. CLASIFICACIÓN
+   Geométrica:        ${classification.geometric}
+   Óptica:            ${classification.optical}
+   Ilum. diurna:      ${classification.daylighting}
+
+2. DISTANCIA DE PARADA
+   v diseño = ${summary.speed_kmh} km/h   SD = ${summary.SD_m} m
+
+3. LUMINANCIAS DE DISEÑO
+   L₂₀ = ${summary.L20} cd/m²   Lth = ${summary.Lth} cd/m²
+   Lin = ${summary.Lin} cd/m²    L_noche = ${summary.L_night} cd/m²
+   k = ${summary.k_factor}   qc = ${summary.qc} m²·sr/lm
+
+4. ZONAS CIE 88
+${zonesArr.map(z => `   ${(z.type||z.zone_type||"").padEnd(12)} ${String(z.s_start?.toFixed(0)||0).padStart(4)}–${String(z.s_end?.toFixed(0)||0).padStart(4)} m   L_min = ${z.L_min_required?.toFixed(1)||"—"} cd/m²`).join('\n')}
+
+${control ? `5. PLAN DE CONTROL
+   Protocolo: ${control.protocol}   Grupos: ${control.n_groups}   Escenas: ${control.n_scenes}` : ""}
+`}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── COMPARATIVA MULTI-TUBO ────────────────────────────────────
+
+const OPPOSITE_ORIENT = {
+  "N":"S","S":"N","E":"W","W":"E",
+  "NE":"SW","SW":"NE","NW":"SE","SE":"NW",
+};
+
+function TubeComparison({ tubes }) {
+  const tubeIds    = Object.keys(tubes).filter(id => tubes[id].result?.success);
+  if (tubeIds.length < 2) return null;
+
+  const metrics = [
+    {key:"L20",     label:"L₂₀ (cd/m²)",   path: r => r.summary.L20},
+    {key:"Lth",     label:"Lth (cd/m²)",    path: r => r.summary.Lth},
+    {key:"Lin",     label:"Lin (cd/m²)",    path: r => r.summary.Lin},
+    {key:"L_night", label:"L_noche (cd/m²)",path: r => r.summary.L_night},
+    {key:"SD",      label:"SD (m)",          path: r => r.summary.SD_m},
+    {key:"kfactor", label:"Factor k",        path: r => r.summary.k_factor},
+    {key:"optical", label:"Clase óptica",    path: r => r.classification.optical.replace(/_/g," ")},
+    {key:"daylighting",label:"Ilum. diurna", path: r => r.classification.daylighting},
+  ];
+
+  return (
+    <div className="card" style={{marginTop:16}}>
+      <div className="card-title">
+        <span className="section-icon">🔀</span>Comparativa de Tubos
+      </div>
+      <div style={{overflowX:"auto"}}>
+        <table className="result-table" style={{fontSize:".85rem"}}>
+          <thead>
+            <tr>
+              <th style={{textAlign:"left"}}>Parámetro</th>
+              {tubeIds.map(id => (
+                <th key={id} style={{background:"var(--brand-lt)",color:"var(--brand-dk)"}}>
+                  Tubo {id}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {metrics.map(({key, label, path}) => {
+              const vals = tubeIds.map(id => {
+                try { return path(tubes[id].result); } catch { return "—"; }
+              });
+              const allSame = vals.every(v => v === vals[0]);
+              return (
+                <tr key={key}>
+                  <td style={{fontWeight:600,color:"var(--gray-700)"}}>{label}</td>
+                  {vals.map((v, i) => (
+                    <td key={i} style={{
+                      textAlign:"center",
+                      fontWeight: !allSame && typeof v === "number" ? 700 : 400,
+                      color: !allSame && typeof v === "number" && i === 0 ? "var(--brand)" : "inherit"
+                    }}>
+                      {v}
+                    </td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p style={{fontSize:".78rem",color:"var(--gray-400)",marginTop:8}}>
+        Diferencias resaltadas en azul (T1). Los dos tubos se calculan independientemente.
+      </p>
+    </div>
+  );
+}
+
+// ─── APP PRINCIPAL ─────────────────────────────────────────────
+
+const DEFAULT_FORM = {
+  project_name:       "Proyecto Túnel",
+  tube_id:            "T1",
+  length_m:           300,
+  speed_kmh:          80,
+  gradient_pct:       0,
+  curvature_radius_m: null,
+  traffic_direction:  "one_way",
+  width_m:            10.5,
+  height_m:           5.0,
+  num_lanes:          2,
+  portal_orientation: "S",
+  environment_type:   "open_country_flat",
+  sky_condition:      "clear",
+  daylight_penetration:"poor",
+  wall_reflectance:   0.4,
+  exit_visible:       false,
+  illuminated_road:   false,
+  traffic_veh_h:      500,
+  has_pedestrians:    false,
+  l20_method:         "model",
+  lth_method:         "k_factor",
+  profile_stepped:      false,
+  n_steps:              4,
+  n_transition_groups:  2,
+  control_protocol:     "DALI",
+};
+
+const STE_VERSION = "1.2";
+
+const _mkTube = (id, baseForm = DEFAULT_FORM) => ({
+  form:   { ...baseForm, tube_id: id },
+  result: null,
+});
+
+function App() {
+  const [step,       setStep]       = useState(0);
+  const [activeTube, setActiveTube] = useState("T1");
+  const [tubes,      setTubes]      = useState({ T1: _mkTube("T1") });
+  const [loading,    setLoading]    = useState(false);
+  const [error,      setError]      = useState(null);
+  const [toast,      setToast]      = useState(null);
+  const [lang,       setLang]       = useState(() => {
+    try { return localStorage.getItem('ste_lang') || 'es'; } catch { return 'es'; }
+  });
+  const [helpOpen,   setHelpOpen]   = useState(false);
+  const fileInputRef                = useRef(null);
+
+  // Persist lang selection
+  const changeLang = (code) => {
+    setLang(code);
+    try { localStorage.setItem('ste_lang', code); } catch {}
+  };
+
+  // i18n helper bound to current lang
+  const tl = useCallback((key) => t(key, lang), [lang]);
+
+  // Dynamic steps with translated labels
+  const localSteps = useMemo(
+    () => STEP_IDS.map(id => ({ id, label: t(`step.${id}`, lang) })),
+    [lang]
+  );
+
+  // Derivados del tubo activo
+  const form   = tubes[activeTube]?.form   ?? DEFAULT_FORM;
+  const result = tubes[activeTube]?.result ?? null;
+
+  const _setTubeField = useCallback((tubeId, field, value) => {
+    setTubes(prev => ({
+      ...prev,
+      [tubeId]: { ...prev[tubeId], [field]: value }
+    }));
+  }, []);
+
+  const updateForm = useCallback((key, value) => {
+    setTubes(prev => ({
+      ...prev,
+      [activeTube]: {
+        ...prev[activeTube],
+        form: { ...prev[activeTube].form, [key]: value }
+      }
+    }));
+  }, [activeTube]);
+
+  const setActiveForm   = (f) => _setTubeField(activeTube, 'form',   f);
+  const setActiveResult = (r) => _setTubeField(activeTube, 'result', r);
+
+  // ── Toast ──────────────────────────────────────────────────────
+  const showToast = (msg, ms = 2800) => {
+    const key = Date.now();
+    setToast({msg, key});
+    setTimeout(() => setToast(prev => prev?.key === key ? null : prev), ms);
+  };
+
+  // ── Añadir / cambiar tubo ──────────────────────────────────────
+  const addTube = (id) => {
+    const baseForm = form;
+    const newForm  = {
+      ...baseForm,
+      tube_id: id,
+      portal_orientation: OPPOSITE_ORIENT[baseForm.portal_orientation] || baseForm.portal_orientation,
+      traffic_direction: "one_way",
+    };
+    setTubes(prev => ({ ...prev, [id]: { form: newForm, result: null } }));
+    setActiveTube(id);
+    setStep(0);
+    setError(null);
+    showToast(`🆕 Tubo ${id} añadido`);
+  };
+
+  const switchTube = (id) => {
+    setActiveTube(id);
+    setError(null);
+    // Si el nuevo tubo no tiene resultado y estamos en paso post-cálculo, volver a paso 3
+    if (!tubes[id]?.result && step > 3) setStep(3);
+  };
+
+  const removeTube = (id) => {
+    if (Object.keys(tubes).length <= 1) return;
+    const msg = t('proj.confirm_del', lang).replace('$1', id);
+    if (!window.confirm(msg)) return;
+    setTubes(prev => {
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+    const remaining = Object.keys(tubes).filter(k => k !== id);
+    setActiveTube(remaining[0]);
+    setStep(0);
+    showToast(`🗑 Tubo ${id} eliminado`);
+  };
+
+  // ── Guardar proyecto ───────────────────────────────────────────
+  const saveProject = () => {
+    // Guardar solo los forms (no los results — son recalculables)
+    const savedTubes = {};
+    for (const [id, t] of Object.entries(tubes)) {
+      savedTubes[id] = { form: t.form };
+    }
+    const payload = {
+      _ste_version: STE_VERSION,
+      _created:     new Date().toISOString(),
+      activeTube,
+      tubes: savedTubes,
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `tunel_${(form.project_name || 'proyecto').replace(/\s+/g,'_')}.ste.json`;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast(tl('proj.saved'));
+  };
+
+  // ── Abrir proyecto ─────────────────────────────────────────────
+  const openProject  = () => fileInputRef.current?.click();
+  const handleFileLoad = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const parsed = JSON.parse(ev.target.result);
+        if (parsed.tubes) {
+          // Formato v1.2 multi-tubo
+          const loadedTubes = {};
+          for (const [id, t] of Object.entries(parsed.tubes)) {
+            loadedTubes[id] = { form: { ...DEFAULT_FORM, ...t.form }, result: null };
+          }
+          setTubes(loadedTubes);
+          setActiveTube(parsed.activeTube || Object.keys(loadedTubes)[0]);
+        } else {
+          // Formato v1.1 single-tubo (retrocompatible)
+          const loadedForm = parsed.form || parsed;
+          setTubes({ T1: { form: { ...DEFAULT_FORM, ...loadedForm }, result: null } });
+          setActiveTube("T1");
+        }
+        setStep(0); setError(null);
+        showToast(`📂 Proyecto cargado: ${file.name}`);
+      } catch {
+        showToast('❌ Archivo inválido — no es un proyecto STE');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  // ── Nuevo proyecto ─────────────────────────────────────────────
+  const newProject = () => {
+    if (!window.confirm(tl('proj.confirm_new'))) return;
+    setTubes({ T1: _mkTube("T1") });
+    setActiveTube("T1");
+    setStep(0); setError(null);
+    showToast(tl('proj.new_msg'));
+  };
+
+  // ── Calcular ───────────────────────────────────────────────────
+  const handleCalculate = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const resp = await fetch('/api/tunnel/calculate', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(form)
+      });
+      const data = await resp.json();
+      setActiveResult(data);
+      if (data.success) {
+        setStep(4);
+      } else {
+        setError(data.errors?.join(', ') || 'Error en el cálculo');
+      }
+    } catch (e) {
+      setError('Error de conexión: ' + e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ── Steps ──────────────────────────────────────────────────────
+  const stepsDone = useMemo(() => {
+    const done = new Set();
+    if (form.project_name && form.length_m)          done.add(0);
+    if (form.portal_orientation && form.environment_type) done.add(1);
+    if (form.traffic_veh_h)                           done.add(2);
+    if (result) { done.add(3); done.add(4); done.add(5); done.add(6); }
+    return done;
+  }, [form, result]);
+
+  const renderStep = () => {
+    switch(step) {
+      case 0: return <StepGeometry     form={form} onChange={updateForm} />;
+      case 1: return <StepEnvironment  form={form} onChange={updateForm} />;
+      case 2: return <StepTraffic      form={form} onChange={updateForm} />;
+      case 3: return <StepCalculate    form={form} onCalculate={handleCalculate} loading={loading} />;
+      case 4: return <>
+                <StepResults result={result} />
+                <TubeComparison tubes={tubes} />
+              </>;
+      case 5: return <StepControl    result={result} form={form} onChange={updateForm} />;
+      case 6: return <StepLuminaires result={result} form={form} onChange={updateForm} />;
+      case 7: return <StepReport     result={result} form={form} tubes={tubes} />;
+      default: return null;
+    }
+  };
+
+  const tubeIds = Object.keys(tubes);
+
+  return (
+    <div className="app-shell">
+      <input ref={fileInputRef} type="file" accept=".json,.ste.json"
+             style={{display:'none'}} onChange={handleFileLoad} />
+      {toast && <div key={toast.key} className="toast">{toast.msg}</div>}
+
+      {/* Topbar */}
+      <div className="topbar">
+        <div className="logo">⚡ {tl('app.title')}</div>
+        <div className="badge">{tl('app.badge')}</div>
+        <a className="back-link" href="/">{tl('app.back')}</a>
+        <LangSwitcher lang={lang} onChange={changeLang} />
+        <button className="help-btn" onClick={() => setHelpOpen(true)}>
+          {tl('app.help')}
+        </button>
+      </div>
+
+      {/* Help panel */}
+      {helpOpen && <HelpPanel lang={lang} onClose={() => setHelpOpen(false)} />}
+
+      {/* Barra de proyecto */}
+      <div className="project-bar">
+        {/* Selector de tubos */}
+        <div style={{display:"flex",gap:4,alignItems:"center"}}>
+          {tubeIds.map(id => (
+            <button key={id}
+              onClick={() => switchTube(id)}
+              style={{
+                padding:"2px 10px", borderRadius:10, border:"none", cursor:"pointer",
+                fontSize:".78rem", fontWeight:700,
+                background: id === activeTube ? "var(--brand)" : "var(--gray-200)",
+                color:      id === activeTube ? "#fff" : "var(--gray-600)",
+                display:"flex", alignItems:"center", gap:4,
+              }}>
+              {id}
+              {tubes[id]?.result?.success && <span style={{color: id===activeTube?"#9cf":"#1a7a3c"}}>✓</span>}
+            </button>
+          ))}
+          {tubeIds.length < 4 && (
+            <button onClick={() => {
+              const nextId = `T${tubeIds.length + 1}`;
+              addTube(nextId);
+            }}
+              style={{padding:"2px 8px",borderRadius:10,border:"1px dashed var(--gray-300)",
+                      background:"transparent",cursor:"pointer",fontSize:".75rem",color:"var(--gray-500)"}}>
+              {tl('proj.add_tube')}
+            </button>
+          )}
+          {tubeIds.length > 1 && (
+            <button onClick={() => removeTube(activeTube)}
+              title={`Eliminar ${activeTube}`}
+              style={{padding:"2px 6px",borderRadius:10,border:"1px solid #fcc",
+                      background:"transparent",cursor:"pointer",fontSize:".75rem",color:"#c0392b"}}>
+              ✕
+            </button>
+          )}
+        </div>
+
+        <span className="proj-sep">·</span>
+        <span className="proj-name">{form.project_name || tl('app.unnamed')}</span>
+        {form.length_m && <>
+          <span className="proj-sep">·</span>
+          <span style={{color:'var(--gray-500)'}}>{form.length_m} m</span>
+        </>}
+        {result?.success && <>
+          <span className="proj-sep">·</span>
+          <span style={{color:'#1a7a3c',fontWeight:600}}>{tl('app.calc_ok')}</span>
+        </>}
+
+        <div className="proj-actions">
+          <button className="btn-xs" onClick={newProject}>{tl('proj.new')}</button>
+          <button className="btn-xs" onClick={openProject}>{tl('proj.open')}</button>
+          <button className="btn-xs btn-xs-primary" onClick={saveProject}>{tl('proj.save')}</button>
+        </div>
+      </div>
+
+      <div className="main-content">
+        <div className="stepper">
+          {localSteps.map(s => (
+            <button key={s.id}
+              className={`step-btn ${step === s.id ? 'active' : stepsDone.has(s.id) ? 'done' : ''}`}
+              onClick={() => setStep(s.id)}>
+              <span className="step-num">{s.id + 1}</span>
+              {s.label}
+            </button>
+          ))}
+        </div>
+
+        {error && <Alert type="danger">❌ {error}</Alert>}
+        {renderStep()}
+
+        <div className="btn-row">
+          {step > 0 && (
+            <button className="btn btn-outline" onClick={() => setStep(s => s - 1)}>
+              {tl('btn.prev')}
+            </button>
+          )}
+          {step < 3 && (
+            <button className="btn btn-primary" onClick={() => setStep(s => s + 1)}>
+              {tl('btn.next')}
+            </button>
+          )}
+          {step === 3 && !loading && !result && (
+            <button className="btn btn-success btn-lg" onClick={handleCalculate}>
+              {tl('btn.calc')}
+            </button>
+          )}
+          {step === 3 && !loading && result && (
+            <button className="btn btn-outline" onClick={handleCalculate}>
+              {tl('btn.recalc')}
+            </button>
+          )}
+          {result && step === 4 && (
+            <button className="btn btn-primary" onClick={() => setStep(5)}>
+              {tl('btn.ctrl')}
+            </button>
+          )}
+          {result && step === 5 && (
+            <button className="btn btn-primary" onClick={() => setStep(6)}>
+              {tl('btn.lum')}
+            </button>
+          )}
+          {result && step === 6 && (
+            <button className="btn btn-success" onClick={() => setStep(7)}>
+              {tl('btn.report')}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App />);
+</script>
+</body>
+</html>

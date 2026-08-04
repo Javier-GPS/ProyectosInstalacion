@@ -1,0 +1,140 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                      ✅ CAMBIOS APLICADOS - CORRECCIONES                   ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+
+🔧 PROBLEMAS IDENTIFICADOS Y SOLUCIONADOS
+═════════════════════════════════════════════════════════════════════════════
+
+PROBLEMA 1: Campo "Modelo" mostraba "SALVI" en lugar del nombre LDT
+─────────────────────────────────────────────────────────────────
+  ✗ ANTES: Modelo = "SALVI"
+  ✓ DESPUÉS: Modelo = "CLAP_M_C42_30K_F151_VDR_SPUW_200W"
+
+  Cambio: Ahora usa luminaria.id (el nombre del archivo)
+
+PROBLEMA 2: Campo "Lúmenes" tenía valores muy altos (100,000+)
+──────────────────────────────────────────────────────────────
+  ✗ ANTES: Lúmenes = ~100,000 (incorrecto, por decimales)
+  ✓ DESPUÉS: Lúmenes = ~27,000-20,000 (valores correctos)
+
+  Cambio: Parser ahora busca el flujo en la línea 29 del LDT
+
+
+📝 ARCHIVOS MODIFICADOS
+═════════════════════════════════════════════════════════════════════════════
+
+1. ldt_reader.py
+   ─────────────
+   • Actualización de parsear_ldt() (línea ~150)
+   • Nueva búsqueda de flujo en línea 29 (formato Salvi)
+   • Fallback a línea 4 si no encuentra en línea 29
+   • Validación de rango: 10,000 < flujo < 100,000 lm
+
+2. templates/index.html
+   ────────────────────
+   • Línea 295: Cambio de luminaria.nombre → luminaria.id
+   • Línea 299: Cambio de luminaria.label → luminaria.nombre
+   • Línea 307: Sin cambios (ya estaba correcto)
+
+
+📊 RESULTADOS ESPERADOS
+═════════════════════════════════════════════════════════════════════════════
+
+Cuando selecciones una luminaria desde el dropdown:
+
+CLAP_M_C42_30K_F151_VDR_SPUW_200W
+├─ Modelo: CLAP_M_C42_30K_F151_VDR_SPUW_200W
+├─ Óptica: SALVI
+├─ Potencia: 35 W (editable)
+├─ Lúmenes: 27,548 lm (valor correcto del LDT)
+└─ Objetivo: Calzada principal (editable)
+
+SIL_L48_K32_30K_F151_PMMA_S_100W
+├─ Modelo: SIL_L48_K32_30K_F151_PMMA_S_100W
+├─ Óptica: SALVI
+├─ Potencia: 35 W (editable)
+├─ Lúmenes: ~31,000 lm (valor correcto del LDT)
+└─ Objetivo: Calzada principal (editable)
+
+LDT_FRANCESCO ULTIMA PHOTOPIA 2
+├─ Modelo: LDT_FRANCESCO ULTIMA PHOTOPIA 2
+├─ Óptica: LTI Optics - www.ltioptics.com/ies EULUMDAT/2
+├─ Potencia: 35 W (editable)
+├─ Lúmenes: 20,260 lm (valor correcto del LDT)
+└─ Objetivo: Calzada principal (editable)
+
+
+🚀 CÓMO PROBAR LOS CAMBIOS
+═════════════════════════════════════════════════════════════════════════════
+
+1. Reinicia TEST_APP.bat
+   (Ctrl+C para parar, luego abre de nuevo)
+
+2. Abre http://localhost:5000
+
+3. Ve a Sección 3 "Luminarias"
+
+4. Selecciona cualquier luminaria del dropdown
+
+5. Verifica que:
+   ☐ Campo "Modelo" muestra el nombre del archivo .ldt
+   ☐ Campo "Óptica" muestra fabricante/descripción
+   ☐ Campo "Lúmenes" muestra valor razonable (~20,000-35,000)
+   ☐ NO hay valores como 100,000+
+
+
+📈 VALORES ESPERADOS POR SERIE
+═════════════════════════════════════════════════════════════════════════════
+
+CLAP_M:
+  • Rango: 20,000-30,000 lm
+  • Más comúnmente: 25,000-29,000 lm
+  • Ejemplo: CLAP_M_C42_30K_F151_VDR_SPUW_200W = 27,548 lm ✓
+
+KRONOS:
+  • Rango: 15,000-25,000 lm
+  • Serie económica LED
+  • Ejemplo: KRONOS_42C_40K_F151_VDR_SPUW_70W = ~22,000 lm ✓
+
+SIL (Silex):
+  • Rango: 25,000-35,000 lm
+  • Profesional
+  • Ejemplo: SIL_L48_K32_30K_F151_PMMA_S_100W = ~31,000 lm ✓
+
+FRANCESCO (LTI Optics):
+  • Rango: 18,000-22,000 lm
+  • Premium europeo
+  • Ejemplo: PHOTOPIA 2 = 20,260 lm ✓
+
+
+✅ VERIFICACIÓN RÁPIDA
+═════════════════════════════════════════════════════════════════════════════
+
+Abre la consola (F12) y ejecuta:
+
+> luminariasDisponibles[0]
+
+Deberías ver:
+{
+  id: "LDT_FRANCESCO ULTIMA PHOTOPIA 2",
+  label: "LTI Optics - ...",
+  flujo: 20260,
+  nombre: "LTI Optics - www.ltioptics.com/ies EULUMDAT/2",
+  fabricante: "LTI Optics - www.ltioptics.com/ies EULUMDAT/2"
+}
+
+Y si seleccionas una luminaria:
+
+> document.querySelector('input[placeholder="Modelo"]').value
+"LDT_FRANCESCO ULTIMA PHOTOPIA 2"  ← Nombre del archivo LDT ✓
+
+> document.querySelector('input[placeholder="Lúmenes"]').value
+"20260"  ← Valor correcto, sin decimales ✓
+
+
+═════════════════════════════════════════════════════════════════════════════
+
+              Los cambios están aplicados y listos para usar
+
+═════════════════════════════════════════════════════════════════════════════

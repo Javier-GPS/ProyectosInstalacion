@@ -1,0 +1,206 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                    ✅ GRÁFICAS DE ISOCURVAS IMPLEMENTADAS                 ║
+║                    6 isolíneas + Escala de colores                        ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+
+📊 QUÉ SE AGREGÓ
+═════════════════════════════════════════════════════════════════════════════
+
+MÓDULO visualization.py:
+   ✓ Clase VisualizacionFotometrica
+   ✓ Método generar_malla_isocurvas()
+     - Crea matriz de datos para 50x100 puntos
+     - Simula distribución gaussiana desde 2 luminarias
+     - Aplica factor de uniformidad
+
+   ✓ Método crear_grafico_iluminancia()
+     - Contornos negros con valores (isolíneas)
+     - Relleno con mapa de colores personalizado
+     - Colorbar con escala numérica
+     - Títulos con Em y Uo
+
+   ✓ Método crear_grafico_luminancia()
+     - Contornos negros con valores
+     - Relleno con escala de colores
+     - Colorbar con escala cd/m²
+     - Títulos con L, Uo y Ul
+
+   ✓ Función generar_graficos_isocurvas()
+     - Convierte a Base64 para HTML
+     - Convierte a BytesIO para PDF
+     - Maneja errores gracefully
+
+
+🎨 PALETA DE COLORES
+═════════════════════════════════════════════════════════════════════════════
+
+6 colores en degradado:
+   #0040FF  → Azul oscuro (valores bajos)
+   #0080FF  → Azul claro
+   #00FF00  → Verde
+   #FFFF00  → Amarillo
+   #FF8000  → Naranja
+   #FF0000  → Rojo (valores altos)
+
+Se interpola entre 20 niveles para suavidad
+
+
+📍 UBICACIÓN DE GRÁFICAS
+═════════════════════════════════════════════════════════════════════════════
+
+EN PANTALLA (HTML):
+   Sección 6 "Resultados del Cálculo Fotométrico"
+   ├── Datos numéricos (Em, L, Uo, Ul, TI, SR, etc.)
+   ├── Gráfico: Distribución de Iluminancia
+   │   └── Imagen PNG embebida (Base64)
+   └── Gráfico: Distribución de Luminancia
+       └── Imagen PNG embebida (Base64)
+
+EN PDF:
+   Página 1: Datos del proyecto + Geometría
+   Página 2: Luminarias + Energía
+   Página 3: [NUEVA] GRÁFICOS DE ISOCURVAS
+   ├── Gráfico de Iluminancia (6x4")
+   └── Gráfico de Luminancia (6x4")
+
+
+🔄 FLUJO DE DATOS
+═════════════════════════════════════════════════════════════════════════════
+
+[Usuario hace clic "CALCULAR"]
+   ↓
+[JavaScript: calcularFotometria()]
+   ↓
+[POST /api/calcular con datos]
+   ↓
+[Python: calcular_fotometria()] → resultados cálculos
+   ↓
+[Python: generar_graficos_isocurvas()]
+   ├── crear_grafico_iluminancia()
+   │   ├── generar_malla_isocurvas(em_total)
+   │   ├── plt.contour() + plt.contourf()
+   │   ├── plt.colorbar()
+   │   └── BytesIO → Base64
+   └── crear_grafico_luminancia()
+       ├── generar_malla_isocurvas(luminancia_total)
+       ├── plt.contour() + plt.contourf()
+       ├── plt.colorbar()
+       └── BytesIO → Base64
+   ↓
+[JSON response con base64]
+   ↓
+[JavaScript: mostrarResultados()]
+   ├── Muestra números
+   ├── Carga imagen iluminancia
+   └── Carga imagen luminancia
+   ↓
+[Usuario ve gráficas en pantalla] ✅
+
+
+[Usuario hace clic "GENERAR INFORMES"]
+   ↓
+[POST /api/submit-form con datos]
+   ↓
+[Python: generar_graficos_isocurvas()]
+   → Devuelve BytesIO (no Base64)
+   ↓
+[Python: crear_pdf()]
+   ├── Agrega datos del proyecto
+   ├── Agrega tabla de luminarias
+   ├── Agrega cálculos
+   ├── [NUEVA] Image() para gráfico iluminancia
+   ├── [NUEVA] Image() para gráfico luminancia
+   └── Genera PDF
+   ↓
+[PDF descargado] ✅
+
+
+🔧 CAMBIOS EN ARCHIVOS
+═════════════════════════════════════════════════════════════════════════════
+
+visualization.py [NUEVO]:
+   • 180 líneas
+   • Importa: matplotlib, numpy, base64
+   • Función principal: generar_graficos_isocurvas()
+
+test_app.py [MODIFICADO]:
+   • +imports matplotlib, visualization
+   • /api/calcular: +graficos en response
+   • crear_pdf: +parámetro graficos_bytes
+   • /api/submit-form: +generar_graficos_isocurvas()
+
+templates/index.html [MODIFICADO]:
+   • Sección 6: +divs para gráficas
+   • mostrarResultados(): +código para mostrar imágenes
+   • calcularFotometria(): +pasar graficos a mostrarResultados()
+
+INSTALL_MATPLOTLIB.bat [NUEVO]:
+   • Script para instalar matplotlib + numpy
+
+
+⚠️ DEPENDENCIAS NUEVAS
+═════════════════════════════════════════════════════════════════════════════
+
+matplotlib    → Gráficos de contorno/relleno
+numpy         → Operaciones matriciales
+scipy (opcional) → Para interpolación más suave
+
+Se instalan con: INSTALL_MATPLOTLIB.bat
+
+
+📏 DETALLES TÉCNICOS
+═════════════════════════════════════════════════════════════════════════════
+
+Malla de datos:
+   • 50 puntos en X (ancho calzada)
+   • 100 puntos en Y (longitud)
+   • 5000 puntos total
+
+Isolíneas:
+   • 6 isolíneas fijas
+   • Relleno con 20 niveles interpolados
+   • Etiquetas con valores en contornos
+
+Tamaño en pantalla:
+   • max-width: 100% (responsive)
+   • height: auto (mantiene aspecto)
+
+Tamaño en PDF:
+   • 6 pulgadas ancho × 4 pulgadas alto
+   • DPI: 100 (balance calidad/tamaño)
+
+Tiempo de generación:
+   • ~0.5-1 segundo por gráfica
+   • ~1-2 segundos total con 2 gráficas
+
+
+✅ VERIFICACIÓN
+═════════════════════════════════════════════════════════════════════════════
+
+Después de instalar, para verificar:
+
+1. http://localhost:5000
+2. Llena formulario mínimo (nombre, cliente, 1 luminaria)
+3. Haz clic "CALCULAR"
+4. ¿Aparecen gráficas?
+   ✓ SÍ → Sistema funcionando correctamente
+   ✗ NO → Revisa consola (F12) y terminal Flask
+
+5. Haz clic "GENERAR INFORMES"
+6. ¿PDF con gráficas?
+   ✓ SÍ → Todo perfecto
+   ✗ NO → Revisa logs en TEST_APP.bat
+
+
+═════════════════════════════════════════════════════════════════════════════
+
+Sistema LISTO para usar 🚀
+
+Pasos:
+1. INSTALL_REPORTLAB.bat
+2. INSTALL_MATPLOTLIB.bat
+3. TEST_APP.bat
+4. http://localhost:5000
+
+═════════════════════════════════════════════════════════════════════════════

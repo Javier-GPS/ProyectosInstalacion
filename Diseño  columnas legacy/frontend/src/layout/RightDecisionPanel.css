@@ -1,0 +1,156 @@
+.decision-panel {
+  width: 300px;
+  background: var(--salvi-surface);
+  border-left: 1px solid var(--salvi-line);
+  overflow-y: auto;
+  flex-shrink: 0;
+  transition: width 0.15s ease;
+}
+
+.decision-panel--collapsed {
+  width: 44px;
+}
+
+.decision-panel-toggle {
+  width: 100%;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--salvi-line);
+  color: var(--salvi-grey);
+  text-align: right;
+  padding: 10px 16px;
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.decision-panel-body {
+  padding: 16px;
+}
+
+.decision-panel-empty {
+  color: var(--salvi-grey);
+  font-size: 12.5px;
+  line-height: 1.6;
+  background: var(--salvi-surface-white);
+  border: 1px dashed var(--salvi-line);
+  border-radius: var(--radius-md);
+  padding: 16px;
+}
+
+.decision-panel-section-title {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 700;
+  color: var(--salvi-grey);
+  margin: 18px 0 8px;
+}
+
+.decision-panel-section-title:first-child {
+  margin-top: 0;
+}
+
+/* Estado general: texto + icono + color, nunca solo un bloque de color */
+.decision-compliance {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  background: var(--salvi-surface-white);
+  border: 1px solid var(--salvi-line);
+  border-radius: var(--radius-md);
+  padding: 12px;
+}
+
+.decision-compliance-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+  border: 1.5px solid currentColor;
+}
+
+.decision-compliance-icon--ok {
+  color: var(--state-success);
+}
+
+.decision-compliance-icon--warning {
+  color: var(--state-warning);
+}
+
+.decision-compliance-icon--danger {
+  color: var(--state-danger);
+}
+
+.decision-compliance-icon--pending {
+  color: var(--salvi-grey);
+}
+
+.decision-compliance-label {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--salvi-black);
+}
+
+.decision-compliance-title {
+  font-size: 12px;
+  color: var(--salvi-grey);
+  margin-top: 2px;
+}
+
+.decision-standard {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12.5px;
+  color: var(--salvi-black);
+  background: var(--salvi-surface-white);
+  border: 1px solid var(--salvi-line);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  margin-top: 10px;
+}
+
+.decision-standard-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--salvi-grey);
+  font-weight: 700;
+}
+
+.decision-kpi-stack {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.decision-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.decision-action {
+  background: var(--salvi-surface-white);
+  border: 1px solid var(--salvi-line);
+  border-left: 3px solid var(--state-warning);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 12.5px;
+}
+
+.decision-action-message {
+  color: var(--salvi-black);
+}
+
+.decision-action-recommendation {
+  color: var(--salvi-grey);
+  margin-top: 4px;
+  font-size: 12px;
+}

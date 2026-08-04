@@ -1,0 +1,159 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                    ✅ PROBLEMA DEL DROPDOWN RESUELTO                        ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+
+🔧 ¿QUÉ ERA EL PROBLEMA?
+═════════════════════════════════════════════════════════════════════════════
+
+El archivo HTML anterior (index.html) estaba TRUNCADO:
+  • Finalizaba abruptamente en medio de una función
+  • No tenía </script> de cierre
+  • No tenía </body> ni </html>
+  • La función cargarLuminarias() nunca se ejecutaba
+
+Resultado: El dropdown nunca se llenaba con las 27 luminarias.
+
+
+✅ ¿QUÉ SE HIZO?
+═════════════════════════════════════════════════════════════════════════════
+
+1. Se creó un HTML NUEVO y COMPLETO (index_nuevo.html)
+   • 355 líneas bien formadas
+   • Cierre correcto de todas las etiquetas
+   • Función cargarLuminarias() se ejecuta automáticamente
+
+2. Se reemplazó el archivo anterior
+   • cp index_nuevo.html index.html
+
+3. Se verificó que esté correcto
+   • ✓ HTML completo
+   • ✓ Selector existe
+   • ✓ Función cargarLuminarias definida
+   • ✓ DOMContentLoaded vinculado
+
+
+🚀 AHORA PRUEBA ESTO
+═════════════════════════════════════════════════════════════════════════════
+
+1. CIERRA el navegador completamente
+   (No es suficiente actualizar la página)
+
+2. CIERRA TEST_APP.bat
+   (Presiona Ctrl+C en la ventana)
+
+3. ABRE TEST_APP.bat DE NUEVO
+   (Espera a que inicie: "listening on http://127.0.0.1:5000")
+
+4. ABRE http://localhost:5000 EN TU NAVEGADOR
+   (Abre una nueva pestaña)
+
+5. VE A SECCIÓN 3 "LUMINARIAS"
+
+6. MIRA EL DROPDOWN
+   ¿Ves "-- Seleccionar luminaria --" con una lista?
+
+7. PRESIONA F12 (Consola)
+   ¿Ves mensajes como:
+   • "Página cargada"
+   • "📚 Cargando luminarias..."
+   • "Response: 200"
+   • "✓ 27 luminarias cargadas"
+   ?
+
+8. SELECCIONA UNA LUMINARIA
+   ¿Se crea una tarjeta azul con los datos pre-llenados?
+
+
+📊 WHAT'S NEW EN EL HTML
+═════════════════════════════════════════════════════════════════════════════
+
+Cambios principales:
+
+1. SELECTOR DE LUMINARIAS (línea ~105)
+   <select id="ldt-selector">
+     <option>-- Cargando luminarias... --</option>
+   </select>
+
+2. FUNCIÓN CARGARLUMINARIAS (línea ~169)
+   function cargarLuminarias() {
+     fetch('/api/luminarias')
+     .then(data => {
+       // Llena selector con 27 opciones
+     })
+   }
+
+3. EVENTO DOMCONTENTLOADED (línea ~245)
+   document.addEventListener('DOMContentLoaded', function() {
+     cargarLuminarias();  // ← ESTA LÍNEA FALTABA
+   });
+
+4. EVENTO DE CAMBIO EN SELECTOR (línea ~249)
+   selector.addEventListener('change', seleccionarLuminaria);
+
+
+✅ CHECKLIST DE FUNCIONAMIENTO
+═════════════════════════════════════════════════════════════════════════════
+
+Al cargar http://localhost:5000:
+  ☐ Página carga sin errores
+  ☐ Consola (F12) muestra "Página cargada"
+  ☐ Consola muestra "📚 Cargando luminarias..."
+  ☐ Dropdown pasa de "Cargando..." a "-- Seleccionar luminaria --"
+  ☐ Dropdown tiene 27 opciones visibles
+
+Al seleccionar una luminaria:
+  ☐ Aparece una tarjeta azul
+  ☐ Tarjeta tiene 6 campos (Modelo, Óptica, Potencia, Lúmenes, Objetivo, Quitar)
+  ☐ Campos están pre-rellenados con datos del LDT
+  ☐ Botón "Quitar" elimina la tarjeta
+
+Error en consola:
+  ☐ NO hay errores rojos
+  ☐ NO hay "404 Not Found" para /api/luminarias
+
+
+🔍 DIAGNÓSTICO SI AÚN NO FUNCIONA
+═════════════════════════════════════════════════════════════════════════════
+
+Paso 1: Verifica que el servidor está funcionando
+  → Abre http://localhost:5000/api/debug/ldts
+  → ¿Ves JSON con ldts_cache_loaded: true?
+  → ¿Ves luminarias: [...]?
+
+Paso 2: Verifica que el endpoint /api/luminarias funciona
+  → Abre http://localhost:5000/api/luminarias
+  → ¿Ves JSON con "success": true y una lista de 27 luminarias?
+
+Paso 3: Abre consola (F12) y busca errores
+  → ¿Hay errores rojos?
+  → Copia el error exacto
+
+Paso 4: Verifica que el HTML tiene el selector
+  → F12 → Elements
+  → Busca: <select id="ldt-selector">
+  → ¿Lo encuentras?
+
+Paso 5: Verifica que la función existe
+  → F12 → Console
+  → Escribe: cargarLuminarias
+  → ¿Muestra: [Function: cargarLuminarias]?
+
+
+📁 ARCHIVOS MODIFICADOS
+═════════════════════════════════════════════════════════════════════════════
+
+templates/index.html
+  • ANTES: 41,417 bytes (truncado)
+  • DESPUÉS: 13,494 bytes (completo y bien formado)
+  • Cambio: Se reemplazó con versión nueva
+
+
+═════════════════════════════════════════════════════════════════════════════
+
+                       ¡PRUEBA AHORA! 🚀
+
+    Reinicia TEST_APP.bat y abre http://localhost:5000
+    El dropdown con 27 luminarias ya debería estar visible
+
+═════════════════════════════════════════════════════════════════════════════

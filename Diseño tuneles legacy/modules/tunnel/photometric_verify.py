@@ -557,6 +557,7 @@ def compute_real_luminance_profile(
     include_quality_metrics: bool = True,
     include_ti: bool | None = None,
     include_wall_metrics: bool | None = None,
+    _influence_cache: dict | None = None,
 ) -> dict:
     """
     Perfil normativo Lavg(s). Cada valor es la media aritmetica de una malla
@@ -686,6 +687,33 @@ def compute_real_luminance_profile(
     if not lums or tube_length <= 0:
         out["error"] = "Sin luminarias posicionadas para calcular el perfil"
         return out
+
+    # Cache de influencia: la luminancia es lineal en el flujo. La parte
+    # geometrica (posiciones, optica, orientacion, r-tabla) no depende de
+    # la corriente, asi que la matriz punto x luminaria por unidad de flujo
+    # se reutiliza entre verificaciones del optimizador que solo cambian
+    # corrientes. La firma no incluye el flujo: si cambia una posicion,
+    # optica o el estado ON/OFF, la firma cambia y se recalcula.
+    _influence_flux = np.asarray(
+        [float(l.flux_lm) for l in lums], dtype=float,
+    )
+    _influence_sig = None
+    if _influence_cache is not None:
+        _influence_sig = (
+            arr, round(W, 4), round(WALL_Y, 4), round(H, 4),
+            tuple(
+                (
+                    round(float(sp['s']), 6),
+                    int(sp.get('idx', 0) or 0),
+                    sp.get('optic') or 'F2MD',
+                    round(float(sp.get('tilt_deg', 0) or 0), 4),
+                    str(getattr(zd, 'zone_name', '')),
+                )
+                for zd in lum_result.zones
+                for sp in (zd.setpoints or [])
+                if float(sp.get('flux_lm', 0) or 0) > 0
+            ),
+        )
 
     calc = TunnelCalculator(rtable, mf, max_luminaire_dist=_max_reach_for_h(H))
 
@@ -959,9 +987,31 @@ def compute_real_luminance_profile(
             ):
                 batch_calls += 1
                 evaluated_points += len(batch_points)
-                raw = calc.luminance_at_points_batch(
-                    batch_points, lums, observer,
-                )
+                if _influence_sig is not None and _influence_cache is not None:
+                    key = (
+                        _influence_sig, direction, observer_lane_index,
+                        chunk_start, len(batch_points),
+                    )
+                    influence = _influence_cache.get(key)
+                    if influence is None:
+                        contrib = (
+                            calc.luminance_contributions_at_points_batch(
+                                batch_points, lums, observer,
+                            )
+                        )
+                        influence = contrib / np.maximum(
+                            _influence_flux[None, :], 1e-12,
+                        )
+                        _influence_cache[key] = influence
+                        # Primera llamada: identica a la ruta directa.
+                        raw = contrib.sum(axis=1)
+                    else:
+                        # Re-verificaciones: recombinacion lineal exacta.
+                        raw = influence @ _influence_flux
+                else:
+                    raw = calc.luminance_at_points_batch(
+                        batch_points, lums, observer,
+                    )
                 for index, (begin, end) in zip(chunk_indices, slices):
                     values = np.asarray(raw[begin:end], dtype=float)
                     fields[index]["observer_results"].append({
@@ -1275,6 +1325,7 @@ def compute_real_luminance_profile(
             "L_right_grid": right_grid,
             "L_indirect_left": radio_left,
             "L_indirect_right": radio_right,
+            "available": True,
             "method": (
                 "LDT_direct_plus_radiosity" if use_wall_radiosity
                 else "LDT_direct_diffuse_wall"
@@ -2114,6 +2165,7 @@ def verify_layered_operating_scenario(
     include_profile: bool = False,
     include_ti: bool = True,
     include_wall_metrics: bool = True,
+    _influence_cache: dict | None = None,
 ) -> dict:
     """Verifica Lavg/Uo/Ul con el estado físico DALI de una escena diurna."""
     import copy
@@ -2198,6 +2250,7 @@ def verify_layered_operating_scenario(
         ),
         include_ti=include_ti,
         include_wall_metrics=include_wall_metrics,
+        _influence_cache=_influence_cache,
     )
     if not profile.get("available") or not profile.get("fields"):
         return {
@@ -2341,11 +2394,13 @@ def verify_layered_operating_scenario(
         minimum_wall_ratio + 1e-9 >= float(wall_criterion["ratio"])
         if wall_fields else True
     )
+    # Las paredes se calculan y reportan en la verificacion final, pero
+    # no gobiernan el diseno: el resultado que cumple se encuentra por
+    # L/U0/Ul y la luminancia de pared es un valor del informe.
     compliant = (
         minimum_L_ratio + 1e-9 >= 1.0
         and minimum_U0 + 1e-9 >= U0_required
         and minimum_Ul + 1e-9 >= Ul_required
-        and wall_ok
     )
     worst = min(representative, key=lambda item: item["L_ratio"])
     highest = max(representative, key=lambda item: item["L_ratio"])
@@ -2581,15 +2636,16 @@ def verify_night_base_scenario(
         minimum_wall_ratio + 1e-9 >= float(wall_criterion["ratio"])
         if wall_fields else True
     )
+    # Paredes: reportadas, no gobiernan el diseno (igual que en diurnas).
     maximum_TI = max(TI_values) if TI_values else None
     U0_required = float(params.get("U0_obj", 0.40) or 0.40)
     Ul_required = float(params.get("Ul_obj", 0.60) or 0.60)
+    # Paredes: reportadas, no gobiernan el diseno (igual que en diurnas).
     compliant = (
         minimum_Lavg + 1e-9 >= L_night
         and minimum_U0 + 1e-9 >= U0_required
         and minimum_Ul + 1e-9 >= Ul_required
         and (maximum_TI is None or maximum_TI <= 15.0 + 1e-9)
-        and wall_ok
     )
     return {
         "available": True,

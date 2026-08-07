@@ -172,7 +172,7 @@ def build_profile(
             else:
                 L = _transition_curve_cie(
                     s_current, tr.s_start, tr.s_end, Lth, Lin,
-                    speed_kmh * tr.transition_scale,
+                    speed_kmh * float(getattr(tr, "transition_scale", 1.0) or 1.0),
                 )
             zone = ZoneType.TRANSITION
 
@@ -200,7 +200,7 @@ def build_profile(
                 s_mirror = tr_b.s_end - (s_current - tr_b.s_start)
                 L = _transition_curve_cie(
                     s_mirror, tr_b.s_start, tr_b.s_end, _Lth_b, Lin,
-                    speed_kmh * tr_b.transition_scale,
+                    speed_kmh * float(getattr(tr_b, "transition_scale", 1.0) or 1.0),
                 )
             zone = ZoneType.TRANSITION
 

@@ -424,6 +424,8 @@ def optimize_interior(
     I_min_pct=0.30, tilt_grid=None, d_min=2.5, d_max_hard=25.0,
     wall_offset=_WALL_Y_DEFAULT,
     optimization_goal="min_luminaires", spacing_quantum_m=0.5,
+    speed_kmh=None, flicker_min_hz=None, flicker_max_hz=None,
+    _no_flicker=False,
 ) -> dict:
     """
     Optimizador zona interior.
@@ -452,7 +454,12 @@ def optimize_interior(
     candidate_trace = []
     candidates_by_spacing = {}
 
+    _apply_flicker = not _no_flicker and bool(speed_kmh)
     def _candidate(optic, tilt, d):
+        if _apply_flicker and _flicker_forbidden(
+            d, speed_kmh, flicker_min_hz, flicker_max_hz,
+        ):
+            return None
         U0, Ul = eval_quality(
             optic, d, h, w, tilt, rtable, mf, arrangement,
             wall_offset=wall_offset,
@@ -632,6 +639,7 @@ def select_geometry_for_spacing(
     rtable="R2", mf=0.70, arrangement="central_single",
     I_min_pct=0.30, tilt_grid=None, wall_offset=_WALL_Y_DEFAULT,
     direction=1.0,
+    speed_kmh=None, flicker_min_hz=None, flicker_max_hz=None,
 ) -> dict | None:
     """Selecciona optica y tilt antes de asignar modelo/driver.
 
@@ -641,6 +649,10 @@ def select_geometry_for_spacing(
     """
     if tilt_grid is None:
         tilt_grid = [0.0, 5.0, 10.0, 15.0, 20.0]
+    if speed_kmh and _flicker_forbidden(
+        d, speed_kmh, flicker_min_hz, flicker_max_hz,
+    ):
+        return None
 
     lm_max, _ = flux_power_at_current(
         CHAIN_ORDER[-1], cct, I_max_mA, I_min_pct,
@@ -755,11 +767,24 @@ def optimize_single_luminaire(
 
 # ── Fase 2b: busqueda de d factible (quality + flux) por zona ────────────────
 
+def _flicker_forbidden(d, speed_kmh, f_min, f_max):
+    """True si la interdistancia d produce parpadeo en la banda critica
+    (CIE 88: f = v/d, critica aprox. 2.5-15 Hz)."""
+    if not speed_kmh or float(speed_kmh) <= 0 or not d or d <= 0:
+        return False
+    f = (float(speed_kmh) / 3.6) / float(d)
+    lo = max(0.0, float(f_min or 0.0))
+    hi = max(lo, float(f_max or 0.0))
+    return lo <= f <= hi
+
+
 def find_dmax_for_zone(
     L_req, h, w, U0_obj, Ul_obj, I_max_mA, cct,
     rtable="R2", mf=0.70, arrangement="central_single",
     I_min_pct=0.30, tilt_grid=None, d_min=2.5, d_max_hard=25.0,
     wall_offset=_WALL_Y_DEFAULT, tandem=False, direction=1.0,
+    speed_kmh=None, flicker_min_hz=None, flicker_max_hz=None,
+    _no_flicker=False,
 ) -> dict:
     """
     Busca, sobre la malla (optica x tilt), el mayor d tal que se puedan
@@ -806,10 +831,15 @@ def find_dmax_for_zone(
     # Igual que optimize_interior: probar las opticas por orden de eficiencia,
     # pero elegir globalmente la que permita mayor interdistancia. El orden
     # F151 -> F2MD -> F2M2 solo desempata soluciones con la misma d.
+    _apply_flicker = not _no_flicker and bool(speed_kmh)
     for optic in OPTICS:
         optic_best = None
         for tilt in tilt_grid:
             def _combined_ok(d, _optic=optic, _tilt=tilt):
+                if _apply_flicker and _flicker_forbidden(
+                    d, speed_kmh, flicker_min_hz, flicker_max_hz,
+                ):
+                    return False
                 U0, Ul = eval_quality(_optic, d, h, w, _tilt, rtable, mf, arrangement,
                                       wall_offset=wall_offset, direction=direction)
                 if U0 < U0_obj or Ul < Ul_obj:
@@ -830,6 +860,19 @@ def find_dmax_for_zone(
             best = optic_best
 
     if best is None:
+        if _apply_flicker:
+            fallback = find_dmax_for_zone(
+                L_req, h, w, U0_obj, Ul_obj, I_max_mA, cct,
+                rtable=rtable, mf=mf, arrangement=arrangement,
+                I_min_pct=I_min_pct, tilt_grid=tilt_grid, d_min=d_min,
+                d_max_hard=d_max_hard, wall_offset=wall_offset,
+                tandem=tandem, direction=direction,
+                speed_kmh=speed_kmh, flicker_min_hz=flicker_min_hz,
+                flicker_max_hz=flicker_max_hz, _no_flicker=True,
+            )
+            if fallback.get('feasible'):
+                fallback['flicker_unavoidable'] = True
+            return fallback
         return {
             "feasible": False, "d": round(d_min, 2), "optic": None, "tilt_deg": None,
             "model": None, "mA": 0.0, "W": 0.0, "lm": 0.0,

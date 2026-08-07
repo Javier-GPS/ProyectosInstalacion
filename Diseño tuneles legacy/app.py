@@ -941,6 +941,91 @@ def tunnel_ai_assistant():
         }), 502
 
 
+@app.route('/api/tunnel/recalc-scene', methods=['POST'])
+def tunnel_recalc_scene():
+    """Recalcula la verificacion CIE 140 de una sola escena con las
+    consignas actuales (incluidas las manuales) sin re-optimizar
+    corrientes. Es el flujo «edito mA en la lista y recalculo solo
+    Crepuscular»: los datos de corriente del usuario no se mueven.
+    """
+    try:
+        from modules.tunnel.luminaires import (
+            tunnel_luminaire_result_from_dict,
+            apply_scene_current_overrides,
+        )
+        from modules.tunnel.photometric_verify import (
+            verify_layered_operating_scenario,
+            verify_night_base_scenario,
+        )
+        data = request.get_json(silent=True) or {}
+        scene_key = str(data.get('scene', 'dusk') or 'dusk').lower()
+        lum_data = data.get('luminaires_result')
+        if not isinstance(lum_data, dict) or not lum_data.get('zones'):
+            return jsonify({
+                'success': False,
+                'error': 'Falta el resultado de luminarias calculado.',
+            }), 400
+
+        cie88 = run_tunnel_calculation(data)
+        if not cie88.get('success'):
+            return jsonify(cie88), 422
+
+        lum_result = tunnel_luminaire_result_from_dict(lum_data)
+        params = dict(data.get('luminaire', {}) or {})
+        params['speed_kmh'] = float(data.get('speed_kmh', 80) or 80)
+        params['Lth'] = float(cie88['summary'].get('Lth', 0) or 0)
+        params['Lin'] = float(cie88['summary'].get('Lin', 0) or 0)
+        params['L_night'] = float(
+            cie88['summary'].get('L_night', 1.0) or 1.0,
+        )
+        params['Lth_b'] = float(
+            cie88.get('lth', {}).get('Lth_b', params['Lth'])
+            or params['Lth']
+        )
+        params['road_width_m'] = float(
+            lum_data.get('road_width_m', data.get('road_width_m', 7.0))
+            or 7.0
+        )
+        params['calc_mode'] = (
+            'radiosity' if data.get('calc_mode', 'direct') == 'radiosity'
+            else 'direct'
+        )
+        params['rho_wall'] = float(data.get('rho_wall', 0.40) or 0.40)
+        params['rho_ceiling'] = float(
+            data.get('rho_ceiling', 0.25) or 0.25,
+        )
+
+        warnings = apply_scene_current_overrides(
+            lum_result,
+            data.get('scene_current_overrides', {}) or {},
+            I_min_pct=params.get('I_min_pct', 0.30),
+        )
+        if scene_key.startswith('night_'):
+            verification = verify_night_base_scenario(
+                lum_result, params, scene_key=scene_key,
+            )
+        else:
+            verification = verify_layered_operating_scenario(
+                lum_result, params, scene_key,
+                include_ti=False,
+                include_profile=True,
+            )
+        return jsonify({
+            'success': True,
+            'scene': scene_key,
+            'verification': verification,
+            'warnings': warnings,
+        })
+    except Exception as exc:
+        import traceback
+        app.logger.exception('Error recalculando escena: %s', exc)
+        return jsonify({
+            'success': False,
+            'error': str(exc),
+            'traceback': traceback.format_exc(),
+        }), 500
+
+
 @app.route('/api/tunnel/luminaires', methods=['POST'])
 def tunnel_luminaires():
     """

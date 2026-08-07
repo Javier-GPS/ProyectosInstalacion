@@ -26,6 +26,10 @@ DEFAULT_COLORS = [
 _AI_KEY   = os.environ.get("ANTHROPIC_API_KEY", "")
 _AI_MODEL = os.environ.get("SALVI_AI_MODEL", "claude-haiku-4-5-20251001")
 
+# Local legacy deployments can run without the login screen. Set this to 0 in
+# .env to restore the original user/password authentication.
+_AUTH_DISABLED = os.environ.get("SALVI_AUTH_DISABLED", "1").strip().lower() not in ("0", "false", "no", "off")
+
 # ── Auth secret ────────────────────────────────────────────────────────────────
 _AUTH_SECRET = os.environ.get("AUTH_SECRET", "")
 if not _AUTH_SECRET:
@@ -173,6 +177,7 @@ def _jwt_verify(token: str) -> dict:
 def init_db():
     """Create tables if they don't exist. Apply additive migrations. Non-fatal."""
     try:
+        os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
         with db() as conn:
             for sql in _SCHEMA_SQL:
                 conn.execute(sql)
@@ -772,7 +777,10 @@ class Handler(BaseHTTPRequestHandler):
         for pat, method in table:
             mo = pat.match(p)
             if mo:
-                if p not in _PUBLIC:
+                if _AUTH_DISABLED:
+                    # Preserve admin-only features for this single-user local mode.
+                    self._current_user = {"sub": "local", "usr": "local", "role": "admin"}
+                elif p not in _PUBLIC:
                     auth = self.headers.get("Authorization", "")
                     if not auth.startswith("Bearer "):
                         with db() as _c:
@@ -1328,6 +1336,9 @@ class Handler(BaseHTTPRequestHandler):
     def h_auth_me(self, qs, m):
         u = self._current_user
         if not u: self._send(401, {"error": "unauthenticated"}); return
+        if _AUTH_DISABLED:
+            self._send(200, {"id": "local", "username": "local", "email": "", "role": "admin", "local_access": True})
+            return
         with db() as conn:
             row = conn.execute(
                 "SELECT id,username,email,role,last_login FROM users WHERE id=? AND active=1", (u["sub"],)

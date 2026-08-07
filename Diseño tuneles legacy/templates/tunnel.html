@@ -851,6 +851,62 @@ const STEP_IDS = [0, 1, 2, 3, 4, 5, 6, 7];
 /** Defensive guard: siempre devuelve array, nunca explota con objeto */
 const _asArr = v => Array.isArray(v) ? v : [];
 
+// Coordenada GPS común a las dos listas de luminarias. La progresiva x sigue
+// el eje OSM cuando existe; si no, se prolonga desde el portal según su rumbo.
+function tunnelLuminaireGps(form,xM,yM) {
+  const entryLat=Number(form?.lat), entryLng=Number(form?.lng);
+  if(!Number.isFinite(entryLat)||!Number.isFinite(entryLng)) return null;
+  const toRad=value=>value*Math.PI/180;
+  const moveAlong=(lat,lng,distance,bearing)=>{
+    const R=6371000,d=distance/R,theta=toRad(bearing),p1=toRad(lat),l1=toRad(lng);
+    const p2=Math.asin(Math.sin(p1)*Math.cos(d)+Math.cos(p1)*Math.sin(d)*Math.cos(theta));
+    const l2=l1+Math.atan2(Math.sin(theta)*Math.sin(d)*Math.cos(p1),Math.cos(d)-Math.sin(p1)*Math.sin(p2));
+    return [p2*180/Math.PI,(l2*180/Math.PI+540)%360-180];
+  };
+  const route=_asArr(form?.osm_tunnel_geometry).map(point=>({
+    lat:Number(point?.lat),lng:Number(point?.lng??point?.lon),
+  })).filter(point=>Number.isFinite(point.lat)&&Number.isFinite(point.lng));
+  const distance=(a,b)=>{
+    const R=6371000,dLat=toRad(b.lat-a.lat),dLng=toRad(b.lng-a.lng);
+    const h=Math.sin(dLat/2)**2+Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.sin(dLng/2)**2;
+    return R*2*Math.atan2(Math.sqrt(h),Math.sqrt(1-h));
+  };
+  const bearing=(a,b)=>{
+    const dLng=toRad(b.lng-a.lng);
+    const y=Math.sin(dLng)*Math.cos(toRad(b.lat));
+    const x=Math.cos(toRad(a.lat))*Math.sin(toRad(b.lat))-Math.sin(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.cos(dLng);
+    return (Math.atan2(y,x)*180/Math.PI+360)%360;
+  };
+  const octant={N:0,NE:45,E:90,SE:135,S:180,SW:225,W:270,NW:315};
+  const defaultBearing=octant[form?.portal_orientation]??180;
+  let axisLat=entryLat,axisLng=entryLng,axisBearing=defaultBearing;
+  let remaining=Math.max(0,Number(xM)||0);
+  if(route.length>=2){
+    let found=false;
+    for(let index=1;index<route.length;index++){
+      const start=route[index-1],end=route[index],segment=distance(start,end);
+      axisBearing=bearing(start,end);
+      if(remaining<=segment+1e-6){
+        [axisLat,axisLng]=moveAlong(start.lat,start.lng,remaining,axisBearing);
+        found=true;
+        break;
+      }
+      remaining-=segment;
+      [axisLat,axisLng]=[end.lat,end.lng];
+    }
+    if(!found){
+      const last=route[route.length-1],previous=route[route.length-2];
+      axisBearing=bearing(previous,last);
+      [axisLat,axisLng]=moveAlong(last.lat,last.lng,remaining,axisBearing);
+    }
+  } else {
+    [axisLat,axisLng]=moveAlong(entryLat,entryLng,remaining,defaultBearing);
+  }
+  const width=Math.max(.1,Number(form?.width_m)||.1);
+  const [lat,lng]=moveAlong(axisLat,axisLng,(Number(yM)||0)-width/2,(axisBearing+90)%360);
+  return [lat.toFixed(6),lng.toFixed(6)];
+}
+
 /* Potencia instalada de proyecto: suma de W a la corriente individual de
    cada luminaria en Soleado. El total zonal histórico se conserva para
    compatibilidad, pero no representa necesariamente las consignas finales. */
@@ -1488,21 +1544,19 @@ function _interpolateControlProfile(lower,upper,t,factor) {
 }
 
 function ControlPhotometricLab({ result, form, onChange }) {
-  const sceneDefinitions = [
-    {key:'night_normal',label:'Noche normal',factor:0,color:'#334155'},
-    {key:'dusk',label:'Crepuscular',factor:.05,color:'#7c3aed'},
-    {key:'overcast',label:'Cubierto',factor:.30,color:'#64748b'},
-    {key:'normal',label:'Normal',factor:.70,color:'#0284c7'},
-    {key:'sunny',label:'Soleado',factor:1,color:'#d97706'},
-  ];
-  // El orden de cálculo permanece ascendente por factor; éste es sólo el
-  // orden de presentación solicitado para los botones del laboratorio.
+  // Sistema unificado de escenas derivado del unico SCENE_DEFINITIONS.
+  // El orden de calculo del deslizador es ascendente por factor.
+  const sceneDefinitions = SCENE_DEFINITIONS
+    .filter(item=>item.key!=='night_reduced')
+    .slice()
+    .sort((a,b)=>a.factor-b.factor);
+  // Orden de presentacion para los botones del laboratorio.
   const sceneDisplayDefinitions = [
     'sunny','normal','overcast','dusk','night_normal',
   ].map(key=>sceneDefinitions.find(item=>item.key===key));
-  const nightReducedDefinition = {
-    key:'night_reduced',label:'Noche reducida',factor:0,color:'#111827'
-  };
+  const nightReducedDefinition = SCENE_DEFINITIONS.find(
+    item=>item.key==='night_reduced'
+  );
   const [l20Percent,setL20Percent] = useState(100);
   const [nightRegime,setNightRegime] = useState('normal');
   const [planFieldIndex,setPlanFieldIndex] = useState(0);
@@ -1510,7 +1564,10 @@ function ControlPhotometricLab({ result, form, onChange }) {
   const [includeNatural,setIncludeNatural] = useState(true);
   const [validatingControl,setValidatingControl] = useState(false);
   const [validationError,setValidationError] = useState(null);
+  const [recalcSceneRunning,setRecalcSceneRunning] = useState(false);
   const [sceneLumSort,setSceneLumSort] = useState({key:'id',direction:'asc'});
+  const [sceneFilter,setSceneFilter] = useState('all');
+  const [sceneLumFilters,setSceneLumFilters] = useState({});
   // La tabla puede mostrar el estado que se está inspeccionando o la traza
   // completa de consignas de las seis escenas. La segunda es de auditoría y
   // por ello se mantiene en sólo lectura: evita editar por error una escena
@@ -1520,6 +1577,8 @@ function ControlPhotometricLab({ result, form, onChange }) {
   const photoResult = form.photometric_result || null;
   const calcMode = form.calc_mode || photoResult?.calc_mode || 'direct';
   const sceneCurrentOverrides = form.scene_current_overrides || {};
+  const manualLuminaireOverrides = form.manual_luminaire_overrides || {};
+  const hasGPS=!!(parseFloat(form.lat)&&parseFloat(form.lng));
   const factor=Math.max(0,Math.min(1,Number(l20Percent)/100));
   let upperIndex=sceneDefinitions.findIndex(item=>item.factor>=factor-1e-9);
   if(upperIndex<0) upperIndex=sceneDefinitions.length-1;
@@ -1577,7 +1636,9 @@ function ControlPhotometricLab({ result, form, onChange }) {
   });
 
   const setSceneCurrentOverride = (row, nextValue) => {
-    if (!exactScene || !row.sceneEditable) return;
+    if (!row.sceneEditable) return;
+    if (!['sunny','normal','overcast','dusk','night_normal','night_reduced']
+        .includes(row.sceneKey)) return;
     const requested=Number(nextValue);
     if (!Number.isFinite(requested)) return;
     const rawMin=Number(lumConfig.I_min_pct??30);
@@ -1604,10 +1665,71 @@ function ControlPhotometricLab({ result, form, onChange }) {
     delete next[row.sceneOverrideKey];
     onChange('scene_current_overrides',next);
   };
+  // Cambia el estado ON/OFF de una luminaria en la escena de la fila.
+  // OFF -> mA 0; ON -> restaura la corriente original o la de diseno.
+  const toggleSceneState = row => {
+    if (!row.sceneEditable) return;
+    if (row.state) {
+      setSceneCurrentOverride(row, 0);
+    } else {
+      const target=Number(
+        row.sceneCurrentOverride?.original_current_mA
+        || row.designCurrent
+        || 350
+      );
+      setSceneCurrentOverride(row, Math.max(1, target));
+    }
+  };
+  const setManualControlField=(row,field,nextValue)=>{
+    if(!row.physicalEditable) return;
+    const numericValue=Number(nextValue);
+    if(!Number.isFinite(numericValue)) return;
+    const previous=manualLuminaireOverrides[row.physicalOverrideKey]||{original:{}};
+    const values={...(previous.values||{})};
+    const original=Number(row[field==='s'?'originalX':'originalTilt']);
+    if(Math.abs(numericValue-original)<1e-8) delete values[field];
+    else values[field]=numericValue;
+    const next={...manualLuminaireOverrides};
+    if(!Object.keys(values).length) delete next[row.physicalOverrideKey];
+    else next[row.physicalOverrideKey]={original:{...(previous.original||{}),[field]:original},values};
+    onChange('manual_luminaire_overrides',next);
+  };
+  const resetManualControlField=row=>{
+    if(!manualLuminaireOverrides[row.physicalOverrideKey]) return;
+    const next={...manualLuminaireOverrides};
+    delete next[row.physicalOverrideKey];
+    onChange('manual_luminaire_overrides',next);
+  };
   const toggleSceneLumSort = key => setSceneLumSort(previous => ({
     key,
     direction:previous.key===key&&previous.direction==='asc'?'desc':'asc',
   }));
+  const sceneLumFiltersActive=Object.values(sceneLumFilters).some(value=>value);
+  const exportSceneLumListXls=()=>{
+    const headers=[
+      ...(sceneAuditMode==='all'?['Escena']:[]),
+      'ID','Zona','Capa','Par','x (m)','y (m)','d→ (m)','Óptica','Tilt (°)','Modelo',
+      'mA base','mA escena','Estado','DALI est.','W','lm','Campo CIE 140','Lavg campo',
+      'Lreq art.','Lreq total','Lavg/Lreq','U0','Ul','Flicker (Hz)',...(hasGPS?['Lat','Lon']:[]),
+    ];
+    const rows=sortedOperatingRows.map(row=>[
+      ...(sceneAuditMode==='all'?[row.sceneLabel]:[]),row.id,row.zone,row.layer,row.pair||'',
+      Number(row.x).toFixed(1),Number(row.y).toFixed(2),Number(row.d_nxt||0).toFixed(1),row.optic||'',
+      Number(row.tilt||0).toFixed(1),row.modelLabel||row.model||'',row.base_mA??'',row.current,
+      row.state?'ON':'OFF',row.dali,Number(row.power||0).toFixed(1),Number(row.flux||0).toFixed(0),
+      row.governingField?`${row.governingField.start.toFixed(1)}-${row.governingField.end.toFixed(1)} C${row.governingField.lane}`:'',
+      row.governingField?.Lavg?.toFixed(1)??'',Number(row.LreqArtificial||0).toFixed(1),
+      Number(row.LreqTotal||0).toFixed(1),Number(row.Lratio||0).toFixed(3),row.U0??'',row.Ul??'',
+      Number(row.flickerHz||0).toFixed(1),
+      ...(hasGPS?(tunnelLuminaireGps(form,row.x,row.y)||['','']):[]),
+    ]);
+    const esc=value=>`"${String(value??'').replace(/"/g,'""')}"`;
+    const csv=[headers,...rows].map(row=>row.map(esc).join(';')).join('\r\n');
+    const blob=new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'});
+    const url=URL.createObjectURL(blob), anchor=document.createElement('a');
+    anchor.href=url; anchor.download=`lista_luminarias_control_${form.tube_id||'T1'}.csv`;
+    document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url);
+  };
 
   const validateControlNow = async (modeOverride=calcMode) => {
     if (!onChange || validatingControl) return;
@@ -1647,6 +1769,40 @@ function ControlPhotometricLab({ result, form, onChange }) {
     if (validatingControl) return;
     onChange('calc_mode',mode);
     validateControlNow(mode);
+  };
+  // Recalcula SOLO la escena crepuscular conservando los mA editados en
+  // la tabla: no re-optimiza corrientes (los datos manuales no se mueven).
+  // Recalcula SOLO la escena activa conservando los mA editados en la
+  // tabla: no re-optimiza corrientes (los datos manuales no se mueven).
+  const recalcActiveScene = async () => {
+    const targetSceneKey = exactScene?.key || lowerScene?.key || 'sunny';
+    const targetScene = sceneDefinitions.find(
+      item=>item.key===targetSceneKey
+    ) || lowerScene;
+    if (recalcSceneRunning || !onChange || !form.luminaires_result || !targetScene) return;
+    setRecalcSceneRunning(true);
+    setValidationError(null);
+    try {
+      const lumConfig={...DEFAULT_LUM_CONFIG,...(form.lum_config||{})};
+      const response=await fetch('/api/tunnel/recalc-scene',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({...form, luminaire:lumConfig, scene:targetSceneKey}),
+      });
+      const data=await response.json();
+      if(!data.success) throw new Error(data.error||`No se pudo recalcular ${targetScene.label}`);
+      const photo=form.photometric_result||{};
+      onChange('photometric_result',{
+        ...photo,
+        scenarios:{...(photo.scenarios||{}), [targetSceneKey]:data.verification},
+      });
+      // Mostrar la grafica de la escena recalculada con la nueva curva Lest
+      setNightRegime('normal');
+      setL20Percent(Math.round(targetScene.factor*100));
+    } catch(error) {
+      setValidationError(error.message||String(error));
+    } finally {
+      setRecalcSceneRunning(false);
+    }
   };
 
   if (!lumResult) return (
@@ -1764,19 +1920,60 @@ function ControlPhotometricLab({ result, form, onChange }) {
     }
     return Math.max(0,designRequired*item.factor);
   };
-  const sceneChart = {
+   // La fuente normativa de Lreq en una escena validada es el perfil CIE 140
+   // enriquecido por backend. Recalcular aquí Lin + factor * (L-Lin) no es
+   // equivalente a evaluar de nuevo la curva CIE 88 con el Lth de la escena.
+   const profileRequiredAt = (s, includeTotal=false) => {
+     const source = (profile?.fields||[])
+       .filter(item => Number.isFinite(Number(item?.s)))
+       .map(item => ({
+         s:Number(item.s),
+         value:Number(item?.[includeTotal ? 'L_required_total' : 'L_required']),
+       }))
+       .filter(item => Number.isFinite(item.value))
+       .sort((a,b)=>a.s-b.s);
+     if (!source.length) return null;
+     if (source.length===1 || Number(s)<=source[0].s) return source[0].value;
+     if (Number(s)>=source[source.length-1].s) return source[source.length-1].value;
+     for (let i=1;i<source.length;i++) {
+       const low=source[i-1], high=source[i];
+       if (Number(s)<=high.s) {
+         const span=Math.max(1e-9,high.s-low.s);
+         return _controlLerp(low.value,high.value,(Number(s)-low.s)/span);
+       }
+     }
+     return source[source.length-1].value;
+   };
+   // Overlay con la curva Lreq de todas las escenas para que la grafica
+   // de Control muestre tambien las demas escenas, igual que Luminarias.
+   const overlayScenes = [...sceneDefinitions,nightReducedDefinition]
+     .filter(item=>item.key!==scene.key)
+     .map(item=>({
+       key:item.key,
+       label:item.label,
+       color:item.color,
+       points:(result.chart?.data||[]).map(point=>({
+         s:Number(point.s),
+         L:requiredAtAnchor(point,item),
+       })),
+     }));
+   const sceneChart = {
     ...originalChart,
-    data:(originalChart.data||[]).map(point=>{
-      const zone=String(point.zone||'').toUpperCase();
-      let required=exactScene
-        ? requiredAtAnchor(point,exactScene)
-        : _controlLerp(
-            requiredAtAnchor(point,lowerScene),
-            requiredAtAnchor(point,upperScene),
-            blend,
-          );
-      if(!includeNatural&&factor>0&&profileSeries.length&&zone!=='EXIT'){
-        const nearest=profileSeries.reduce((best,item)=>
+     data:(originalChart.data||[]).map(point=>{
+       const zone=String(point.zone||'').toUpperCase();
+       const profileRequired=profileRequiredAt(point.s,includeNatural);
+       let required=Number.isFinite(profileRequired)
+         ? profileRequired
+         : exactScene
+           ? requiredAtAnchor(point,exactScene)
+           : _controlLerp(
+               requiredAtAnchor(point,lowerScene),
+               requiredAtAnchor(point,upperScene),
+               blend,
+             );
+       if(!Number.isFinite(profileRequired)
+         && !includeNatural&&factor>0&&profileSeries.length&&zone!=='EXIT'){
+         const nearest=profileSeries.reduce((best,item)=>
           !best||Math.abs(Number(item.s)-Number(point.s))<Math.abs(Number(best.s)-Number(point.s))
             ? item : best
         ,null);
@@ -1788,15 +1985,15 @@ function ControlPhotometricLab({ result, form, onChange }) {
       return {...point,L:required};
     }),
   };
-  const sceneRequirementAt = s => {
-    const samples = sceneChart.data||[];
-    const nearest = samples.reduce((best,item) =>
-      !best || Math.abs(Number(item.s)-Number(s)) < Math.abs(Number(best.s)-Number(s))
-        ? item : best
-    , null);
-    return Number(nearest?.L||0);
-  };
-  const validNumberOr = (value, fallback=0) => (
+   const sceneRequirementAt = s => {
+     const samples = sceneChart.data||[];
+     const nearest = samples.reduce((best,item) =>
+       !best || Math.abs(Number(item.s)-Number(s)) < Math.abs(Number(best.s)-Number(s))
+         ? item : best
+       , null);
+     return Number(nearest?.L||0);
+   };
+   const validNumberOr = (value, fallback=0) => (
     Number.isFinite(Number(value)) ? Number(value) : fallback
   );
   const actualPoints = profileSeries.map(point=>{
@@ -1902,7 +2099,23 @@ function ControlPhotometricLab({ result, form, onChange }) {
   const buildOperatingRows=(item,fieldSet,operationResolver,{editable=false,sceneRank=0}={})=>{
     const rows=[];
     let rowId=1;
+    const _speedKmh=Math.max(1,Number(form.speed_kmh||80)||80);
+    const _vMs=_speedKmh/3.6;
+    const _fRange=(lumResult?.performance?.flicker?.range_hz)||[2.5,15];
+    const _fMin=Number(_fRange[0]||2.5);
+    const _fMax=Number(_fRange[1]||15);
     zoneList.forEach(zone=>{
+      const _sortedXs=(zone.setpoints||[])
+        .map(sp=>Number(sp.s||0)).sort((a,b)=>a-b);
+      const _spacingFor=(s)=>{
+        const idx=_sortedXs.indexOf(s);
+        if(idx<0) return Math.max(0.01,Number(zone.d_used||0)||1);
+        const next=_sortedXs[idx+1];
+        if(next!=null) return Math.max(0.01,next-s);
+        const prev=idx>0?_sortedXs[idx-1]:null;
+        if(prev!=null) return Math.max(0.01,s-prev);
+        return Math.max(0.01,Number(zone.d_used||0)||1);
+      };
       (zone.setpoints||[]).forEach((setpoint,index)=>{
         const operation=operationResolver(setpoint,zone);
         const sceneOverrideKey=editable
@@ -1914,7 +2127,12 @@ function ControlPhotometricLab({ result, form, onChange }) {
         const sceneEditable=editable && (
           !item.key.startsWith('night_') || zone.control_layer==='permanent'
         );
-        const x=Number(setpoint.s||0);
+        const physicalOverrideKey=`${zone.zone_name}|${Number(setpoint.idx)||index+1}`;
+        const physicalOverride=manualLuminaireOverrides[physicalOverrideKey]||null;
+        const originalX=Number(setpoint.s||0);
+        const originalTilt=Number(setpoint.tilt_deg??zone.tilt_deg??0);
+        const physicalEditable=editable&&sceneAuditMode==='active';
+        const x=Number(physicalOverride?.values?.s??originalX);
         const field=fieldForLuminaire(fieldSet,x,zone.zone_name)
           || fieldSet.reduce((best,candidate)=>
             !best||Math.abs(Number(candidate.s)-x)<Math.abs(Number(best.s)-x)
@@ -1922,27 +2140,56 @@ function ControlPhotometricLab({ result, form, onChange }) {
           ,null);
         const natural=Number(field?.natural_daylight_cd_m2||0);
         const fieldValues=fieldValueForComparison(field);
-        const state=operation.state!=='off'&&Number(operation.flux_lm||0)>0;
-        const current=state?Number(operation.current_mA||0):0;
+        const requestedCurrent=Number((sceneCurrentOverride?.current_mA??operation.current_mA)||0);
+        const state=operation.state!=='off'&&requestedCurrent>0&&Number(operation.flux_lm||0)>0;
+        const current=state?requestedCurrent:0;
         const dali=state?Math.max(1,Math.min(254,Math.round(254*current/Imax))):0;
         const LfieldArtificial=fieldValues.Lavg;
         const LfieldTotal=LfieldArtificial+natural;
         const LreqArtificial=Number(field?.L_required||0);
         const LreqTotal=fieldValues.Lreq;
+        const fieldU0=Number(field?.U0);
+        const fieldUl=Number(field?.Ul);
+        const governingField=field && Number.isFinite(Number(field?.field_start))
+          ? {
+              start:Number(field.field_start),end:Number(field.field_end),
+              lane:Number(field.governing_lane_number??field.observer_lane_number??1),
+              direction:Number(field.governing_direction??field.observer_direction??1),
+              Lavg:LfieldArtificial,Lreq:LreqTotal,
+              ratio:LfieldArtificial/Math.max(LreqTotal,1e-9),
+            }
+          : null;
+        const _spacing=_spacingFor(x);
+        const fHz=_spacing>0? _vMs/_spacing : 0;
+        const flickerCritical=fHz>=_fMin-1e-9 && fHz<=_fMax+1e-9;
+        const flickerUnavoidable=(
+          lumResult?.performance?.flicker?.zones?.[zone.zone_name]?.status
+            ==='unavoidable'
+        );
         physicalLuminaireYPositions(
           arrangement,width,wallOffset,Number(setpoint.idx)||index+1
         ).forEach(y=>rows.push({
           id:rowId++,sceneKey:item.key,sceneLabel:item.label,sceneColor:item.color,
           sceneRank,zone:zone.zone_name,layer:zone.control_layer,
-          x,y,model:setpoint.model||zone.model,optic:setpoint.optic||zone.optic,
-          state,current,dali,power:state?Number(operation.power_w||0):0,
+          x,y,originalX,originalTilt,physicalOverrideKey,physicalOverride,physicalEditable,
+          model:setpoint.model||zone.model,modelLabel:setpoint.model||zone.model,
+          pair:setpoint.tandem||setpoint.pair||null,
+          optic:setpoint.optic||zone.optic,tilt:Number(physicalOverride?.values?.tilt_deg??originalTilt),
+          state,current,dali,designCurrent:Number(setpoint.current_mA||zone.current_mA||0),
+          base_mA:zone.control_layer==='permanent'
+            ? Number((setpoint.base_current_mA??setpoint.current_mA??zone.current_mA)||0) : null,
+          flickerHz:fHz,flickerCritical,flickerUnavoidable,spacingM:_spacing,
+          d_nxt:_spacing,
+          power:state?Number(operation.power_w||0):0,
           flux:state?Number(operation.flux_lm||0):0,
           driverFloor:!!operation.driver_floor,
-          sceneOverrideKey,sceneCurrentOverride,sceneEditable,
-          scenePending:!!sceneCurrentOverride&&Math.abs(
-            Number(sceneCurrentOverride.current_mA)-current
-          )>1e-8,
+           sceneOverrideKey,sceneCurrentOverride,sceneEditable,
+           scenePending:!!sceneCurrentOverride&&Math.abs(
+             Number(sceneCurrentOverride.current_mA)-Number(operation.current_mA||0)
+           )>1e-8,
           LreqArtificial,LreqTotal,LfieldArtificial,LfieldTotal,
+          governingField,U0:Number.isFinite(fieldU0)?fieldU0:null,
+          Ul:Number.isFinite(fieldUl)?fieldUl:null,
           Lratio:(includeNatural?LfieldTotal:LfieldArtificial)/Math.max(
             includeNatural?LreqTotal:LreqArtificial,1e-9
           ),
@@ -1965,26 +2212,87 @@ function ControlPhotometricLab({ result, form, onChange }) {
         item,
         profileFor(item)?.fields||[],
         (setpoint,zone)=>operationAtAnchor(setpoint,zone,item),
-        {editable:false,sceneRank}
+        {editable:!item.key.startsWith('night_'),sceneRank}
       ))
     : operatingRows;
+  const sceneColumnDefs=[
+    ...(sceneAuditMode==='all'?[{type:'text',get:row=>row.sceneLabel}]:[]),
+    {type:'num',get:row=>row.id},
+    {type:'text',get:row=>`${row.zone} ${row.layer}`},
+    {type:'text',get:row=>row.pair||''},
+    {type:'num',get:row=>row.x},{type:'num',get:row=>row.y},
+    {type:'num',get:row=>row.d_nxt},{type:'text',get:row=>row.optic||''},
+    {type:'num',get:row=>row.tilt},{type:'text',get:row=>row.modelLabel||row.model||''},
+    {type:'num',get:row=>row.base_mA},{type:'num',get:row=>row.current},
+    {type:'text',get:row=>row.state?'ON':'OFF'},{type:'num',get:row=>row.dali},
+    {type:'num',get:row=>row.power},{type:'num',get:row=>row.flux},
+    {type:'text',get:row=>row.governingField
+      ? `${row.governingField.start.toFixed(1)}-${row.governingField.end.toFixed(1)}` : ''},
+    {type:'num',get:row=>row.governingField?.Lavg},
+    {type:'num',get:row=>row.LreqArtificial},{type:'num',get:row=>row.LreqTotal},
+    {type:'num',get:row=>row.Lratio},{type:'num',get:row=>row.U0},
+    {type:'num',get:row=>row.Ul},{type:'num',get:row=>row.flickerHz},
+    ...(hasGPS?[{type:'num',get:row=>Number(tunnelLuminaireGps(form,row.x,row.y)?.[0])},
+      {type:'num',get:row=>Number(tunnelLuminaireGps(form,row.x,row.y)?.[1])}]:[]),
+  ];
+  const matchSceneNumber=(value,filterValue)=>{
+    if(value==null||!Number.isFinite(Number(value))) return false;
+    const text=String(filterValue||'').trim();
+    const direct=text.match(/^(>=|<=|!=|>|<|=)?\s*(-?\d+(?:\.\d+)?)$/);
+    if(direct){
+      const op=direct[1]||'=',target=Number(direct[2]),number=Number(value);
+      if(op==='>') return number>target;
+      if(op==='>=') return number>=target;
+      if(op==='<') return number<target;
+      if(op==='<=') return number<=target;
+      if(op==='!=') return Math.abs(number-target)>1e-9;
+      return Math.abs(number-target)<1e-9;
+    }
+    const range=text.match(/^(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)$/);
+    if(range){
+      const low=Math.min(Number(range[1]),Number(range[2]));
+      const high=Math.max(Number(range[1]),Number(range[2]));
+      return Number(value)>=low&&Number(value)<=high;
+    }
+    return String(value).includes(text);
+  };
+  const filteredOperatingRows=tableOperatingRows.filter(row=>
+    sceneColumnDefs.every((column,index)=>{
+      const filterValue=sceneLumFilters[index];
+      if(!filterValue) return true;
+      const value=column.get(row);
+      return column.type==='num'
+        ? matchSceneNumber(value,filterValue)
+        : String(value??'').toLowerCase().includes(String(filterValue).trim().toLowerCase());
+    })
+  );
+  const visibleOperatingRows=(
+    sceneAuditMode==='all' && sceneFilter!=='all'
+      ? filteredOperatingRows.filter(row=>row.sceneKey===sceneFilter)
+      : filteredOperatingRows
+  );
   const nearestLuminaireDistance=Number.isFinite(sliderTargetS)
     ? Math.min(...operatingRows.map(row=>Math.abs(row.x-sliderTargetS)),Infinity)
     : Infinity;
-  tableOperatingRows.forEach(row=>{
+  visibleOperatingRows.forEach(row=>{
     row.nearestToSlider=Number.isFinite(nearestLuminaireDistance)
       && Math.abs(Math.abs(row.x-sliderTargetS)-nearestLuminaireDistance)<1e-6;
   });
-  const sortedOperatingRows=[...tableOperatingRows].sort((a,b)=>{
+  const sortedOperatingRows=[...visibleOperatingRows].sort((a,b)=>{
     if(sceneAuditMode==='all'&&a.sceneRank!==b.sceneRank){
       return a.sceneRank-b.sceneRank;
     }
-    const value=row=>({
-      id:row.id,
-      x:row.x,
-      state:row.state?0:1,
-      power:row.power,
-    })[sceneLumSort.key];
+      const value=row=>({
+        id:row.id,
+        x:row.x,
+        state:row.state?0:1,
+        power:row.power,
+        current:row.current,
+        U0:row.U0,
+        Ul:row.Ul,
+        Lavg:row.governingField?.Lavg,
+        flicker:row.flickerHz,
+      })[sceneLumSort.key];
     const av=value(a), bv=value(b);
     const compared=typeof av==='number'&&typeof bv==='number'
       ? av-bv : String(av).localeCompare(String(bv),'es');
@@ -2028,9 +2336,24 @@ function ControlPhotometricLab({ result, form, onChange }) {
     Number(daylightScene.portal_b_mouth_cd_m2||0),
     ...fields.map(field=>Number(field.natural_daylight_cd_m2||0)),
   );
+  const maxExcess = (
+    exactScene && Number(verification?.maximum_L_ratio||0) > 0
+  ) ? Number(verification.maximum_L_ratio) : null;
+  const lShortfallScenes = Object.entries(photoResult?.scenarios||{})
+    .filter(([_k,v])=>v && typeof v==='object'
+      && Number(v?.minimum_L_ratio||0) > 0
+      && Number(v.minimum_L_ratio) < 1)
+    .map(([k,v])=>`${k} (${Number(v.minimum_L_ratio).toFixed(3)})`);
 
   return (
     <div style={{display:'flex',flexDirection:'column',gap:12}}>
+      {lShortfallScenes.length>0 && (
+        <div style={{padding:'10px 12px',border:'1px solid #b91c1c',borderRadius:8,
+                     background:'#fef2f2',color:'#991b1b',fontSize:'.72rem',fontWeight:600}}>
+          ⛔ L por debajo de Lreq (no negociable): {lShortfallScenes.join(', ')}.
+          Esta instalación NO es válida. Aumenta la densidad de luminarias o revisa el proyecto.
+        </div>
+      )}
       <div className="card">
         <div className="card-title">🔬 Laboratorio fotométrico de Control</div>
         <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:10}}>
@@ -2089,6 +2412,10 @@ function ControlPhotometricLab({ result, form, onChange }) {
           ['Potencia operativa',operatingPower.toFixed(2),'kW'],
           ['Luminarias activas',activeLuminaires.toFixed(0),'ud'],
           ['Peor L/Lreq',minimumRatio?minimumRatio.toFixed(3):'—',''],
+          ['Exceso L/Lreq',maxExcess!=null
+            ? `${((maxExcess-1)*100).toFixed(0)}%`
+            : '—',
+            `techo ${lumConfig.scene_excess_ratio_pct??4}%`],
         ].map(([label,value,unit])=>(
           <div key={label} style={{padding:'8px 10px',border:'1px solid var(--salvi-line)',
                                   borderRadius:7,background:'var(--salvi-surface)'}}>
@@ -2146,8 +2473,18 @@ function ControlPhotometricLab({ result, form, onChange }) {
               Incluir aporte natural modelado
             </label>
           </div>
-        </div>
-        <ProfileChart chartData={sceneChart}
+         </div>
+         {(()=>{
+           const override=Number.parseFloat(form.interior_luminance_override);
+           const calculated=Number(result.summary?.Lin||0);
+           return Number.isFinite(override)&&override>0
+             && Math.abs(override-calculated)>1e-6
+             ? <div style={{marginBottom:8,padding:'7px 10px',border:'1px solid #fbbf24',borderRadius:7,background:'#fffbeb',color:'#92400e',fontSize:'.68rem'}}>
+                 Lin de proyecto = <strong>{override.toFixed(1)} cd/m²</strong> pendiente de recalcular; la gráfica muestra el último cálculo validado = <strong>{calculated.toFixed(1)} cd/m²</strong>.
+               </div>
+             : null;
+         })()}
+         <ProfileChart chartData={sceneChart}
           tunnelLength={result.summary?.length_m}
           Lth={LthSelected}
           Lin={factor===0
@@ -2156,6 +2493,7 @@ function ControlPhotometricLab({ result, form, onChange }) {
           zones={result.zones}
           actualPoints={actualPoints}
           denseActual={true}
+          overlayScenes={overlayScenes}
           showLthReference={false}
           requiredLabel={`Lreq ${scene.label} (variable)`}
           actualLegend="Lavg CIE 140 de la escena — misma serie física que el capítulo 4; Lreq es variable por campo"
@@ -2185,17 +2523,50 @@ function ControlPhotometricLab({ result, form, onChange }) {
             💡 Auditoría de luminarias y campos CIE 140
           </div>
           <div style={{display:'inline-flex',border:'1px solid var(--salvi-line)',borderRadius:5,overflow:'hidden'}}>
-            <button type="button" onClick={()=>setSceneAuditMode('active')}
+            <button type="button" onClick={()=>{setSceneAuditMode('active');setSceneLumFilters({});}}
               style={{border:0,padding:'4px 8px',fontSize:'.62rem',fontWeight:700,cursor:'pointer',
                 background:sceneAuditMode==='active'?'#1f2937':'#fff',color:sceneAuditMode==='active'?'#fff':'#475569'}}>
               Escena activa
             </button>
-            <button type="button" onClick={()=>setSceneAuditMode('all')}
+            <button type="button" onClick={()=>{setSceneAuditMode('all');setSceneLumFilters({});}}
               style={{border:0,borderLeft:'1px solid var(--salvi-line)',padding:'4px 8px',fontSize:'.62rem',fontWeight:700,cursor:'pointer',
                 background:sceneAuditMode==='all'?'#1f2937':'#fff',color:sceneAuditMode==='all'?'#fff':'#475569'}}>
               Las 6 escenas
             </button>
           </div>
+          {sceneAuditMode==='all' && (
+            <select value={sceneFilter} onChange={event=>setSceneFilter(event.target.value)}
+              style={{fontSize:'.62rem',padding:'4px 6px',border:'1px solid var(--salvi-line)',borderRadius:4,background:'#fff'}}>
+              <option value="all">Todas las escenas</option>
+              {[...sceneDisplayDefinitions,nightReducedDefinition].map(item=>(
+                <option key={item.key} value={item.key}>{item.label}</option>
+              ))}
+            </select>
+          )}
+          <button type="button" onClick={recalcActiveScene}
+            disabled={recalcSceneRunning||!form.luminaires_result}
+            style={{padding:'4px 9px',fontSize:'.62rem',fontWeight:700,cursor:'pointer',
+              borderRadius:4,border:'1px solid #7c3aed',background:'#f5f3ff',color:'#5b21b6'}}>
+            {recalcSceneRunning
+              ? 'Recalculando escena…'
+              : '🔄 Recalcular escena activa'}
+          </button>
+          {sceneLumFiltersActive&&<button type="button" onClick={()=>setSceneLumFilters({})}
+            style={{padding:'4px 9px',fontSize:'.62rem',fontWeight:700,cursor:'pointer',
+              borderRadius:4,border:'1px solid var(--salvi-line)',background:'#fff',color:'#b91c1c'}}>
+            ✕ Limpiar filtros
+          </button>}
+          <button type="button" onClick={exportSceneLumListXls}
+            style={{padding:'4px 9px',fontSize:'.62rem',fontWeight:700,cursor:'pointer',
+              borderRadius:4,border:'1px solid var(--salvi-line)',background:'#fff',color:'var(--salvi-black)'}}>
+            📊 Exportar lista
+          </button>
+          {Object.keys(manualLuminaireOverrides).length>0&&<button type="button"
+            onClick={()=>onChange('manual_luminaire_overrides',{})}
+            style={{padding:'4px 9px',fontSize:'.62rem',fontWeight:700,cursor:'pointer',
+              borderRadius:4,border:'1px solid #f59e0b',background:'#fffbeb',color:'#92400e'}}>
+            ↶ Restablecer físicas ({Object.keys(manualLuminaireOverrides).length})
+          </button>}
           {Object.keys(sceneCurrentOverrides).length>0&&(
             <button type="button" onClick={validateControlNow} disabled={validatingControl}
               style={{padding:'4px 9px',fontSize:'.62rem',fontWeight:700,cursor:'pointer',
@@ -2209,9 +2580,11 @@ function ControlPhotometricLab({ result, form, onChange }) {
             <thead style={{position:'sticky',top:0,background:'#f8fafc',zIndex:1}}>
               <tr>{[
                 ...(sceneAuditMode==='all'?[['Escena',null]]:[]),
-                ['ID','id'],['Zona / capa',null],['x','x'],['y',null],['Modelo',null],
-                ['Estado','state'],['mA',null],['DALI est.',null],['W','power'],['lm',null],
-                ['Lreq art.',null],['Lreq total',null],['Lest campo',null],['Lest/Lreq',null],
+                ['ID','id'],['Zona / capa',null],['Par',null],['x','x'],['y',null],['d→',null],
+                ['Óptica',null],['Tilt',null],['Modelo',null],['mA base',null],['mA escena','current'],
+                ['Estado','state'],['DALI est.',null],['W','power'],['lm',null],['Campo CIE 140',null],
+                ['Lavg campo','Lavg'],['Lreq art.',null],['Lreq total',null],['Lavg/Lreq',null],
+                ['U0','U0'],['Ul','Ul'],['Flicker','flicker'],...(hasGPS?[['Lat',null],['Lon',null]]:[]),
               ].map(([label,sortKey])=>{
                 const active=sceneLumSort.key===sortKey;
                 return <th key={label} onClick={sortKey?()=>toggleSceneLumSort(sortKey):undefined}
@@ -2225,6 +2598,17 @@ function ControlPhotometricLab({ result, form, onChange }) {
                   </span>}
                 </th>;
               })}</tr>
+              <tr>
+                {sceneColumnDefs.map((column,index)=>(
+                  <th key={`scene-filter-${index}`} style={{padding:'2px 4px',borderBottom:'2px solid var(--salvi-line)',background:'#fff'}}>
+                    <input value={sceneLumFilters[index]||''}
+                      onChange={event=>setSceneLumFilters(previous=>({...previous,[index]:event.target.value}))}
+                      placeholder={column.type==='num'?'>0.4':'texto'}
+                      style={{width:'100%',boxSizing:'border-box',fontSize:'.60rem',padding:'2px 4px',
+                        border:'1px solid var(--salvi-line)',borderRadius:3,fontWeight:400}}/>
+                  </th>
+                ))}
+              </tr>
             </thead>
             <tbody>{sortedOperatingRows.map(row=>(
               <tr key={`${row.sceneKey}-${row.id}`} style={{borderTop:'1px solid var(--salvi-line)',
@@ -2237,15 +2621,65 @@ function ControlPhotometricLab({ result, form, onChange }) {
                 <td style={{padding:'4px 6px',fontWeight:row.nearestToSlider?700:400,
                              color:row.nearestToSlider?'#6d28d9':'inherit'}}>
                   {row.nearestToSlider?'🔎 ':''}{row.id}
+                  {row.physicalOverride&&<button type="button" onClick={()=>resetManualControlField(row)}
+                    title="Restablecer posición e inclinación físicas"
+                    style={{marginLeft:3,padding:'0 2px',cursor:'pointer',border:'none',background:'transparent',color:'#b45309',fontWeight:700}}>↶</button>}
                 </td>
                 <td style={{padding:'4px 6px',whiteSpace:'nowrap'}}>
                   <b>{row.zone}</b><div style={{color:'var(--salvi-grey)'}}>{row.layer}</div>
                 </td>
-                <td style={{padding:'4px 6px',textAlign:'right'}}>{row.x.toFixed(1)}</td>
+                <td style={{padding:'4px 6px',textAlign:'center',color:'#7c3aed',fontWeight:700}}>{row.pair||'—'}</td>
+                <td style={{padding:'4px 6px',textAlign:'right'}}>
+                  {row.physicalEditable
+                    ? <input type="number" min="0" max={result.summary?.length_m||9999} step=".1"
+                        value={row.x.toFixed(1)} onChange={event=>setManualControlField(row,'s',event.target.value)}
+                        style={{width:52,textAlign:'right',fontFamily:'monospace',fontSize:'.62rem',padding:'1px 3px',
+                          border:`1px solid ${row.physicalOverride?.values?.s!=null?'#f59e0b':'transparent'}`,borderRadius:3,
+                          background:row.physicalOverride?.values?.s!=null?'#fffbeb':'transparent'}}/>
+                    : row.x.toFixed(1)}
+                </td>
                 <td style={{padding:'4px 6px',textAlign:'right'}}>{row.y.toFixed(2)}</td>
-                <td style={{padding:'4px 6px'}}>{row.model} · {row.optic}</td>
+                <td style={{padding:'4px 6px',textAlign:'right',color:'#64748b'}}>{Number(row.d_nxt||0).toFixed(1)}</td>
+                <td style={{padding:'4px 6px',textAlign:'right'}}>{row.optic||'—'}</td>
+                <td style={{padding:'4px 6px',textAlign:'right'}}>
+                  {row.physicalEditable
+                    ? <input type="number" min="-35" max="35" step=".5"
+                        value={Number(row.tilt||0).toFixed(1)} onChange={event=>setManualControlField(row,'tilt_deg',event.target.value)}
+                        style={{width:48,textAlign:'right',fontFamily:'monospace',fontSize:'.62rem',padding:'1px 3px',
+                          border:`1px solid ${row.physicalOverride?.values?.tilt_deg!=null?'#f59e0b':'transparent'}`,borderRadius:3,
+                          background:row.physicalOverride?.values?.tilt_deg!=null?'#fffbeb':'transparent'}}/>
+                    : `${Number(row.tilt||0).toFixed(1)}°`}
+                </td>
+                <td style={{padding:'4px 6px'}}>{row.modelLabel||row.model||'—'}</td>
+                <td style={{padding:'4px 6px',textAlign:'right',color:'#64748b'}}>{row.base_mA!=null?Number(row.base_mA).toFixed(0):'—'}</td>
+                <td style={{padding:'4px 6px',textAlign:'right'}}>
+                  {row.sceneEditable ? <>
+                    <input type="number" min="0" max={Imax} step="1"
+                      value={Number(row.sceneCurrentOverride?.current_mA??row.current).toFixed(0)}
+                      onChange={event=>setSceneCurrentOverride(row,event.target.value)}
+                      style={{width:52,textAlign:'right',fontFamily:'monospace',fontSize:'.62rem',padding:'1px 3px',
+                        border:`1px solid ${row.sceneCurrentOverride?'#f59e0b':'transparent'}`,borderRadius:3,
+                        background:row.sceneCurrentOverride?'#fffbeb':'transparent',fontWeight:600}}/>
+                    {row.sceneCurrentOverride&&<button type="button" onClick={()=>resetSceneCurrentOverride(row)}
+                      title="Restablecer la consigna de esta escena"
+                      style={{marginLeft:2,padding:'0 2px',cursor:'pointer',border:'none',background:'transparent',color:'#b45309',fontWeight:700}}>↶</button>}
+                  </>
+                    : row.current.toFixed(0)}
+                </td>
                 <td style={{padding:'4px 6px',fontWeight:700,color:row.state?'#166534':'#64748b'}}>
-                  {row.state?'ON':'OFF'}{row.driverFloor?' · mín.':''}{row.scenePending?' · pendiente':''}
+                  {row.sceneEditable ? (
+                    <button type="button" onClick={()=>toggleSceneState(row)}
+                      title={row.state
+                        ? 'Apagar esta luminaria en esta escena (mA=0)'
+                        : 'Encender esta luminaria en esta escena'}
+                      style={{border:row.state?'1px solid #16a34a':'1px solid #94a3b8',
+                        background:row.state?'#f0fdf4':'#f8fafc',
+                        color:row.state?'#166534':'#475569',borderRadius:999,
+                        padding:'1px 8px',fontSize:'.62rem',fontWeight:700,cursor:'pointer'}}>
+                      {row.state?'ON':'OFF'}{row.driverFloor?' · mín.':''}
+                    </button>
+                  ) : (row.state?'ON':'OFF')}
+                  {row.scenePending?' · pendiente':''}
                 </td>
                 <td style={{padding:'4px 6px',textAlign:'right'}}>
                   {row.sceneEditable ? <>
@@ -2266,6 +2700,12 @@ function ControlPhotometricLab({ result, form, onChange }) {
                 <td style={{padding:'4px 6px',textAlign:'right'}}>{row.dali}</td>
                 <td style={{padding:'4px 6px',textAlign:'right'}}>{row.power.toFixed(1)}</td>
                 <td style={{padding:'4px 6px',textAlign:'right'}}>{row.flux.toFixed(0)}</td>
+                <td style={{padding:'4px 6px',textAlign:'right',fontFamily:'monospace',fontSize:'.60rem'}}>
+                  {row.governingField?`${row.governingField.start.toFixed(1)}–${row.governingField.end.toFixed(1)} · C${row.governingField.lane}`:'—'}
+                </td>
+                <td style={{padding:'4px 6px',textAlign:'right',fontWeight:600}}>
+                  {row.governingField?row.governingField.Lavg.toFixed(1):'—'}
+                </td>
                 <td style={{padding:'4px 6px',textAlign:'right'}}>{row.LreqArtificial.toFixed(1)}</td>
                 <td style={{padding:'4px 6px',textAlign:'right'}}>{row.LreqTotal.toFixed(1)}</td>
                 <td style={{padding:'4px 6px',textAlign:'right',fontWeight:600}}>
@@ -2275,6 +2715,29 @@ function ControlPhotometricLab({ result, form, onChange }) {
                   color:row.Lratio>=1?'#166534':'#b91c1c'}}>
                   {row.Lratio.toFixed(3)}
                 </td>
+                <td style={{padding:'4px 6px',textAlign:'right',fontWeight:700,
+                  color:row.U0!=null&&row.U0<0.40?'#b91c1c':'#166534'}}>
+                  {row.U0!=null?row.U0.toFixed(3):'—'}
+                </td>
+                <td style={{padding:'4px 6px',textAlign:'right',fontWeight:700,
+                  color:row.Ul!=null&&row.Ul<0.60?'#b91c1c':'#166534'}}>
+                  {row.Ul!=null?row.Ul.toFixed(3):'—'}
+                </td>
+                <td style={{padding:'4px 6px',textAlign:'right',whiteSpace:'nowrap'}}>
+                  {row.flickerHz>0 && (
+                    <span style={{fontWeight:row.flickerCritical?700:400,
+                      color:row.flickerCritical?'#b91c1c':'#64748b'}}>
+                      {row.flickerHz.toFixed(1)}
+                      {row.flickerCritical
+                        ? (row.flickerUnavoidable?' ⚠ inevitable':' ⚠')
+                        : ''}
+                    </span>
+                  )}
+                </td>
+                {hasGPS&&(()=>{const gps=tunnelLuminaireGps(form,row.x,row.y)||['—','—'];return <>
+                  <td style={{padding:'4px 6px',textAlign:'right',fontFamily:'monospace',fontSize:'.59rem',color:'#0ea5e9'}}>{gps[0]}</td>
+                  <td style={{padding:'4px 6px',textAlign:'right',fontFamily:'monospace',fontSize:'.59rem',color:'#0ea5e9'}}>{gps[1]}</td>
+                </>;})()}
               </tr>
             ))}</tbody>
           </table>
@@ -2285,11 +2748,12 @@ function ControlPhotometricLab({ result, form, onChange }) {
           contribución individual de la luminaria, porque un campo recibe luz de varias luminarias.
           El nivel DALI mostrado es una estimación proporcional a la corriente.
           {' '}En «Las 6 escenas» las filas se agrupan por escena para comparar mA, W, lm,
-          Lreq y Lest de cada misma luminaria; es una vista de auditoría de sólo lectura.
-          Pulse ID, x, Estado o W para ordenar dentro de cada escena. La corriente es editable en una escena exacta;
-          los cambios son consignas DALI de esa escena, no alteran la instalación física, y se
-          validan con «Recalcular consignas de escena». 0 mA apaga la luminaria; una corriente
-          positiva se limitará al rango admisible del driver.
+          Lreq y Lest de cada misma luminaria.
+          Pulse ID, x, Estado o W para ordenar dentro de cada escena. La corriente es editable en
+          las escenas diurnas (Soleado, Normal, Cubierto y Crepuscular), tanto en «Escena activa»
+          como en «Las 6 escenas»; los cambios son consignas DALI de esa escena, no alteran la
+          instalación física, y se validan con «Recalcular escena activa» o «Recalcular consignas de
+          escena». 0 mA apaga la luminaria; una corriente positiva se limitará al rango admisible.
           {Number.isFinite(sliderTargetS)&&nearestLuminaireDistance<Infinity&&(
             <> 🔎 Marcadas las luminarias más cercanas al centro del campo seleccionado
               ({sliderTargetS.toFixed(1)} m).</>
@@ -2667,6 +3131,7 @@ function ProfileChart({
   denseActual=false, selectedS=null, showLthReference=true,
   requiredLabel='L requerida CIE 88',
   actualLegend='Lavg de cada campo CIE 140 entre luminarias consecutivas, para el observador más desfavorable, superpuesta a Lreq CIE 88',
+  overlayScenes=[],
 }) {
   if (!chartData || !chartData.data || chartData.data.length === 0) {
     return <div style={{textAlign:"center",color:"#999",padding:"40px"}}>Sin datos de perfil</div>;
@@ -2778,6 +3243,20 @@ function ProfileChart({
       unified[bestIdx].sReal = p.s;
     });
   }
+  // Curvas Lreq de las demas escenas (overlay): una columna por escena.
+  overlayScenes.forEach(ov=>{
+    const ovCol='_OV_'+ov.key;
+    (ov.points||[]).forEach(p=>{
+      if(!p || p.s==null || p.L==null || !unified.length) return;
+      const target=cS(Number(p.s));
+      let bestIdx=0,bestDist=Infinity;
+      for(let i=0;i<unified.length;i++){
+        const dist=Math.abs(unified[i].s-target);
+        if(dist<bestDist){bestDist=dist;bestIdx=i;}
+      }
+      unified[bestIdx][ovCol]=Number(p.L);
+    });
+  });
 
   // ── Zone bar data — sorted by s_start, includes B-zones ──────────
   const zoneBarItems = zones
@@ -2800,6 +3279,16 @@ function ProfileChart({
 
   return (
     <div style={{width:"100%"}}>
+      {overlayScenes.length>0 && (
+        <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap',marginBottom:4,fontSize:'.66rem',color:'#64748b'}}>
+          {overlayScenes.map(ov=>(
+            <span key={ov.key} style={{display:'inline-flex',alignItems:'center',gap:4}}>
+              <span style={{display:'inline-block',width:14,height:0,borderTop:`2px dashed ${ov.color}`}}/>
+              {ov.label}
+            </span>
+          ))}
+        </div>
+      )}
       {hasActual && (
         <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:4,fontSize:'.68rem',color:'#64748b'}}>
           <span style={{display:'inline-block',width:14,height:2,background:'#dc2626'}}/>
@@ -2883,6 +3372,13 @@ function ProfileChart({
             <ReferenceLine y={Lin} stroke="#27ae60" strokeDasharray="6 3" strokeWidth={1.5}
               label={{value:`Lin = ${Lin!=null?Lin.toFixed(1):'—'} cd/m²`,position:"right",fontSize:10,fill:"#1e8449",fontWeight:600}}/>
 
+            {/* Overlay: curvas Lreq de las demas escenas (lineas finas). */}
+            {overlayScenes.map(ov=>(
+              <Line key={ov.key} type="linear" dataKey={`_OV_${ov.key}`}
+                name={ov.label} stroke={ov.color} strokeWidth={1.4}
+                strokeDasharray="5 4" dot={false} connectNulls={true}
+                legendType="none" isAnimationActive={false}/>
+            ))}
             {/* Se dibuja al final para que Lcalc siga siendo visible cuando
                 coincide con Lin (frecuente en crepusculo y noche). */}
             {hasActual && (
@@ -4189,6 +4685,7 @@ function MapSelector({ lat, lng, onUpdate, onImport, lumData, luminaireConfig,
   const plinesRef      = useRef({});
   const tunnelFeatureRefs = useRef({});
   const importedRouteRef = useRef(null);
+  const lumZoomKeyRef = useRef(null);
   const routeGeometryRef = useRef([]);
   const measurePtsRef  = useRef([]);
   const tunnelListRef  = useRef([]);
@@ -4604,7 +5101,7 @@ function MapSelector({ lat, lng, onUpdate, onImport, lumData, luminaireConfig,
     );
     try {
       const bounds = L.latLngBounds(route.map(point=>[point.lat,point.lng]));
-      if (bounds.isValid()) map.fitBounds(bounds, {padding:[36,36], maxZoom:17});
+       if (bounds.isValid()) map.fitBounds(bounds, {padding:[36,36], maxZoom:18});
     } catch(_) {}
     try{importedRouteRef.current.bringToBack();}catch(_){}
     try{markerRef.current?.dragging?.disable();}catch(_){}
@@ -4626,7 +5123,7 @@ function MapSelector({ lat, lng, onUpdate, onImport, lumData, luminaireConfig,
     // Clear both Leaflet and MapLibre layers
     if(lumGrpRef.current) lumGrpRef.current.clearLayers();
     _clearLumOnMapLibre();
-    if(!lumData||!showLum) return;
+    if(!lumData||!showLum){ lumZoomKeyRef.current=null; return; }
     const entryLat=parseFloat(lat)||initLat, entryLng=parseFloat(lng)||initLng;
     const L=window.L;
     const bearing=OCTANT_BEARINGS[portalOrientation]??180;
@@ -4718,6 +5215,17 @@ function MapSelector({ lat, lng, onUpdate, onImport, lumData, luminaireConfig,
         }
       });
     }
+    // El ajuste al eje completo prioriza el contexto y puede dejar los
+    // marcadores pequeños. Al cargar la implantación se acerca un nivel sin
+    // perder el recorrido completo del túnel.
+    const lumZoomKey=[mapMode,lat,lng,tunnelGeometry?.length,
+      lumData?.tube_length_m,lumZones.length].join('|');
+    if(mapMode!=='terrain3d'&&mapRef.current&&lumZoomKeyRef.current!==lumZoomKey){
+      lumZoomKeyRef.current=lumZoomKey;
+      requestAnimationFrame(()=>{
+        try{mapRef.current.setZoom(Math.min(19,mapRef.current.getZoom()+1),{animate:false});}catch(_){ }
+      });
+    }
   }, [lumData,showLum,lat,lng,portalOrientation,tunnelWidth,mapMode,
       luminaireConfig?.wall_offset_m,tunnelGeometry]);
 
@@ -4730,6 +5238,13 @@ function MapSelector({ lat, lng, onUpdate, onImport, lumData, luminaireConfig,
   const toggleTool = (tool) => {
     if(activeTool===tool){clearMeasure();setActiveTool('none');}
     else{clearMeasure();setActiveTool(tool);}
+  };
+  const zoomToLuminaires = () => {
+    if(mapMode==='terrain3d'){
+      try{map3dRef.current?.easeTo({zoom:Math.min(19,map3dRef.current.getZoom()+1),duration:250});}catch(_){ }
+    } else {
+      try{mapRef.current?.setZoom(Math.min(19,mapRef.current.getZoom()+1),{animate:true});}catch(_){ }
+    }
   };
 
   // ── Tunnel management ─────────────────────────────
@@ -5088,6 +5603,12 @@ function MapSelector({ lat, lng, onUpdate, onImport, lumData, luminaireConfig,
               💡
             </button>
           )}
+          {lumData&&showLum&&(
+            <button onClick={zoomToLuminaires} title="Acercar un nivel a las luminarias"
+              style={{width:34,height:34,borderRadius:8,border:'1px solid rgba(0,0,0,.2)',background:'#fff',cursor:'pointer',display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 1px 5px rgba(0,0,0,.25)',color:'var(--salvi-black)',fontSize:'16px'}}>
+              🔎
+            </button>
+          )}
         </div>
 
         <div style={{position:'absolute',bottom:6,right:10,zIndex:600,background:'rgba(30,30,30,.72)',color:'#fff',borderRadius:4,padding:'2px 7px',fontSize:'.6rem',letterSpacing:'.05em',fontWeight:600,pointerEvents:'none'}}>
@@ -5423,9 +5944,10 @@ function _tunnelCrossSectionPoints3D(W, H, shape, Hp) {
 }
 
 function Tunnel3DDrive({ lumList, W_m, H_m, shape, H_pared_m, tubeLength, mountH, speedKmh = 80,
-                          roadSurface = 'dark_asphalt', numLanes = 2, laneWidthM = 3.5,
-                          shoulderLeftM = 0, shoulderRightM = 0, sidewalkLeftM = 0, sidewalkRightM = 0, cct = '4000K',
-                          rhoWall = 0.40, rhoCeiling = 0.25, routeGeometry = [] }) {
+                           roadSurface = 'dark_asphalt', numLanes = 2, laneWidthM = 3.5,
+                           shoulderLeftM = 0, shoulderRightM = 0, sidewalkLeftM = 0, sidewalkRightM = 0, cct = '4000K',
+                           rhoWall = 0.40, rhoCeiling = 0.25, routeGeometry = [],
+                           sceneOptions = [], initialSceneKey = 'sunny' }) {
   const mountRef = React.useRef(null);
   const engineRef = React.useRef(null);
   const fileInputRef = React.useRef(null);
@@ -5439,6 +5961,7 @@ function Tunnel3DDrive({ lumList, W_m, H_m, shape, H_pared_m, tubeLength, mountH
   const [imgOffY, setImgOffY] = React.useState(0);
   const [imgZoom, setImgZoom] = React.useState(1);
   const [showGuide, setShowGuide] = React.useState(true);
+  const [videoSceneKey, setVideoSceneKey] = React.useState(initialSceneKey || 'sunny');
   const speedRef = React.useRef(speed);
   const laneIdxRef = React.useRef(null);
   // "lightIntensity" ahora controla la EXPOSICION del tone mapping (ACES
@@ -5448,6 +5971,26 @@ function Tunnel3DDrive({ lumList, W_m, H_m, shape, H_pared_m, tubeLength, mountH
   React.useEffect(() => { speedRef.current = speed; }, [speed]);
   React.useEffect(() => { laneIdxRef.current = laneIdx; }, [laneIdx]);
   React.useEffect(() => { lightIntensityRef.current = lightIntensity; }, [lightIntensity]);
+  React.useEffect(() => {
+    if (sceneOptions.some(option => option.key === initialSceneKey)) {
+      setVideoSceneKey(initialSceneKey);
+    }
+  }, [initialSceneKey, sceneOptions.length]);
+
+  const activeScene = sceneOptions.find(option => option.key === videoSceneKey)
+    || sceneOptions[0]
+    || {key:'sunny', label:'Soleado', color:'#d97706', luminaires:lumList || [], profile:null};
+  const activeLumList = activeScene.luminaires || lumList || [];
+  const activeProfile = activeScene.profile || null;
+  const activeVerification = activeScene.verification || null;
+  const activeLavgValues = _asArr(activeProfile?.fields)
+    .map(field=>Number(field?.Lavg_governing??field?.L))
+    .filter(Number.isFinite);
+  const activeLavgMin = activeLavgValues.length ? Math.min(...activeLavgValues) : null;
+  const activeLavgMax = activeLavgValues.length ? Math.max(...activeLavgValues) : null;
+  const hasRealRoadProfile = !!activeProfile?.available
+    && _asArr(activeProfile?.fields).some(field => _asArr(field?.grid_points)
+      .some(point => Number.isFinite(Number(point?.L))));
 
   const nLanesEff = Math.max(1, parseInt(numLanes) || 2);
   const usesOsmAlignment = _asArr(routeGeometry).filter(point =>
@@ -5467,6 +6010,13 @@ function Tunnel3DDrive({ lumList, W_m, H_m, shape, H_pared_m, tubeLength, mountH
     const width  = mount.clientWidth || 640;
     const height = 380;
     const eyeH   = 1.5;
+
+    // No sustituir una malla CIE 140 ausente por un color de pavimento:
+    // el recorrido debe dejar claro que necesita un perfil fotométrico real.
+    if (!hasRealRoadProfile) {
+      mount.innerHTML = '';
+      return undefined;
+    }
 
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x03040a);
@@ -5560,9 +6110,54 @@ function Tunnel3DDrive({ lumList, W_m, H_m, shape, H_pared_m, tubeLength, mountH
         frame.z+frame.tx*lateral,
       );
     };
+    // El suelo visual no se aproxima con una luz puntual: se reconstruye con
+    // los mismos campos CIE 140 que alimentan Lavg, U0 y Ul. Cada campo aporta
+    // sus puntos x/y, por lo que los máximos y mínimos entre luminarias se
+    // convierten en franjas visibles durante el recorrido.
+    const profileFields = _asArr(activeProfile?.fields).filter(field =>
+      _asArr(field?.grid_points).length > 0
+      && Number.isFinite(Number(field?.field_start))
+      && Number.isFinite(Number(field?.field_end))
+    );
+    const profileValues = profileFields.flatMap(field =>
+      _asArr(field.grid_points).map(point => Number(point?.L)).filter(Number.isFinite)
+    );
+    const profileMin = profileValues.length ? Math.min(...profileValues) : 0;
+    const profileMax = profileValues.length ? Math.max(...profileValues) : 1;
+    const luminanceAt = (xValue, yValue) => {
+      if (!profileFields.length) return null;
+      const field = profileFields.reduce((best, candidate) => {
+        const start = Number(candidate.field_start), end = Number(candidate.field_end);
+        const distance = xValue < start ? start - xValue : xValue > end ? xValue - end : 0;
+        const bestDistance = !best ? Infinity : (
+          xValue < Number(best.field_start)
+            ? Number(best.field_start) - xValue
+            : xValue > Number(best.field_end)
+              ? xValue - Number(best.field_end) : 0
+        );
+        return distance < bestDistance ? candidate : best;
+      }, null);
+      const points = _asArr(field?.grid_points).map(point => ({
+        x:Number(point?.x), y:Number(point?.y), L:Number(point?.L),
+      })).filter(point => Number.isFinite(point.x) && Number.isFinite(point.y) && Number.isFinite(point.L));
+      if (!points.length) return null;
+      const nearest = points.sort((a,b) =>
+        (Math.abs(a.x-xValue) + Math.abs(a.y-yValue))
+        - (Math.abs(b.x-xValue) + Math.abs(b.y-yValue))
+      ).slice(0, 4);
+      const weights = nearest.map(point => 1 / Math.max(0.05,
+        Math.hypot(point.x-xValue, point.y-yValue)));
+      const totalWeight = weights.reduce((sum,value) => sum + value, 0);
+      return nearest.reduce((sum,point,index) => sum + point.L * weights[index], 0)
+        / Math.max(1e-9, totalWeight);
+    };
+    const profileStationValues = profileFields.flatMap(field => [
+      Number(field.field_start), Number(field.field_end),
+      ..._asArr(field.grid_points).map(point => Number(point?.x)),
+    ]).filter(sValue => Number.isFinite(sValue) && sValue > 0.02 && sValue < tubeLength - 0.02);
     const routeStations = [0, tubeLength, ...routeNodes
-      .map(node=>node.s)
-      .filter(sValue=>sValue>0.05 && sValue<tubeLength-0.05)]
+      .map(node=>node.s), ...profileStationValues]
+      .filter(sValue=>sValue>=0 && sValue<=tubeLength)
       .sort((a,b)=>a-b)
       .filter((sValue,index,values)=>index===0||Math.abs(sValue-values[index-1])>0.02)
       .map(sValue=>({s:sValue,frame:_routeFrameAt3D(sValue)}));
@@ -5640,26 +6235,66 @@ function Tunnel3DDrive({ lumList, W_m, H_m, shape, H_pared_m, tubeLength, mountH
       });
     }
 
-    // ── Calzada: color segun el tipo de firme seleccionado ────────────────
+    // ── Calzada: color según los valores CIE 140 del escenario activo ─────
     const roadColor = _ROAD_SURFACE_COLOR_3D[roadSurface] || _ROAD_SURFACE_COLOR_3D.dark_asphalt;
     {
-      const half = W_m / 2;
+      // La malla CIE 140 solo cubre carriles. Arcenes y aceras conservan su
+      // material físico y no reciben por extensión una luminancia de carril.
+      const visualShoulderLeft = Math.max(0, parseFloat(shoulderLeftM) || 0);
+      const visualShoulderRight = Math.max(0, parseFloat(shoulderRightM) || 0);
+      const visualSidewalkLeft = Math.max(0, parseFloat(sidewalkLeftM) || 0);
+      const visualSidewalkRight = Math.max(0, parseFloat(sidewalkRightM) || 0);
+      const visualLaneWidth = Math.max(0.1, parseFloat(laneWidthM) || 3.5);
+      const visualLaneStart = visualSidewalkLeft + visualShoulderLeft;
+      const visualLaneEnd = Math.min(
+        W_m - visualSidewalkRight - visualShoulderRight,
+        visualLaneStart + nLanesEff * visualLaneWidth,
+      );
+      const visualRoadStart = Math.max(0, Math.min(W_m, visualLaneStart));
+      const visualRoadEnd = Math.max(visualRoadStart, Math.min(W_m, visualLaneEnd));
+      const roadSampleCount = Math.max(12, Math.min(28, Math.round(W_m * 2)));
+      const roadSampleYs = Array.from({length:roadSampleCount + 1}, (_, index) =>
+        visualRoadStart + (visualRoadEnd - visualRoadStart) * index / roadSampleCount
+      );
       const roadGeo = new THREE.BufferGeometry();
       const positions=[];
+      const colors=[];
       const indices=[];
+      const baseRoadColor = new THREE.Color(roadColor);
       routeStations.forEach(station=>{
-        const left=_worldPointOnRoute3D(station.s,half,0);
-        const right=_worldPointOnRoute3D(station.s,-half,0);
-        positions.push(left.x,left.y,left.z,right.x,right.y,right.z);
+        roadSampleYs.forEach(yValue=>{
+          const point=_worldPointOnRoute3D(station.s,toWorldZ(yValue),0.012);
+          positions.push(point.x,point.y,point.z);
+          const value=luminanceAt(station.s,yValue);
+          if (profileValues.length) {
+            const profileRange=profileMax-profileMin;
+            const normalized=profileRange<0.001 ? 0.45 : Math.max(0,Math.min(1,
+              (Number(value ?? profileMin)-profileMin) / profileRange));
+            // Escala perceptual deliberada: conserva contraste entre campos sin
+            // fingir que un RGB de pantalla es una medida fotométrica absoluta.
+            const brightness=0.055 + normalized * 0.40;
+            colors.push(brightness*0.82,brightness*0.88,brightness);
+          } else {
+            colors.push(baseRoadColor.r,baseRoadColor.g,baseRoadColor.b);
+          }
+        });
       });
       for(let section=0;section<routeStations.length-1;section++){
-        const a=section*2,b=a+1,c=a+2,d=a+3;
-        indices.push(a,c,b,b,c,d);
+        const offset=section*roadSampleYs.length;
+        const nextOffset=(section+1)*roadSampleYs.length;
+        for(let band=0;band<roadSampleYs.length-1;band++){
+          const a=offset+band,b=a+1,c=nextOffset+band,d=c+1;
+          indices.push(a,c,b,b,c,d);
+        }
       }
       roadGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      roadGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
       roadGeo.setIndex(indices);
       roadGeo.computeVertexNormals();
-      const roadMat = new THREE.MeshStandardMaterial({ color: roadColor, roughness: 1.0 });
+      const roadMat = new THREE.MeshBasicMaterial({
+        vertexColors:true, color:0xffffff, roughness:1.0,
+      });
+      roadMat.toneMapped = false;
       scene.add(new THREE.Mesh(roadGeo, roadMat));
     }
 
@@ -5751,11 +6386,14 @@ function Tunnel3DDrive({ lumList, W_m, H_m, shape, H_pared_m, tubeLength, mountH
 
     // ── Luminarias: esfera emisiva por unidad (color por familia S/M/L) —
     //    posicion, modelo y tilt tal cual los calculo el motor de diseno ──
-    const lumPts = (lumList || []).filter(lm => lm && isFinite(lm.x) && isFinite(lm.y));
+    const lumPts = (activeLumList || []).filter(lm => lm && isFinite(lm.x) && isFinite(lm.y));
     const sphereGeo = new THREE.SphereGeometry(0.14, 10, 8);
     lumPts.forEach((lm) => {
-      const color = _MODEL_COLOR_3D[_familyOf3D(lm.model || lm.pcb)] || 0x93c5fd;
-      const mat = new THREE.MeshBasicMaterial({ color });
+      const color = lm.active === false
+        ? 0x64748b
+        : (_MODEL_COLOR_3D[_familyOf3D(lm.model || lm.pcb)] || 0x93c5fd);
+      const mat = new THREE.MeshBasicMaterial({ color, transparent:lm.active===false,
+        opacity:lm.active===false?0.35:1 });
       // Marcador de luminaria: color identificativo fijo (familia S/M/L), no
       // debe apagarse con la exposicion igual que la pintura vial.
       mat.toneMapped = false;
@@ -5807,13 +6445,17 @@ function Tunnel3DDrive({ lumList, W_m, H_m, shape, H_pared_m, tubeLength, mountH
       while (lo < hi) { mid = (lo + hi) >> 1; sortedLums[mid].x < xCam ? lo = mid + 1 : hi = mid; }
       const startIdx = Math.max(0, lo - Math.ceil(N_LIGHTS / 2));
       for (let i = 0; i < N_LIGHTS; i++) {
-        const lm = sortedLums[startIdx + i];
-        const pl = lightPool[i];
-        if (!lm) { pl.intensity = 0; continue; }
-        pl.position.copy(_worldPointOnRoute3D(lm.x,toWorldZ(lm.y),mountH));
-        pl.intensity = fluxToIntensity3D(lm.flux_lm);
-      }
-    };
+         const lm = sortedLums[startIdx + i];
+         const pl = lightPool[i];
+         if (!lm) { pl.intensity = 0; continue; }
+         pl.position.copy(_worldPointOnRoute3D(lm.x,toWorldZ(lm.y),mountH));
+         // Una luminaria OFF debe desaparecer también del pool dinámico. La
+         // función logarítmica tiene un suelo visual para luminarias pequeñas,
+         // por lo que no se puede aplicar a flujo cero.
+         pl.intensity = lm.active === false || Number(lm.flux_lm||0) <= 0
+           ? 0 : fluxToIntensity3D(lm.flux_lm);
+       }
+     };
 
     // ── Carriles disponibles para el cambio de carril ─────────────────────
     const laneCenters = Array.from({ length: nLanesEff }, (_, i) => toWorldZ(shL + (i + 0.5) * laneW));
@@ -5884,7 +6526,7 @@ function Tunnel3DDrive({ lumList, W_m, H_m, shape, H_pared_m, tubeLength, mountH
       mount.innerHTML = '';
       engineRef.current = null;
     };
-  }, [lumList, W_m, H_m, shape, H_pared_m, tubeLength, mountH, roadSurface, numLanes, laneWidthM,
+  }, [activeLumList, activeProfile, videoSceneKey, W_m, H_m, shape, H_pared_m, tubeLength, mountH, roadSurface, numLanes, laneWidthM,
       shoulderLeftM, shoulderRightM, sidewalkLeftM, sidewalkRightM, cct, rhoWall, rhoCeiling, routeGeometryKey]);
 
   React.useEffect(() => {
@@ -5947,17 +6589,54 @@ function Tunnel3DDrive({ lumList, W_m, H_m, shape, H_pared_m, tubeLength, mountH
                   borderRadius:4,border:'1px solid var(--salvi-line)',background:'#fff',color:'var(--salvi-black)'}}>
           📷 {portalImg ? 'Cambiar foto del portal' : 'Cargar foto del portal'}
         </button>
-        {portalImg && (
-          <button onClick={()=>setPortalImg(null)}
-            style={{padding:'3px 10px',fontSize:'.68rem',fontWeight:600,cursor:'pointer',
-                    borderRadius:4,border:'1px solid var(--salvi-line)',background:'#fff',color:'#b91c1c'}}>
-            ✕ Quitar
-          </button>
-        )}
-      </div>
-      <div style={{position:'relative',width:'100%',height:380,borderRadius:6,overflow:'hidden'}}>
-        <div ref={mountRef} style={{width:'100%',height:'100%'}}/>
-        {portalImg && fadeOpacity > 0.01 && (
+         {portalImg && (
+           <button onClick={()=>setPortalImg(null)}
+             style={{padding:'3px 10px',fontSize:'.68rem',fontWeight:600,cursor:'pointer',
+                     borderRadius:4,border:'1px solid var(--salvi-line)',background:'#fff',color:'#b91c1c'}}>
+             ✕ Quitar
+           </button>
+         )}
+       </div>
+       <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap',marginBottom:7,
+                    padding:'6px 8px',background:'#0b1220',border:'1px solid #1e293b',borderRadius:6}}>
+         <span style={{fontSize:'.62rem',fontWeight:700,color:'#cbd5e1',marginRight:2}}>
+           Escena del vídeo
+         </span>
+         {(sceneOptions.length ? sceneOptions : [activeScene]).map(option=>{
+           const selected=option.key===activeScene.key;
+           const verification=option.verification||{};
+           const profile=option.profile||{};
+           return <button type="button" key={option.key}
+             onClick={()=>setVideoSceneKey(option.key)}
+             title={profile.available
+               ? `${option.label}: perfil CIE 140 cargado`
+               : `${option.label}: perfil CIE 140 pendiente`}
+             style={{padding:'4px 8px',borderRadius:999,cursor:'pointer',
+               border:`1px solid ${selected?(option.color||'#60a5fa'):'#475569'}`,
+               background:selected?(option.color||'#2563eb'):'#111827',
+               color:'#fff',fontSize:'.61rem',fontWeight:selected?700:500,
+               opacity:profile.available||selected?1:.55}}>
+             {option.label}
+           </button>;
+         })}
+         <span style={{fontSize:'.60rem',color:'#cbd5e1',marginLeft:'auto',fontFamily:'monospace'}}>
+           {activeLumList.filter(lm=>Number(lm.flux_lm||0)>0).length} ud · {' '}
+           {activeLumList.reduce((sum,lm)=>sum+Number(lm.current_mA||0),0).toFixed(0)} mA
+           {activeLavgMin!=null && <> · L {activeLavgMin.toFixed(1)}–{activeLavgMax.toFixed(1)} cd/m²</>}
+           {activeVerification?.minimum_U0!=null && <> · U₀ {Number(activeVerification.minimum_U0).toFixed(3)}</>}
+           {activeVerification?.minimum_Ul!=null && <> · Uₗ {Number(activeVerification.minimum_Ul).toFixed(3)}</>}
+         </span>
+       </div>
+       <div style={{position:'relative',width:'100%',height:380,borderRadius:6,overflow:'hidden'}}>
+         <div ref={mountRef} style={{width:'100%',height:'100%'}}/>
+         {!hasRealRoadProfile && (
+           <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',
+                        padding:20,textAlign:'center',color:'#fef3c7',background:'rgba(3,4,10,.92)',fontSize:'.72rem',lineHeight:1.5}}>
+             Perfil de luminancia CIE 140 no disponible para esta escena.<br/>
+             Recalcula el diseño para mostrar la calzada con valores reales.
+           </div>
+         )}
+         {portalImg && fadeOpacity > 0.01 && (
           <div style={{position:'absolute',inset:0,opacity:fadeOpacity,pointerEvents:'none',
                        transition:'opacity .08s linear',overflow:'hidden'}}>
             <img src={portalImg} alt="Boca del túnel"
@@ -7401,6 +8080,7 @@ const DEFAULT_LUM_CONFIG = {
   constructive_min_separation_m: 0.5,
   transition_spacing_step_m: 2.0,
   luminance_margin_pct: 4.0,
+  scene_excess_ratio_pct: 4,   // techo de exceso sobre Lreq: Lest <= Lreq*(1+%); probar 2..15
   auto_physical_reoptimization: true,
   scene_reoptimization_max_spacing_reduction_pct: 35,
   scene_reoptimization_max_attempts: 3,
@@ -9158,6 +9838,17 @@ function LumConfigPanel({ lum, onChange, roadWidthM, heightM, hParedM, tunnelSha
         'U0 mínimo', slider('U0_obj', 0.30, 0.80, 0.01, v => (+v).toFixed(2), v => onChange({U0_obj:parseFloat(v)})),
         'Ul mínimo', slider('Ul_obj', 0.40, 0.90, 0.01, v => (+v).toFixed(2), v => onChange({Ul_obj:parseFloat(v)}))
       )}
+
+      {row2(
+        'Techo exceso Lreq', slider('scene_excess_ratio_pct', 1, 20, 1,
+          v => `${v}% sobre Lreq`,
+          v => onChange({scene_excess_ratio_pct:parseInt(v)})),
+        'Margen diseño', slider('luminance_margin_pct', 0, 15, 1,
+          v => `${v}%`, v => onChange({luminance_margin_pct:parseInt(v)}))
+      )}
+      <div style={{fontSize:'.62rem',color:'var(--salvi-grey)',marginTop:2}}>
+        Lest se mantiene siempre ≥ Lreq (no negociable); este % fija el máximo por encima que admite la curva. Úñelo para ver % vs nº de luminarias.
+      </div>
       <button type="button"
         onClick={()=>{
           const panel=document.getElementById('quality-sensitivity-panel');
@@ -9413,7 +10104,8 @@ function QualitySensitivityPanel({ form, lum, tiltOverrides, tandemOverrides }) 
 // ══════════════════════════════════════════════════════════════════
 // LuminaireSectionEditor — sección interactiva + cálculo + resultados
 // ══════════════════════════════════════════════════════════════════
-const LUMINAIRE_SCENE_DEFINITIONS = [
+// Definicion unica de escenas compartida por las fases Luminarias y Control.
+const SCENE_DEFINITIONS = [
   {key:'sunny',label:'Soleado',factor:1,color:'#d97706'},
   {key:'normal',label:'Normal',factor:.70,color:'#2563eb'},
   {key:'overcast',label:'Cubierto',factor:.30,color:'#64748b'},
@@ -9421,6 +10113,7 @@ const LUMINAIRE_SCENE_DEFINITIONS = [
   {key:'night_normal',label:'Noche normal',factor:0,color:'#334155'},
   {key:'night_reduced',label:'Noche reducida',factor:0,color:'#111827'},
 ];
+const LUMINAIRE_SCENE_DEFINITIONS = SCENE_DEFINITIONS;
 
 function LuminaireSectionEditor({ result, form, onChange, onGoToMap, toolbarSlot }) {
   // Persist lumResult across wizard navigation by seeding from form.luminaires_result
@@ -9439,6 +10132,7 @@ function LuminaireSectionEditor({ result, form, onChange, onGoToMap, toolbarSlot
   const [calcMode,      setCalcMode]      = useState(
     form.calc_mode || form.photometric_result?.calc_mode || 'direct'
   ); // 'direct' | 'radiosity'
+  const [recalcSceneRunning,setRecalcSceneRunning] = useState(false);
   const [activeCalculationPhase, setActiveCalculationPhase] = useState('base');
   const [calculationElapsedS,setCalculationElapsedS] = useState(0);
   const [roi,           setRoi]           = useState({kwhCost:0.15, hoursYear:8760, treatCostM2:15, open:true});
@@ -9448,6 +10142,7 @@ function LuminaireSectionEditor({ result, form, onChange, onGoToMap, toolbarSlot
   const [luminaireSceneKey,setLuminaireSceneKey] = useState(
     form.luminaires_scene_key || 'sunny'
   );
+  const sceneCurrentOverrides=form.scene_current_overrides || {};
 
   // El cálculo CIE 140 de todas las escenas puede llevar varios segundos.
   // El contador confirma que la petición sigue viva en vez de aparentar un
@@ -9483,6 +10178,30 @@ function LuminaireSectionEditor({ result, form, onChange, onGoToMap, toolbarSlot
   const changeCalcMode = mode => {
     setCalcMode(mode);
     onChange('calc_mode',mode);
+  };
+  const recalcActiveLuminaireScene=async()=>{
+    if(recalcSceneRunning||!form.luminaires_result||!luminaireScene?.key) return;
+    setRecalcSceneRunning(true);
+    setError(null);
+    try {
+      const response=await fetch('/api/tunnel/recalc-scene',{
+        method:'POST',headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({...form,luminaire:lum,scene:luminaireScene.key}),
+      });
+      const data=await response.json();
+      if(!data.success) throw new Error(data.error||'No se pudo recalcular la escena.');
+      const previous=form.photometric_result||{};
+      const previousScene=previous.scenarios?.[luminaireScene.key]||{};
+      const nextPhoto={...previous,scenarios:{...(previous.scenarios||{}),[luminaireScene.key]:{
+        ...previousScene,...data.verification,
+      }}};
+      setPhotoResult(nextPhoto);
+      onChange('photometric_result',nextPhoto);
+    } catch(error) {
+      setError(error.message||String(error));
+    } finally {
+      setRecalcSceneRunning(false);
+    }
   };
   const changeTiltOverride = (zoneName,value) => {
     const next={...tiltOverrides,[zoneName]:value};
@@ -9526,6 +10245,32 @@ function LuminaireSectionEditor({ result, form, onChange, onGoToMap, toolbarSlot
     });
     setManualLuminaireOverrides(next);
     onChange('manual_luminaire_overrides',next);
+  };
+  const setSceneCurrentOverride = (row,nextValue) => {
+    if(!row.sceneEditable) return;
+    const requested=Number(nextValue);
+    if(!Number.isFinite(requested)) return;
+    const maxCurrent=Math.max(1,Number(lum.I_max_mA||750));
+    const minCurrent=Math.max(1,(Number(lum.I_min_pct??30)>1
+      ? Number(lum.I_min_pct??30)/100 : Number(lum.I_min_pct??30))*350);
+    const current=requested<=0?0:Math.min(maxCurrent,Math.max(minCurrent,requested));
+    const previous=sceneCurrentOverrides[row.sceneOverrideKey]||{};
+    const original=Number(previous.original_current_mA??row.mA??row.design_mA??0);
+    const next={...sceneCurrentOverrides};
+    if(Math.abs(current-original)<1e-8) delete next[row.sceneOverrideKey];
+    else next[row.sceneOverrideKey]={original_current_mA:original,current_mA:current};
+    onChange('scene_current_overrides',next);
+  };
+  const resetSceneCurrentOverride = row => {
+    if(!sceneCurrentOverrides[row.sceneOverrideKey]) return;
+    const next={...sceneCurrentOverrides};
+    delete next[row.sceneOverrideKey];
+    onChange('scene_current_overrides',next);
+  };
+  const toggleSceneState = row => {
+    if(!row.sceneEditable) return;
+    if(row.sceneCurrentOverride?.current_mA>0 || row.mA>0) setSceneCurrentOverride(row,0);
+    else setSceneCurrentOverride(row,row.sceneCurrentOverride?.original_current_mA||row.design_mA||350);
   };
   const resetAllManualLuminaires = () => {
     setManualLuminaireOverrides({});
@@ -9606,11 +10351,35 @@ function LuminaireSectionEditor({ result, form, onChange, onGoToMap, toolbarSlot
       const fraction=Math.min(1,Math.max(0,(Number(s)-exitStart)/(exitEnd-exitStart)));
       return Math.max(0,selectedSceneLin+fraction*(exitTarget-selectedSceneLin));
     };
+    // Fuente normativa de Lreq: la L_required real del perfil CIE 140 de
+    // esta escena (misma serie que la fase Control y el informe). Solo se
+    // usa la escala Lin + factor*(L-Lin) como respaldo cuando no hay perfil.
+    const profileRequiredAt=s=>{
+      const source=(selectedSceneProfile?.fields||[])
+        .filter(item=>Number.isFinite(Number(item?.s)))
+        .map(item=>({s:Number(item.s), value:Number(item?.L_required)}))
+        .filter(item=>Number.isFinite(item.value))
+        .sort((a,b)=>a.s-b.s);
+      if(!source.length) return null;
+      if(source.length===1||Number(s)<=source[0].s) return source[0].value;
+      if(Number(s)>=source[source.length-1].s) return source[source.length-1].value;
+      for(let i=1;i<source.length;i++){
+        const low=source[i-1], high=source[i];
+        if(Number(s)<=high.s){
+          const span=Math.max(1e-9,high.s-low.s);
+          return low.value+(high.value-low.value)*((Number(s)-low.s)/span);
+        }
+      }
+      return source[source.length-1].value;
+    };
     const sceneData=originalData.map(point=>{
       const zone=String(point.zone||'').toUpperCase();
       const designRequired=Number(point.L||0);
+      const profileLreq=profileRequiredAt(Number(point.s));
       let L;
-      if(luminaireScene.key==='night_normal'||luminaireScene.key==='night_reduced') {
+      if(Number.isFinite(profileLreq)) {
+        L=Math.max(0,profileLreq);
+      } else if(luminaireScene.key==='night_normal'||luminaireScene.key==='night_reduced') {
         L=nightTunnelZones.has(zone)?selectedSceneLin:0;
       } else if(zone==='EXIT') {
         L=Math.max(0,exitRequiredAt(point.s) ?? designRequired);
@@ -9850,6 +10619,42 @@ function LuminaireSectionEditor({ result, form, onChange, onGoToMap, toolbarSlot
                 </div>
               ))}
             </div>
+
+            {(() => {
+              const flicker=lumResult.performance?.flicker||null;
+              if(!flicker) return null;
+              const zones=Object.entries(flicker.zones||{});
+              if(!zones.length) return null;
+              const crit=zones.filter(([k,z])=>z.critical);
+              return (
+                <div style={{marginTop:10,padding:'9px 12px',borderRadius:8,
+                  border:`1px solid ${crit.length?'#fca5a5':'var(--salvi-line)'}`,
+                  background:crit.length?'#fff1f2':'var(--salvi-surface)',fontSize:'.68rem'}}>
+                  <div style={{fontWeight:700,marginBottom:4,color:crit.length?'#991b1b':'var(--salvi-grey)'}}>
+                    ⚡ Parpadeo CIE 88 · f = v/d · banda crítica {flicker.range_hz?.[0]}–{flicker.range_hz?.[1]} Hz
+                  </div>
+                  <div style={{display:'flex',gap:10,flexWrap:'wrap'}}>
+                    {zones.map(([name,z])=>(
+                      <span key={name} style={{display:'inline-flex',gap:4,alignItems:'center',
+                        padding:'2px 8px',borderRadius:999,
+                        background:z.critical?'#fee2e2':'#f3f4f6',
+                        color:z.critical?'#991b1b':'#374151',fontWeight:z.critical?700:500}}>
+                        {name} · {z.frequency_hz} Hz
+                        {z.critical
+                          ? (z.unavoidable?'⚠ inevitable (proyecto)':'⚠ crítico')
+                          : ''}
+                      </span>
+                    ))}
+                  </div>
+                  {crit.some(([k,z])=>z.unavoidable) && (
+                    <div style={{marginTop:6,color:'#92400e'}}>
+                      Algunas zonas críticas no admiten espaciado válido fuera de
+                      la banda (f = v/d): resolver por proyecto.
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
 
             {sceneReoptimization && sceneReoptimization.status!=='not_needed' && (() => {
               const status=sceneReoptimization.status;
@@ -10581,15 +11386,30 @@ function LuminaireSectionEditor({ result, form, onChange, onGoToMap, toolbarSlot
                     const originalX=sp ? parseFloat(sp.s) : sStart+(i+0.5)*dAct;
                     const originalTilt=sp!=null ? sp.tilt_deg : z.tilt_deg;
                     const originalCurrent=sp ? sp.current_mA : z.current_mA;
-                    const fallback={
+                     const fallback={
                       current_mA:z.current_mA,power_w:z.power_w,flux_lm:z.flux_lm,
                       night_current_mA:z.night_current_mA,night_power_w:z.night_power_w,
                       night_flux_lm:z.night_flux_lm,
-                    };
-                    const sceneOperation=operationForLuminaireScene(sp||fallback,z,sceneDef);
-                    const sceneActive=sceneOperation?.state!=='off'
-                      && Number(sceneOperation?.flux_lm||0)>0;
-                    const xPos=manualValues.s ?? originalX;
+                     };
+                     const sceneOverrideKey=`${sceneDef.key}|${z.zone_name}|${Number(sp?.idx)||i+1}`;
+                     const sceneCurrentOverride=sceneOverrideKey
+                       ? sceneCurrentOverrides[sceneOverrideKey] : null;
+                     const sceneEditable=!sceneDef.key.startsWith('night_')
+                       || z.control_layer==='permanent';
+                     const physicalEditable=luminaireAuditMode==='active'
+                       && sceneDef.key==='sunny';
+                     const sceneOperation=operationForLuminaireScene(sp||fallback,z,sceneDef);
+                     const sceneActive=sceneOperation?.state!=='off'
+                       && Number(sceneOperation?.flux_lm||0)>0;
+                     const sceneCurrent=sceneActive
+                       ? Number((sceneCurrentOverride?.current_mA??sceneOperation?.current_mA)||0) : 0;
+                     const effectiveActive=sceneActive&&sceneCurrent>0;
+                     const dali=effectiveActive
+                       ? Math.max(1,Math.min(254,Math.round(254*sceneCurrent/Math.max(1,Number(lum.I_max_mA||750))))) : 0;
+                     const speedMs=Math.max(1,Number(form.speed_kmh||80))/3.6;
+                     const flickerHz=dAct>0?speedMs/dAct:0;
+                     const flickerRange=lumResult?.performance?.flicker?.range_hz||[2.5,15];
+                     const xPos=manualValues.s ?? originalX;
                     const modelId=sp?sp.model:z.model;
                     const physicalYs=physicalLuminaireYPositions(arr,W_m,wo,sp?.idx || i+1);
                     for(const yPos of physicalYs){
@@ -10599,13 +11419,18 @@ function LuminaireSectionEditor({ result, form, onChange, onGoToMap, toolbarSlot
                         zone:z.zone_name,overrideKey,manual,originalX,originalTilt,originalCurrent,
                         x:xPos,y:yPos,model:modelId,modelLabel:_aphexModelLabel(modelId),
                         optic:sp?sp.optic:z.optic,tilt:manualValues.tilt_deg ?? originalTilt,
-                        lumens:sceneActive ? Number(sceneOperation?.flux_lm ?? (sp?sp.flux_lm:z.flux_lm)) : 0,
-                        base_mA:z.control_layer==='permanent'
-                          ? (sp?.base_current_mA ?? sp?.current_mA ?? z.current_mA) : null,
-                        mA:sceneActive ? Number(sceneOperation?.current_mA||0) : 0,
+                         lumens:effectiveActive ? Number(sceneOperation?.flux_lm ?? (sp?sp.flux_lm:z.flux_lm)) : 0,
+                         base_mA:z.control_layer==='permanent'
+                           ? (sp?.base_current_mA ?? sp?.current_mA ?? z.current_mA) : null,
+                         mA:sceneCurrent,dali,
+                         sceneOverrideKey,sceneCurrentOverride,sceneEditable,physicalEditable,
+                         flickerHz,
+                         flickerCritical:flickerHz>=Number(flickerRange[0]||2.5)-1e-9
+                           && flickerHz<=Number(flickerRange[1]||15)+1e-9,
+                         spacingM:dAct,
                         design_mA:manualValues.current_mA ?? originalCurrent,
-                        status:!sceneActive ? 'OFF' : (sceneDef.key==='sunny'&&Object.keys(manualValues).length?'ON · manual':'ON'),
-                        W:sceneActive ? Number((sceneOperation?.power_w ?? (sp?sp.power_w:z.power_w))||0) : 0,
+                         status:!effectiveActive ? 'OFF' : (sceneDef.key==='sunny'&&Object.keys(manualValues).length?'ON · manual':'ON'),
+                         W:effectiveActive ? Number((sceneOperation?.power_w ?? (sp?sp.power_w:z.power_w))||0) : 0,
                         L_req:sp?sp.L_req:z.L_required,L_est:sp?.L_est ?? z.L_estimated,
                         U0:sp?.U0 ?? z.UF,Ul:z.Ul,tandem:sp?.tandem||null,pair:sp?.pair??null,
                       });
@@ -10636,18 +11461,27 @@ function LuminaireSectionEditor({ result, form, onChange, onGoToMap, toolbarSlot
                     return Math.abs(Number(a.s)-Number(lm.x))-Math.abs(Number(b.s)-Number(lm.x));
                   })[0];
                 };
-                rows.forEach(lm=>{
-                  const field=fieldForLuminaire(lm);
-                  if(!field) return;
-                  const Lavg=Number(field.Lavg_governing??field.L);
-                  const Lreq=Number(field.L_required);
-                  if(!Number.isFinite(Lavg)||!Number.isFinite(Lreq)||Lreq<=0) return;
-                  lm.governingField={
-                    start:Number(field.field_start),end:Number(field.field_end),
-                    lane:Number(field.governing_lane_number??field.observer_lane_number??1),
-                    direction:Number(field.governing_direction??field.observer_direction??1),
-                    Lavg,Lreq,ratio:Lavg/Lreq,
-                  };
+                 rows.forEach(lm=>{
+                   const field=fieldForLuminaire(lm);
+                   if(!field) return;
+                   // U0 y Ul deben proceder de la misma malla CIE 140 que
+                   // gobierna Lavg/Lreq en esta escena, no del setpoint de
+                   // diseño (que puede conservar 0 como valor histórico).
+                   const fieldU0=Number(field.U0);
+                   const fieldUl=Number(field.Ul);
+                   if(Number.isFinite(fieldU0)) lm.U0=fieldU0;
+                   if(Number.isFinite(fieldUl)) lm.Ul=fieldUl;
+                   const Lavg=Number(field.Lavg_governing??field.L);
+                   const Lreq=Number(field.L_required);
+                   if(!Number.isFinite(Lavg)||!Number.isFinite(Lreq)||Lreq<=0) return;
+                   lm.governingField={
+                     start:Number(field.field_start),end:Number(field.field_end),
+                     lane:Number(field.governing_lane_number??field.observer_lane_number??1),
+                     direction:Number(field.governing_direction??field.observer_direction??1),
+                     Lavg,Lreq,ratio:Lavg/Lreq,
+                     U0:Number.isFinite(fieldU0)?fieldU0:null,
+                     Ul:Number.isFinite(fieldUl)?fieldUl:null,
+                   };
                 });
                 return rows;
               };
@@ -10673,10 +11507,12 @@ function LuminaireSectionEditor({ result, form, onChange, onGoToMap, toolbarSlot
                 { type:'num',  get: lm => (lm.d_nxt==='—' ? null : parseFloat(lm.d_nxt)) },
                 { type:'text', get: lm => lm.optic || '' },
                 { type:'num',  get: lm => lm.tilt!=null ? parseFloat(lm.tilt) : null },
-                { type:'num',  get: lm => lm.lumens!=null ? parseFloat(lm.lumens) : null },
-                 { type:'num',  get: lm => lm.base_mA!=null ? parseFloat(lm.base_mA) : null },
-                 { type:'num',  get: lm => lm.mA!=null ? parseFloat(lm.mA) : null },
-                 { type:'text', get: lm => lm.status },
+                  { type:'num',  get: lm => lm.lumens!=null ? parseFloat(lm.lumens) : null },
+                  { type:'num',  get: lm => lm.base_mA!=null ? parseFloat(lm.base_mA) : null },
+                  { type:'num',  get: lm => lm.design_mA!=null ? parseFloat(lm.design_mA) : null },
+                  { type:'num',  get: lm => lm.mA!=null ? parseFloat(lm.mA) : null },
+                  { type:'num',  get: lm => lm.dali },
+                  { type:'text', get: lm => lm.status },
                  { type:'num',  get: lm => lm.W!=null ? parseFloat(lm.W) : null },
                  { type:'text', get: lm => lm.modelLabel || lm.model || '' },
                  { type:'text', get: lm => lm.governingField
@@ -10685,7 +11521,8 @@ function LuminaireSectionEditor({ result, form, onChange, onGoToMap, toolbarSlot
                  { type:'num',  get: lm => lm.governingField?.Lreq ?? null },
                  { type:'num',  get: lm => lm.governingField?.ratio ?? null },
                  { type:'num',  get: lm => lm.U0 },
-                { type:'num',  get: lm => lm.Ul },
+                 { type:'num',  get: lm => lm.Ul },
+                 { type:'num',  get: lm => lm.flickerHz },
                 ...(hasGPS ? [
                   { type:'num', get: lm => parseFloat(_lumGPS(lm.x, lm.y)[0]) },
                   { type:'num', get: lm => parseFloat(_lumGPS(lm.x, lm.y)[1]) },
@@ -10730,12 +11567,18 @@ function LuminaireSectionEditor({ result, form, onChange, onGoToMap, toolbarSlot
                 if(luminaireAuditMode==='all' && a.sceneRank!==b.sceneRank) {
                   return a.sceneRank-b.sceneRank;
                 }
-                const value=lm=>({
-                  id:lm.id,
-                  x:Number(lm.x),
-                  state:lm.status==='OFF'?1:0,
-                  power:Number(lm.W||0),
-                })[lumSort.key];
+                 const value=lm=>({
+                   id:lm.id,
+                   x:Number(lm.x),
+                   state:lm.status==='OFF'?1:0,
+                   power:Number(lm.W||0),
+                   spacing:Number(lm.d_nxt||0),tilt:Number(lm.tilt||0),
+                   flux:Number(lm.lumens||0),base:Number(lm.base_mA||0),
+                   design:Number(lm.design_mA||0),current:Number(lm.mA||0),
+                   dali:Number(lm.dali||0),Lavg:Number(lm.governingField?.Lavg||0),
+                   ratio:Number(lm.governingField?.ratio||0),U0:Number(lm.U0||0),
+                   Ul:Number(lm.Ul||0),flicker:Number(lm.flickerHz||0),
+                 })[lumSort.key];
                 const av=value(a), bv=value(b);
                 const compared=typeof av==='number'&&typeof bv==='number'
                   ? av-bv : String(av).localeCompare(String(bv),'es');
@@ -10745,11 +11588,11 @@ function LuminaireSectionEditor({ result, form, onChange, onGoToMap, toolbarSlot
               });
               const LUM_HEADERS=[
                 ...(luminaireAuditMode==='all' ? [['Escena',null]] : []),
-                ['ID','id'],['Zona',null],['Par',null],['x (m)','x'],['y (m)',null],
-                ['d→ (m)',null],['Lente',null],['Tilt',null],['Lúmenes (lm)',null],
-                ['mA base',null],[luminaireAuditMode==='all'?'mA escena':`mA ${luminaireScene.label}`,null],['Estado','state'],['W','power'],
-                ['Modelo Aphex',null],['Campo CIE 140',null],['Lest gob.',null],
-                ['Lreq',null],['Lavg/Lreq',null],['U0',null],['Ul',null],
+                 ['ID','id'],['Zona',null],['Par',null],['x (m)','x'],['y (m)',null],
+                 ['d→ (m)','spacing'],['Lente',null],['Tilt','tilt'],['Lúmenes (lm)','flux'],
+                 ['mA base','base'],['mA diseño','design'],[luminaireAuditMode==='all'?'mA escena':`mA ${luminaireScene.label}`,'current'],['DALI est.','dali'],['Estado','state'],['W','power'],
+                 ['Modelo Aphex',null],['Campo CIE 140',null],['Lest gob.',null],
+                 ['Lreq',null],['Lavg/Lreq','ratio'],['U0','U0'],['Ul','Ul'],['Flicker','flicker'],
                 ...(hasGPS?[['Lat',null],['Lon',null]]:[]),
               ];
               const lumFiltersActive = Object.values(lumFilters).some(v => v);
@@ -10758,23 +11601,25 @@ function LuminaireSectionEditor({ result, form, onChange, onGoToMap, toolbarSlot
                  sin depender de ninguna libreria externa; Excel lo abre nativamente. */
               const exportLumListXls = () => {
                 const headers = [...(luminaireAuditMode==='all'?['Escena']:[]),
-                  ...['ID','Zona','Par','x (m)','y (m)','d→ (m)','Óptica',
-                  'Tilt (°)','Lúmenes (lm)','mA base',luminaireAuditMode==='all'?'mA escena':`mA ${luminaireScene.label}`,'Estado','W','Modelo Aphex',
-                  'Campo CIE 140 (m)','Lest gob. (cd/m²)','Lreq (cd/m²)','Lest/Lreq','U0','Ul'], ...(hasGPS?['Lat','Lon']:[])];
+                   ...['ID','Zona','Par','x (m)','y (m)','d→ (m)','Óptica',
+                    'Tilt (°)','Lúmenes (lm)','mA base','mA diseño',luminaireAuditMode==='all'?'mA escena':`mA ${luminaireScene.label}`,'DALI est.','Estado','W','Modelo Aphex',
+                   'DALI est.','Campo CIE 140 (m)','Lest gob. (cd/m²)','Lreq (cd/m²)','Lest/Lreq','U0','Ul','Flicker (Hz)'], ...(hasGPS?['Lat','Lon']:[])];
                 const rows = sortedLumList.map(lm => {
                   const row = [
                     ...(luminaireAuditMode==='all'?[lm.sceneLabel]:[]),
                     lm.id, lm.zone, lm.tandem||'', lm.x.toFixed(1), lm.y.toFixed(2), lm.d_nxt,
-                    lm.optic||'', lm.tilt!=null?parseFloat(lm.tilt).toFixed(0):'0',
-                    lm.lumens?Math.round(parseFloat(lm.lumens)):'',
-                    lm.base_mA!=null?Math.round(parseFloat(lm.base_mA)):'',
-                    lm.mA?Math.round(parseFloat(lm.mA)):'', lm.status, lm.W?Math.round(parseFloat(lm.W)):'',
+                     lm.optic||'', lm.tilt!=null?parseFloat(lm.tilt).toFixed(0):'0',
+                     lm.lumens?Math.round(parseFloat(lm.lumens)):'',
+                      lm.base_mA!=null?Math.round(parseFloat(lm.base_mA)):'',
+                      lm.design_mA!=null?Math.round(parseFloat(lm.design_mA)):'',
+                      lm.mA?Math.round(parseFloat(lm.mA)):'', lm.dali||'', lm.status, lm.W?Math.round(parseFloat(lm.W)):'',
                     lm.modelLabel||lm.model||'',
                     lm.governingField?`${lm.governingField.start.toFixed(1)}–${lm.governingField.end.toFixed(1)} · C${lm.governingField.lane}`:'',
                     lm.governingField?lm.governingField.Lavg.toFixed(1):'',
                     lm.governingField?lm.governingField.Lreq.toFixed(1):'',
-                    lm.governingField?lm.governingField.ratio.toFixed(3):'',
-                    lm.U0!=null?parseFloat(lm.U0).toFixed(3):'', lm.Ul!=null?parseFloat(lm.Ul).toFixed(3):'',
+                     lm.governingField?lm.governingField.ratio.toFixed(3):'',
+                     lm.U0!=null?parseFloat(lm.U0).toFixed(3):'', lm.Ul!=null?parseFloat(lm.Ul).toFixed(3):'',
+                     lm.flickerHz!=null?parseFloat(lm.flickerHz).toFixed(1):'',
                   ];
                   if (hasGPS) { const [lt,ln]=_lumGPS(lm.x,lm.y); row.push(lt,ln); }
                   return row;
@@ -10842,6 +11687,12 @@ function LuminaireSectionEditor({ result, form, onChange, onGoToMap, toolbarSlot
                         ↶ Restablecer {Object.keys(manualLuminaireOverrides).length} modificaciones
                       </button>
                     )}
+                    <button type="button" onClick={recalcActiveLuminaireScene}
+                      disabled={recalcSceneRunning||!form.luminaires_result}
+                      style={{padding:'3px 10px',fontSize:'.68rem',fontWeight:600,cursor:'pointer',
+                        borderRadius:4,border:'1px solid #7c3aed',background:'#f5f3ff',color:'#5b21b6'}}>
+                      {recalcSceneRunning?'Recalculando escena…':'🔄 Recalcular escena'}
+                    </button>
                     <button onClick={exportLumListXls}
                       style={{marginLeft:lumFiltersActive?0:'auto',padding:'3px 10px',fontSize:'.68rem',fontWeight:600,
                         cursor:'pointer',borderRadius:4,border:'1px solid var(--salvi-line)',
@@ -10930,18 +11781,40 @@ function LuminaireSectionEditor({ result, form, onChange, onGoToMap, toolbarSlot
                               <td style={{padding:'2px 6px',textAlign:'right',fontFamily:'monospace',fontWeight:600}}>
                                 {lm.lumens?Math.round(parseFloat(lm.lumens)).toLocaleString('es-ES'):'-'}
                               </td>
-                              <td style={{padding:'2px 6px',textAlign:'right',color:'#64748b'}}>
-                                {lm.base_mA!=null?Math.round(parseFloat(lm.base_mA)):'—'}
-                              </td>
-                              <td style={{padding:'2px 6px',textAlign:'right',fontWeight:600}}>
-                                {luminaireAuditMode==='active'&&luminaireScene.key==='sunny'
-                                  ? editNumber(lm,'current_mA',lm.design_mA,lm.originalCurrent,{min:0,max:lum.I_max_mA||1000,step:1,digits:0,width:55})
-                                  : (lm.status==='OFF'?'—':Math.round(lm.mA))}
-                              </td>
-                              <td style={{padding:'2px 6px',textAlign:'left',fontWeight:700,
-                                  color:lm.status==='OFF'?'#64748b':lm.manual?'#b45309':'#166534'}}>
-                                {lm.status}
-                              </td>
+                               <td style={{padding:'2px 6px',textAlign:'right',color:'#64748b'}}>
+                                 {lm.base_mA!=null?Math.round(parseFloat(lm.base_mA)):'—'}
+                               </td>
+                               <td style={{padding:'2px 6px',textAlign:'right',fontWeight:600}}>
+                                 {lm.physicalEditable
+                                   ? editNumber(lm,'current_mA',lm.design_mA,lm.originalCurrent,{min:0,max:lum.I_max_mA||1000,step:1,digits:0,width:55})
+                                   : (lm.design_mA!=null?Math.round(Number(lm.design_mA)):'—')}
+                               </td>
+                               <td style={{padding:'2px 6px',textAlign:'right',fontWeight:600}}>
+                                  {lm.sceneEditable ? <>
+                                   <input type="number" min="0" max={lum.I_max_mA||1000} step="1"
+                                     value={Number(lm.sceneCurrentOverride?.current_mA??lm.mA).toFixed(0)}
+                                     onChange={event=>setSceneCurrentOverride(lm,event.target.value)}
+                                     style={{width:52,textAlign:'right',fontFamily:'monospace',fontSize:'.62rem',padding:'1px 3px',
+                                       border:`1px solid ${lm.sceneCurrentOverride?'#f59e0b':'transparent'}`,borderRadius:3,
+                                       background:lm.sceneCurrentOverride?'#fffbeb':'transparent',fontWeight:600}}/>
+                                   {lm.sceneCurrentOverride&&<button type="button" onClick={()=>resetSceneCurrentOverride(lm)}
+                                     title="Restablecer la consigna de esta escena"
+                                     style={{marginLeft:2,padding:'0 2px',cursor:'pointer',border:'none',background:'transparent',color:'#b45309',fontWeight:700}}>↶</button>}
+                                 </> : (lm.status==='OFF'?'—':Math.round(lm.mA))}
+                               </td>
+                               <td style={{padding:'2px 6px',textAlign:'right'}}>{lm.dali||'—'}</td>
+                               <td style={{padding:'2px 6px',textAlign:'left',fontWeight:700,
+                                   color:lm.status==='OFF'?'#64748b':lm.manual?'#b45309':'#166534'}}>
+                                  {lm.sceneEditable ? <button type="button" onClick={()=>toggleSceneState(lm)}
+                                   title={lm.status==='OFF'?'Encender luminaria en esta escena':'Apagar luminaria en esta escena'}
+                                   style={{border:lm.status==='OFF'?'1px solid #94a3b8':'1px solid #16a34a',
+                                     background:lm.status==='OFF'?'#f8fafc':'#f0fdf4',
+                                     color:lm.status==='OFF'?'#475569':'#166534',borderRadius:999,
+                                     padding:'1px 7px',fontSize:'.60rem',fontWeight:700,cursor:'pointer'}}>
+                                   {lm.status==='OFF'?'OFF':'ON'}
+                                 </button> : lm.status}
+                                 {lm.sceneCurrentOverride&&<span style={{color:'#b45309',fontSize:'.58rem'}}> · pendiente</span>}
+                               </td>
                               <td style={{padding:'2px 6px',textAlign:'right'}}>{lm.W?Math.round(parseFloat(lm.W)):'-'}</td>
                               <td style={{padding:'2px 6px',textAlign:'right',whiteSpace:'nowrap'}}
                                   title="Modelo-driver nominal; W es la potencia real al punto de corriente mostrado">
@@ -10967,12 +11840,16 @@ function LuminaireSectionEditor({ result, form, onChange, onGoToMap, toolbarSlot
                                     :`Cumple: Lavg ${governing.Lavg.toFixed(2)} ≥ Lreq ${governing.Lreq.toFixed(2)} cd/m²`):undefined}>
                                 {governing?governing.ratio.toFixed(3):'—'}{insufficient?' ⚠':''}
                               </td>
-                              <td style={{padding:'2px 6px',textAlign:'right',color:lm.U0!=null&&lm.U0<0.40?'#b91c1c':'#64748b'}}>
-                                {lm.U0!=null?parseFloat(lm.U0).toFixed(3):'—'}
-                              </td>
-                              <td style={{padding:'2px 6px',textAlign:'right',color:lm.Ul!=null&&lm.Ul<0.60?'#b91c1c':'#64748b'}}>
-                                {lm.Ul!=null?parseFloat(lm.Ul).toFixed(3):'—'}
-                              </td>
+                               <td style={{padding:'2px 6px',textAlign:'right',color:lm.U0!=null&&lm.U0<0.40?'#b91c1c':'#64748b'}}>
+                                 {lm.U0!=null?parseFloat(lm.U0).toFixed(3):'—'}
+                               </td>
+                               <td style={{padding:'2px 6px',textAlign:'right',color:lm.Ul!=null&&lm.Ul<0.60?'#b91c1c':'#64748b'}}>
+                                 {lm.Ul!=null?parseFloat(lm.Ul).toFixed(3):'—'}
+                               </td>
+                               <td style={{padding:'2px 6px',textAlign:'right',whiteSpace:'nowrap',
+                                 color:lm.flickerCritical?'#b91c1c':'#64748b',fontWeight:lm.flickerCritical?700:400}}>
+                                 {lm.flickerHz>0?`${lm.flickerHz.toFixed(1)}${lm.flickerCritical?' ⚠':''}`:'—'}
+                               </td>
                               {hasGPS&&(()=>{const [lt,ln]=_lumGPS(lm.x,lm.y);return(<>
                                 <td style={{padding:'2px 6px',textAlign:'right',fontFamily:'monospace',fontSize:'.59rem',color:'#0ea5e9'}}>{lt}</td>
                                 <td style={{padding:'2px 6px',textAlign:'right',fontFamily:'monospace',fontSize:'.59rem',color:'#0ea5e9'}}>{ln}</td>
@@ -11010,29 +11887,50 @@ function LuminaireSectionEditor({ result, form, onChange, onGoToMap, toolbarSlot
               const tubeLen3 = parseFloat(result?.summary?.length_m)
                 || zoneList.reduce((m,z)=>Math.max(m,parseFloat(z.s_end)||0),0);
 
-              const lumList3 = [];
-              zoneList.filter(z=>z.n_luminaires>0).forEach(z=>{
-                const nPositions = luminairePositionCount(z);
-                const hasSP  = z.setpoints && z.setpoints.length===nPositions;
-                const dAct   = parseFloat(z.d_used)||1;
-                const sStart = parseFloat(z.s_start)||0;
-                for(let i=0;i<nPositions;i++){
-                  const sp      = hasSP ? z.setpoints[i] : null;
-                  const xPos    = sp ? parseFloat(sp.s) : sStart+(i+0.5)*dAct;
-                  const model   = sp ? sp.model : z.model;
-                  const tilt    = sp?.tilt_deg ?? z.tilt_deg ?? 0;
-                  const fluxLm  = parseFloat(sp?.flux_lm ?? z.flux_lm) || 0;
-                  const physicalYs = physicalLuminaireYPositions(
-                    arr3, W_m3, wo3, sp?.idx || i + 1,
-                  );
-                  for(const yPos of physicalYs){ lumList3.push({ x:xPos, y:yPos, model, tilt, flux_lm:fluxLm }); }
-                }
-              });
-
-              if (!lumList3.length || !(tubeLen3>0)) return null;
-              return (
-                <Tunnel3DDrive lumList={lumList3} W_m={W_m3} H_m={H_m3} shape={shape3}
-                  H_pared_m={Hp_m3} tubeLength={tubeLen3} mountH={mountH3}
+               const buildVideoScene = sceneDef => {
+                 const sceneLumList=[];
+                 zoneList.filter(z=>z.n_luminaires>0).forEach(z=>{
+                   const nPositions = luminairePositionCount(z);
+                   const hasSP  = z.setpoints && z.setpoints.length===nPositions;
+                   const dAct   = parseFloat(z.d_used)||1;
+                   const sStart = parseFloat(z.s_start)||0;
+                   for(let i=0;i<nPositions;i++){
+                     const sp=hasSP ? z.setpoints[i] : {
+                       idx:i+1,s:sStart+(i+0.5)*dAct,model:z.model,optic:z.optic,
+                       tilt_deg:z.tilt_deg,current_mA:z.current_mA,power_w:z.power_w,
+                       flux_lm:z.flux_lm,night_current_mA:z.night_current_mA,
+                       night_power_w:z.night_power_w,night_flux_lm:z.night_flux_lm,
+                     };
+                     const operation=operationForLuminaireScene(sp,z,sceneDef);
+                     const xPos=parseFloat(sp.s);
+                     const physicalYs=physicalLuminaireYPositions(
+                       arr3, W_m3, wo3, sp.idx || i + 1,
+                     );
+                     physicalYs.forEach(yPos=>sceneLumList.push({
+                       x:xPos,y:yPos,model:sp.model||z.model,tilt:sp.tilt_deg??z.tilt_deg??0,
+                       flux_lm:Number(operation?.flux_lm||0),
+                       current_mA:Number(operation?.current_mA||0),
+                       power_w:Number(operation?.power_w||0),
+                       active:operation?.state!=='off'&&Number(operation?.flux_lm||0)>0,
+                     }));
+                   }
+                 });
+                 return {
+                   ...sceneDef,
+                   luminaires:sceneLumList,
+                   profile:profileForLuminaireScene(sceneDef.key),
+                   verification:photoResult?.scenarios?.[sceneDef.key]||null,
+                 };
+               };
+               const sceneOptions3=LUMINAIRE_SCENE_DEFINITIONS.map(buildVideoScene);
+               const activeVideoScene=sceneOptions3.find(item=>item.key===luminaireScene.key)
+                 ||sceneOptions3[0];
+               if (!activeVideoScene?.luminaires?.length || !(tubeLen3>0)) return null;
+               return (
+                 <Tunnel3DDrive lumList={activeVideoScene.luminaires}
+                   sceneOptions={sceneOptions3} initialSceneKey={luminaireScene.key}
+                   W_m={W_m3} H_m={H_m3} shape={shape3}
+                   H_pared_m={Hp_m3} tubeLength={tubeLen3} mountH={mountH3}
                   speedKmh={parseFloat(form.speed_kmh)||80}
                   roadSurface={form.road_surface||'dark_asphalt'}
                   numLanes={parseInt(form.num_lanes)||2}

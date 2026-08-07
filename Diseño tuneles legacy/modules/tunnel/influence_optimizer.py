@@ -489,6 +489,7 @@ def _solve_semicontinuous_fluxes_minimax(
     continuous_mask: np.ndarray | None = None,
     cost_weights: np.ndarray | None = None,
     time_limit_s: float = 8.0,
+    excess_cap: float | None = None,
 ) -> tuple[np.ndarray, bool, str, float]:
     """MILP mixto para regulación y selección de luminarias.
 
@@ -555,7 +556,14 @@ def _solve_semicontinuous_fluxes_minimax(
         np.array([0.0]),
     ))
     col_upper = np.ones(n_variables, dtype=float)
-    col_upper[-1] = highspy.kHighsInf
+    # ``u`` es el exceso maximo sobre Lreq. Con ``excess_cap`` se fuerza
+    # Lcalc <= Lreq * (1 + cap) como restriccion dura; si el hardware no
+    # lo permite el modelo resulta infeasible y el llamador reintenta sin
+    # cota.
+    col_upper[-1] = (
+        max(0.0, float(excess_cap))
+        if excess_cap is not None else highspy.kHighsInf
+    )
     fixed = np.asarray(fixed_fractions, dtype=float)
     fixed_mask = np.isfinite(fixed)
     fixed_indices = np.flatnonzero(fixed_mask)
@@ -678,6 +686,7 @@ def optimize_layered_scene_fluxes(
     max_iters: int = 1200,
     sample_step_m: float = 4.0,
     mip_time_limit_s: float = 2.0,
+    excess_cap: float | None = 0.04,
 ) -> tuple[list[str], dict]:
     """Regula globalmente escenas diurnas sobre el hardware ya instalado.
 
@@ -1247,19 +1256,60 @@ def optimize_layered_scene_fluxes(
         # Un driver no puede materializar flujos entre 0 e Imin. Esto aplica
         # igualmente a SOLEADO: usar LP continuo sólo allí hacía que BASE
         # quedase fija y que el redondeo posterior alterase su cierre CIE 140.
-        fractions, feasible, method, excess = (
-            _solve_semicontinuous_fluxes_minimax(
-                scaled_rows,
-                required,
-                target,
-                floor_fractions,
-                scene_fixed_fractions,
-                monotonic_blocks=monotonic_blocks,
-                continuous_mask=scene_continuous_mask,
-                cost_weights=power_costs,
-                time_limit_s=min(8.0, max(2.0, float(mip_time_limit_s))),
+        # Opcion C: se intenta primero la cota dura Lcalc <= Lreq*(1+cap).
+        # Si el hardware instalado no la permite, se reintenta sin cota y
+        # se registra que el exceso factible queda por encima del 4 %.
+        cap_achieved: bool | None = None
+        if excess_cap is not None and float(excess_cap) > 0.0:
+            # Ventana [Lreq, Lreq*(1+cap)]: la cota inferior usa Lreq sin
+            # el margen reservado para que la cota superior del 4 % no
+            # quede reducida a un punto unico. El mapeo a corrientes
+            # discretas redondea hacia arriba y el ajuste exacto posterior
+            # recorta hasta el techo.
+            capped_target = required
+            fractions, feasible, method, excess = (
+                _solve_semicontinuous_fluxes_minimax(
+                    scaled_rows,
+                    required,
+                    capped_target,
+                    floor_fractions,
+                    scene_fixed_fractions,
+                    monotonic_blocks=monotonic_blocks,
+                    continuous_mask=scene_continuous_mask,
+                    cost_weights=power_costs,
+                    time_limit_s=min(8.0, max(2.0, float(mip_time_limit_s))),
+                    excess_cap=excess_cap,
+                )
             )
-        )
+            cap_achieved = bool(feasible)
+            if not feasible:
+                fractions, feasible, method, excess = (
+                    _solve_semicontinuous_fluxes_minimax(
+                        scaled_rows,
+                        required,
+                        target,
+                        floor_fractions,
+                        scene_fixed_fractions,
+                        monotonic_blocks=monotonic_blocks,
+                        continuous_mask=scene_continuous_mask,
+                        cost_weights=power_costs,
+                        time_limit_s=min(8.0, max(2.0, float(mip_time_limit_s))),
+                    )
+                )
+        else:
+            fractions, feasible, method, excess = (
+                _solve_semicontinuous_fluxes_minimax(
+                    scaled_rows,
+                    required,
+                    target,
+                    floor_fractions,
+                    scene_fixed_fractions,
+                    monotonic_blocks=monotonic_blocks,
+                    continuous_mask=scene_continuous_mask,
+                    cost_weights=power_costs,
+                    time_limit_s=min(8.0, max(2.0, float(mip_time_limit_s))),
+                )
+            )
         if not feasible:
             capacity_fractions = np.ones(len(groups), dtype=float)
             capacity_fractions[scene_fixed_mask] = (
@@ -1282,6 +1332,10 @@ def optimize_layered_scene_fluxes(
                     if capacity_sufficient
                     else "insufficient_installed_capacity"
                 ),
+                "excess_cap_ratio": (
+                    float(excess_cap) if excess_cap is not None else None
+                ),
+                "excess_cap_achieved": cap_achieved,
                 "local_min_ratio": round(
                     float(np.min(local_ratios)), 4,
                 ),
@@ -1356,6 +1410,10 @@ def optimize_layered_scene_fluxes(
             "min_ratio": round(minimum_ratio, 4),
             "max_ratio": round(float(np.max(ratios)), 4),
             "continuous_excess_pct": round(float(excess) * 100.0, 3),
+            "excess_cap_ratio": (
+                float(excess_cap) if excess_cap is not None else None
+            ),
+            "excess_cap_achieved": cap_achieved,
             **_ratio_diagnostics(
                 calculated,
                 actual_fluxes,

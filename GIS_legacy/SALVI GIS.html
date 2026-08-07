@@ -2755,7 +2755,8 @@ let zoneData = {};
 
 // ─── API HELPERS ──────────────────────────────────────────────────────────
 // ─── AUTH STATE ──────────────────────────────────────────────────────────────
-let _authToken = localStorage.getItem('_salvi_token') || '';
+// Legacy local mode: the API remains usable without creating a user account.
+let _authToken = localStorage.getItem('_salvi_token') || 'local-access';
 let _authUser  = null;
 function _authHdr() { return _authToken ? {'Authorization':'Bearer '+_authToken} : {}; }
 
@@ -11184,6 +11185,7 @@ document.addEventListener('keydown', function(e) {
 // ─── AUTH UI ─────────────────────────────────────────────────────────────────
 function _showLogin(data) {
   const s=document.getElementById('loginScreen'); if(!s) return;
+  if (data && data.local_access) { s.style.display='none'; return; }
   s.style.display='flex';
   const ns=data&&data.needs_setup;
   _loginShowPanel(ns?'setup':'login');
@@ -11329,6 +11331,7 @@ async function _doReset() {
 }
 
 function _logout() {
+  if (_authUser && _authUser.id==='local') return;
   _authToken='';_authUser=null;localStorage.removeItem('_salvi_token');
   const b=document.getElementById('userBadge'); if(b) b.style.display='none';
   _showLogin({});

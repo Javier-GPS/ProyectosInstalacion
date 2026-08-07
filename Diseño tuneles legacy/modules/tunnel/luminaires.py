@@ -2425,6 +2425,7 @@ def _build_layered_physical_layout(
     I_min_pct: float,
     base_design_margin: float,
     adaptation_spacing_override_m: float | None = None,
+    flicker_fix_spacing_caps: dict | None = None,
 ) -> Tuple[List[ZoneLuminaireDesign], List[str], Dict[str, dict]]:
     """Convierte el diseño zonal máximo en BASE A–B + refuerzo residual.
 
@@ -2449,6 +2450,17 @@ def _build_layered_physical_layout(
         quantum,
         math.floor(float(d_interior) / quantum + 1e-9) * quantum,
     )
+    _flicker_caps = flicker_fix_spacing_caps or {}
+    _base_cap = _flicker_caps.get('BASE A\u2013B')
+    try:
+        _base_cap = float(_base_cap)
+    except (TypeError, ValueError):
+        _base_cap = 0.0
+    if _base_cap > 0.0:
+        d_base = max(
+            quantum,
+            math.floor(min(d_base, _base_cap) / quantum + 1e-9) * quantum,
+        )
     last_grid_index = max(1, int(math.ceil(length / d_base)))
     # Una posición de apoyo antes de cada boca conserva el patrón fotométrico
     # del primer/último campo nocturno. Son luminarias BASE, no refuerzos de
@@ -2732,6 +2744,17 @@ def _build_layered_physical_layout(
             math.floor(
                 max(quantum, d_base - 2.0) / quantum + 1e-9
             ) * quantum,
+        )
+    _adapt_caps = [
+        float(_flicker_caps.get(k) or 0.0)
+        for k in ('ADAPTACI\u00d3N A', 'ADAPTACI\u00d3N B')
+    ]
+    _adapt_cap = min((c for c in _adapt_caps if c > 0.0), default=0.0)
+    if _adapt_cap > 0.0:
+        d_adaptation = max(
+            quantum,
+            math.floor(min(d_adaptation, _adapt_cap) / quantum + 1e-9)
+            * quantum,
         )
     adaptation_flux_margin = 0.12
     for portal in ("A", "B"):
@@ -4589,6 +4612,11 @@ def _optimize_scene_currents_exact(
     corriente u OFF/Imin alrededor del campo que gobierna y acepta unicamente
     aquellos que mejoran la verificacion CIE 140 completa.  Soleado se trata
     primero y fija el limite superior de las otras escenas para cada equipo.
+    El interior permanente conserva la consigna Soleado como limite
+    superior. Las zonas de portal (acceso, adaptacion, umbral y
+    transicion) pueden superar su consigna Soleado hasta Imax para
+    adaptarse al perfil de cada escena, encendiendo el menor numero
+    de luminarias posible.
     """
     from modules.tunnel.optimizer import flux_power_at_current
     from modules.tunnel.photometric_verify import (
@@ -4621,14 +4649,66 @@ def _optimize_scene_currents_exact(
     ul_required = max(1e-9, float(params.get("Ul_obj", 0.60) or 0.60))
     upper_ratio = max(
         1.0,
-        float(params.get("scene_exact_upper_ratio", 1.07) or 1.07),
+        float(params.get("scene_exact_upper_ratio", 1.04) or 1.04),
     )
+
+    # El interior (instalacion BASE permanente) conserva la consigna
+    # Soleado como limite superior en todas las escenas. Las zonas de
+    # portal -- acceso, adaptacion, umbral y transicion -- pueden superar
+    # Soleado hasta Imax para adaptarse al perfil de cada escena. Las
+    # posiciones BASE que caen dentro del alcance de un refuerzo o de la
+    # capa de adaptacion pertenecen al portal.
+    portal_ranges: list[tuple[float, float]] = []
+    for _zone in result.zones:
+        _layer = str(
+            getattr(_zone, "control_layer", "legacy") or "legacy"
+        )
+        if _layer not in ("reinforcement", "adaptation", "exterior"):
+            continue
+        portal_ranges.append((
+            float(getattr(_zone, "s_start", 0.0) or 0.0),
+            float(getattr(_zone, "s_end", 0.0) or 0.0),
+        ))
+
+    def _may_exceed_sunny(_zone, _setpoint) -> bool:
+        _layer = str(
+            getattr(_zone, "control_layer", "legacy") or "legacy"
+        )
+        if _layer != "permanent":
+            return True
+        _s = float(_setpoint.get("s", 0.0) or 0.0)
+        return any(
+            _start - 1e-6 <= _s <= _end + 1e-6
+            for _start, _end in portal_ranges
+        )
+
+    # Matriz de influencia por unidad de flujo reutilizada entre
+    # verificaciones: la geometria no cambia durante la busqueda, solo
+    # las corrientes, y la luminancia es lineal en el flujo.
+    _influence_cache: dict = {}
 
     def _verify() -> dict:
         diagnostics["evaluations"] += 1
-        return verify_layered_operating_scenario(
-            result, params, scene_key, include_ti=False,
-        )
+        # Las metricas de pared no llegan al score (minimum_wall_ratio es
+        # siempre None en esta ruta) y su calculo es la mitad del coste de
+        # cada verificacion. Se omiten durante la busqueda; la verificacion
+        # final publicada conserva las paredes.
+        # La verificacion hace un deepcopy del resultado; se le entrega con
+        # performance/scenarios vacios porque no los lee y asi la copia es
+        # mucho mas barata. Se restauran antes de devolver.
+        _saved_perf = result.performance
+        _saved_scen = result.scenarios
+        result.performance = {}
+        result.scenarios = {}
+        try:
+            return verify_layered_operating_scenario(
+                result, params, scene_key, include_ti=False,
+                include_wall_metrics=False,
+                _influence_cache=_influence_cache,
+            )
+        finally:
+            result.performance = _saved_perf
+            result.scenarios = _saved_scen
 
     def _quality(verification: dict) -> tuple[float, float, float, float]:
         wall_required = max(
@@ -4679,10 +4759,10 @@ def _optimize_scene_currents_exact(
         sunny_operation = setpoint.get(
             "scenario_operating_points", {},
         ).get("sunny", {})
-        # La misma luminaria no puede trabajar en una escena intermedia por
-        # encima de su consigna Soleado. La capa ADAPTACION es independiente
-        # y se deja disponible exclusivamente para el escalon crepuscular.
-        if scene_key != "sunny" and not adaptation:
+        # El interior permanente conserva la consigna Soleado como limite
+        # en el resto de escenas. Las zonas de portal pueden superar
+        # Soleado hasta Imax para adaptarse al perfil de cada escena.
+        if scene_key != "sunny" and not _may_exceed_sunny(zone, setpoint):
             sunny_current = float(
                 sunny_operation.get("current_mA", 0.0) or 0.0
             )
@@ -4728,18 +4808,83 @@ def _optimize_scene_currents_exact(
         })
         return operation, current_cap, minimum_current
 
-    # Garantiza el orden de consignas entre escenas antes de evaluar: la
-    # regulacion intermedia no puede quedar por encima de Soleado para la
-    # misma luminaria. ADAPTACION queda exenta porque es una capa dedicada al
-    # escalon de crepusculo.
+    def _bisect_reduce(zone, setpoint, baseline_score, error):
+        """Line search con biseccion para recortar el exceso sin romper
+        el minimo del campo vecino. El intervalo inicial es proporcional
+        al error medido y se cierra hasta el mayor recorte que la
+        verificacion CIE 140 exacta acepta."""
+        previous = dict(
+            setpoint["scenario_operating_points"][scene_key],
+        )
+        previous_current = float(
+            previous.get("current_mA", 0.0) or 0.0,
+        )
+        _probe, _cap, minimum = _operation_at_current(
+            zone, setpoint, previous, previous_current, "probe",
+        )
+        excess_fraction = max(0.0, float(error)) / max(
+            1.0 + float(error), 1e-9,
+        )
+        initial_step = max(
+            15.0,
+            min(
+                0.5 * max(0.0, previous_current - minimum),
+                excess_fraction * previous_current,
+            ),
+        )
+        low = max(minimum, previous_current - initial_step)
+        high = previous_current
+        best = None
+        for _ in range(4):
+            if high - low <= 1.0:
+                break
+            mid = (low + high) / 2.0
+            operation, _cap, _min = _operation_at_current(
+                zone, setpoint, previous, mid, "reduce_current",
+            )
+            if float(operation.get("current_mA", 0.0) or 0.0) >= (
+                previous_current - 0.05
+            ):
+                low = mid
+                continue
+            setpoint["scenario_operating_points"][scene_key] = operation
+            verification = _verify()
+            setpoint["scenario_operating_points"][scene_key] = previous
+            candidate_score = _score(verification)
+            if candidate_score > baseline_score:
+                best = (candidate_score, operation, verification)
+                high = mid
+            else:
+                low = mid
+        return best
+
+    def _nearest_active(s_value):
+        best = None
+        for zone in result.zones:
+            for setpoint in zone.setpoints or []:
+                operation = setpoint.get(
+                    "scenario_operating_points", {},
+                ).get(scene_key)
+                if operation is None or operation.get("state") == "off":
+                    continue
+                distance = abs(
+                    float(setpoint.get("s", 0.0) or 0.0)
+                    - float(s_value),
+                )
+                if best is None or distance < best[0]:
+                    best = (distance, zone, setpoint)
+        return best[1:] if best is not None else None
+
+    # Garantiza el orden de consignas entre escenas antes de evaluar: en
+    # el interior, la regulacion intermedia no puede quedar por encima de
+    # la consigna Soleado de la misma luminaria. Las zonas de portal
+    # quedan exentas para poder adaptar la corriente al perfil de cada
+    # escena.
     if scene_key != "sunny":
         for zone in result.zones:
-            layer = str(
-                getattr(zone, "control_layer", "legacy") or "legacy"
-            )
-            if layer == "adaptation":
-                continue
             for setpoint in zone.setpoints or []:
+                if _may_exceed_sunny(zone, setpoint):
+                    continue
                 operations = setpoint.get("scenario_operating_points", {})
                 operation = operations.get(scene_key)
                 sunny_operation = operations.get("sunny")
@@ -4881,17 +5026,36 @@ def _optimize_scene_currents_exact(
                 })
     diagnostics["preconditioning"] = global_precondition
 
-    for iteration in range(max(1, int(max_iterations))):
+    _initial_quality = _quality(current)
+    _iteration_budget = (
+        max(
+            1,
+            int(params.get("scene_exact_l_recovery_iterations", 12) or 1),
+        )
+        if _initial_quality[0] < 1.0 - 1e-8 else max_iterations
+    )
+    for iteration in range(max(1, int(_iteration_budget))):
         quality = _quality(current)
         normalized = {
             "L": quality[0], "U0": quality[1],
             "Ul": quality[2], "wall": quality[3],
         }
-        governing = min(normalized, key=normalized.get)
+        # Lest < Lreq no es negociable: cuando la luminancia queda por
+        # debajo del requisito, L gobierna la busqueda y se sube corriente
+        # en la zona deficitaria (p. ej. BASE de umbral/transicion en
+        # crepuscular) en lugar de recortar por uniformidad.
+        if normalized["L"] < 1.0 - 1e-8:
+            governing = "L"
+        else:
+            governing = min(normalized, key=normalized.get)
         is_compliant = min(normalized.values()) >= 1.0 - 1e-8
         highest_ratio = float(
             current.get("maximum_L_ratio", 1.0) or 1.0,
         )
+        # Cuanto mas lejos quede el exceso del techo, mayor el paso de
+        # recorte para acercarse a el con el mismo presupuesto de
+        # verificaciones CIE 140.
+        trim_ratio = 0.5 if float(highest_ratio) > upper_ratio * 1.5 else 0.30
         if is_compliant and highest_ratio <= upper_ratio + 1e-8:
             break
         target_s = float(current.get(
@@ -4924,25 +5088,43 @@ def _optimize_scene_currents_exact(
         active = sorted(active, key=lambda item: item[0])[:3]
         inactive = sorted(inactive, key=lambda item: item[0])[:2]
         mutations: list[tuple[str, object, dict, dict]] = []
+        baseline_score = _score(current)
         if is_compliant:
-            for _distance, zone, setpoint in active:
+            error = max(0.0, float(highest_ratio) - upper_ratio)
+            for index, (_distance, zone, setpoint) in enumerate(active):
                 previous = setpoint["scenario_operating_points"][scene_key]
                 previous_current = float(
                     previous.get("current_mA", 0.0) or 0.0,
                 )
-                _probe, _cap, minimum = _operation_at_current(
-                    zone, setpoint, previous, previous_current, "probe",
-                )
-                operation, _cap, minimum = _operation_at_current(
-                    zone, setpoint, previous,
-                    max(0.0, previous_current
-                        - max(15.0, 0.30 * max(
-                            0.0,
-                            previous_current - minimum,
-                        ))),
-                    "reduce_current",
-                )
-                mutations.append(("reduce_current", zone, setpoint, operation))
+                if index == 0 and error > 1e-9:
+                    # Line search con biseccion sobre la luminaria mas
+                    # cercana al campo maximo: el paso se adapta al exceso
+                    # medido y converge al mayor recorte aceptado por la
+                    # verificacion CIE 140.
+                    bisected = _bisect_reduce(
+                        zone, setpoint, baseline_score, error,
+                    )
+                    if bisected is not None:
+                        _bs, operation, _bv = bisected
+                        mutations.append((
+                            "reduce_current", zone, setpoint, operation,
+                        ))
+                else:
+                    _probe, _cap, minimum = _operation_at_current(
+                        zone, setpoint, previous, previous_current, "probe",
+                    )
+                    operation, _cap, minimum = _operation_at_current(
+                        zone, setpoint, previous,
+                        max(0.0, previous_current
+                            - max(15.0, trim_ratio * max(
+                                0.0,
+                                previous_current - minimum,
+                            ))),
+                        "reduce_current",
+                    )
+                    mutations.append((
+                        "reduce_current", zone, setpoint, operation,
+                    ))
                 off_operation, _cap, _minimum = _operation_at_current(
                     zone, setpoint, previous, 0.0, "switch_off",
                 )
@@ -4993,7 +5175,7 @@ def _optimize_scene_currents_exact(
                             0.0,
                             previous_current - max(
                                 15.0,
-                                0.30 * max(0.0, previous_current - minimum),
+                                trim_ratio * max(0.0, previous_current - minimum),
                             ),
                         ),
                         "reduce_excess_for_uniformity",
@@ -5015,10 +5197,14 @@ def _optimize_scene_currents_exact(
                 _probe, cap, _minimum = _operation_at_current(
                     zone, setpoint, previous, prior_current, "probe",
                 )
+                # En Crepuscular la BASE puede partir muy por debajo de Imax
+                # (consigna nocturna) y el presupuesto de iteraciones es corto:
+                # se avanza la mitad del intervalo restante en cada salto.
+                step_ratio = 0.5 if scene_key == "dusk" else 0.25
                 operation, _cap, _minimum = _operation_at_current(
                     zone, setpoint, previous,
                     min(cap, prior_current + max(
-                        20.0, 0.25 * max(0.0, cap - prior_current),
+                        20.0, step_ratio * max(0.0, cap - prior_current),
                     )),
                     "increase_current",
                 )
@@ -5047,13 +5233,100 @@ def _optimize_scene_currents_exact(
                 if index < len(increase_mutations):
                     mutations.append(increase_mutations[index])
 
+            if governing == "L":
+                # Subida en grupo de la zona deficitaria. En Crepuscular
+                # la BASE parte de su consigna nocturna y el presupuesto
+                # de iteraciones no alcanza para subir una a una toda la
+                # zona; se proponen varias luminarias activas a la vez
+                # (permanente primero) y se validan juntas contra el
+                # campo CIE 140.
+                group_size = max(2, min(8, len(active)))
+                group_ops: list[tuple[object, dict, dict]] = []
+                for _gd, g_zone, g_sp in sorted(
+                    active,
+                    key=lambda item: (
+                        0 if str(getattr(item[1], "control_layer", "legacy")
+                                or "legacy") == "permanent" else 1
+                    ),
+                )[:group_size]:
+                    g_prev = g_sp["scenario_operating_points"][scene_key]
+                    g_prior = float(g_prev.get("current_mA", 0.0) or 0.0)
+                    _probe, g_cap, _g_min = _operation_at_current(
+                        g_zone, g_sp, g_prev, g_prior, "probe",
+                    )
+                    g_step = 0.5 if scene_key == "dusk" else 0.25
+                    g_op, _gc, _gm = _operation_at_current(
+                        g_zone, g_sp, g_prev,
+                        min(g_cap, g_prior + max(
+                            20.0, g_step * max(0.0, g_cap - g_prior),
+                        )),
+                        "increase_current",
+                    )
+                    if float(g_op.get("current_mA", 0.0) or 0.0) > (
+                        g_prior + 0.05
+                    ):
+                        group_ops.append((g_zone, g_sp, g_op))
+                if group_ops:
+                    mutations.append(("L_group_raise", None, None, group_ops))
+
         # Un candidato es una modificacion de una luminaria: se elige por la
         # verificacion exacta completa, no por una estimacion longitudinal.
+        # Se enciende el menor numero de luminarias posible: ajustar la
+        # corriente de equipos ya encendidos tiene prioridad sobre encender
+        # otros, y en Crepuscular la BASE permanente se agota primero.
+        def _candidate_priority(candidate) -> tuple:
+            _action, candidate_zone, _sp, _op = candidate
+            if _action == "L_group_raise":
+                _first_zone = _op[0][0] if _op else None
+                layer = str(
+                    getattr(_first_zone, "control_layer", "legacy")
+                    or "legacy"
+                )
+                if scene_key == "dusk":
+                    return (0, 0 if layer == "permanent" else 1)
+                return (0,)
+            layer = str(
+                getattr(candidate_zone, "control_layer", "legacy")
+                or "legacy"
+            )
+            switch_on = 1 if _action == "switch_on_minimum" else 0
+            if scene_key == "dusk":
+                return (switch_on, 0 if layer == "permanent" else 1)
+            return (switch_on,)
+
         best = None
         baseline_score = _score(current)
-        for action, zone, setpoint, operation in mutations[:max(
+        candidate_limit = max(
             1, int(max_candidates_per_iteration),
-        )]:
+        )
+        ordered_candidates = sorted(
+            mutations[:candidate_limit],
+            key=_candidate_priority,
+        )
+        for candidate in ordered_candidates:
+            candidate_action = candidate[0]
+            if candidate_action == "L_group_raise":
+                group_ops = candidate[3]
+                originals = [
+                    (
+                        _zone, _setpoint,
+                        dict(_setpoint["scenario_operating_points"][scene_key]),
+                    )
+                    for _zone, _setpoint, _op in group_ops
+                ]
+                for _zone, _setpoint, _op in group_ops:
+                    _setpoint["scenario_operating_points"][scene_key] = _op
+                verification = _verify()
+                for _zone, _setpoint, _previous in originals:
+                    _setpoint["scenario_operating_points"][scene_key] = _previous
+                candidate_score = _score(verification)
+                if candidate_score > baseline_score and (
+                    best is None or candidate_score > best[0]
+                ):
+                    best = (candidate_score, candidate_action, None, None,
+                            group_ops, verification)
+                continue
+            _action, zone, setpoint, operation = candidate
             previous = dict(
                 setpoint["scenario_operating_points"][scene_key],
             )
@@ -5064,22 +5337,128 @@ def _optimize_scene_currents_exact(
             if candidate_score > baseline_score and (
                 best is None or candidate_score > best[0]
             ):
-                best = (candidate_score, action, zone, setpoint, operation,
+                best = (candidate_score, _action, zone, setpoint, operation,
                         verification)
         diagnostics["iterations"] = iteration + 1
         if best is None:
             break
         _score_value, action, zone, setpoint, operation, verification = best
-        setpoint["scenario_operating_points"][scene_key] = operation
-        diagnostics["changes"].append({
-            "action": action,
-            "s_m": round(float(setpoint.get("s", 0.0) or 0.0), 3),
-            "zone": str(getattr(zone, "zone_name", "") or ""),
-            "current_mA": round(
-                float(operation.get("current_mA", 0.0) or 0.0), 1,
-            ),
-        })
+        if action == "L_group_raise":
+            for _zone, _setpoint, _op in operation:
+                _setpoint["scenario_operating_points"][scene_key] = _op
+                diagnostics["changes"].append({
+                    "action": "increase_current",
+                    "s_m": round(float(_setpoint.get("s", 0.0) or 0.0), 3),
+                    "zone": str(getattr(_zone, "zone_name", "") or ""),
+                    "current_mA": round(
+                        float(_op.get("current_mA", 0.0) or 0.0), 1,
+                    ),
+                })
+        else:
+            setpoint["scenario_operating_points"][scene_key] = operation
+            diagnostics["changes"].append({
+                "action": action,
+                "s_m": round(float(setpoint.get("s", 0.0) or 0.0), 3),
+                "zone": str(getattr(zone, "zone_name", "") or ""),
+                "current_mA": round(
+                    float(operation.get("current_mA", 0.0) or 0.0), 1,
+                ),
+            })
         current = verification
+
+    # Fase 2: redistribucion (maximo abajo, minimo arriba). El recorte de
+    # un solo lado esta acotado por el minimo del campo vecino; si tras
+    # converger el exceso sigue por encima del techo, se baja la luminaria
+    # que gobierna el maximo y se sube a la vez la del minimo para que el
+    # suelo se mantenga mientras el pico desciende hacia el techo.
+    if (
+        current.get("compliant")
+        and float(current.get("maximum_L_ratio", 1.0) or 1.0)
+        > upper_ratio + 1e-8
+    ):
+        redistribute_iterations = max(
+            0,
+            int(params.get(
+                "scene_exact_redistribution_iterations", 2,
+            ) or 0),
+        )
+        for _ in range(redistribute_iterations):
+            max_s = float(
+                current.get("maximum_field_s_m", 0.0) or 0.0,
+            )
+            min_s = float(current.get("worst_field_s_m", 0.0) or 0.0)
+            if not (max_s > 0.0 and min_s > 0.0) or abs(
+                max_s - min_s
+            ) < 1e-6:
+                break
+            max_candidate = _nearest_active(max_s)
+            min_candidate = _nearest_active(min_s)
+            if max_candidate is None or min_candidate is None:
+                break
+            max_zone, max_sp = max_candidate
+            min_zone, min_sp = min_candidate
+            if max_sp is min_sp:
+                break
+            max_previous = dict(
+                max_sp["scenario_operating_points"][scene_key],
+            )
+            min_previous = dict(
+                min_sp["scenario_operating_points"][scene_key],
+            )
+            max_current = float(max_previous.get("current_mA", 0.0) or 0.0)
+            min_current = float(min_previous.get("current_mA", 0.0) or 0.0)
+            _probe, _max_cap, min_floor = _operation_at_current(
+                max_zone, max_sp, max_previous, max_current, "probe",
+            )
+            _probe, min_cap, _min_floor = _operation_at_current(
+                min_zone, min_sp, min_previous, min_current, "probe",
+            )
+            if min_current >= min_cap - 0.05:
+                break
+            step = max(
+                15.0,
+                min(
+                    0.25 * max(0.0, max_current - min_floor),
+                    0.5 * max(0.0, min_cap - min_current),
+                ),
+            )
+            max_op, _cap, _min = _operation_at_current(
+                max_zone, max_sp, max_previous,
+                max(0.0, max_current - step),
+                "reduce_for_redistribution",
+            )
+            min_op, _cap, _min = _operation_at_current(
+                min_zone, min_sp, min_previous,
+                min(min_cap, min_current + step),
+                "increase_for_redistribution",
+            )
+            if float(max_op.get("current_mA", 0.0) or 0.0) >= (
+                max_current - 0.05
+            ):
+                break
+            max_sp["scenario_operating_points"][scene_key] = max_op
+            min_sp["scenario_operating_points"][scene_key] = min_op
+            verification = _verify()
+            if _score(verification) > _score(current):
+                diagnostics["changes"].append({
+                    "action": "redistribute",
+                    "s_m": round(
+                        float(max_sp.get("s", 0.0) or 0.0), 3,
+                    ),
+                    "zone": str(getattr(max_zone, "zone_name", "") or ""),
+                    "current_mA": round(
+                        float(max_op.get("current_mA", 0.0) or 0.0), 1,
+                    ),
+                })
+                current = verification
+                if float(
+                    current.get("maximum_L_ratio", 1.0) or 1.0
+                ) <= upper_ratio + 1e-8:
+                    break
+            else:
+                max_sp["scenario_operating_points"][scene_key] = max_previous
+                min_sp["scenario_operating_points"][scene_key] = min_previous
+                break
 
     _refresh_scene_operation_summary(result, scene_key)
     diagnostics["final"] = {
@@ -5270,6 +5649,84 @@ def _trim_scene_to_exact_profile(
     return messages, diagnostics
 
 
+def _flicker_diagnostics(
+    result: TunnelLuminaireResult,
+    speed_kmh: float,
+    params: dict,
+) -> dict:
+    """Frecuencia de parpadeo por zona (CIE 88): f = v / d.
+
+    El parpadeo es perceptible cuando la frecuencia cae en la banda
+    critica (por defecto 2.5-15 Hz, configurable con flicker_min_hz y
+    flicker_max_hz). Las zonas cuya frecuencia no pudo evitarse durante
+    el diseno se marcan como "unavoidable" (resolver por proyecto).
+    """
+    _unavoidable = set(params.get('_flicker_unavoidable_zones', []) or [])
+    speed = float(speed_kmh or 0.0)
+    v_ms = max(1.0, speed) / 3.6
+    f_min = max(0.1, float(params.get('flicker_min_hz', 2.5) or 2.5))
+    f_max = max(f_min, float(params.get('flicker_max_hz', 15.0) or 15.0))
+    zones_out: dict[str, dict] = {}
+    warnings: list[str] = []
+    for zone in getattr(result, 'zones', []) or []:
+        layer = str(
+            getattr(zone, 'control_layer', 'legacy') or 'legacy',
+        )
+        if layer in ('exterior', 'legacy'):
+            continue
+        d = float(getattr(zone, 'd_used', 0.0) or 0.0)
+        name = str(getattr(zone, 'zone_name', '') or '')
+        if d <= 0.0:
+            continue
+        f = v_ms / d
+        critical = bool(f_min <= f <= f_max)
+        quantum = max(
+            0.1, float(params.get('spacing_quantum_m', 0.5) or 0.5),
+        )
+        target = max(
+            quantum,
+            math.floor((v_ms / f_max) / quantum + 1e-9) * quantum,
+        )
+        unavoidable = name in _unavoidable
+        zones_out[name] = {
+            'spacing_m': round(d, 3),
+            'frequency_hz': round(f, 3),
+            'critical': critical,
+            'unavoidable': bool(critical and unavoidable),
+            'status': (
+                'unavoidable' if critical and unavoidable
+                else 'critical' if critical else 'ok'
+            ),
+            'range_hz': [round(f_min, 2), round(f_max, 2)],
+            'target_spacing_m': round(target, 3),
+        }
+        if critical and unavoidable:
+            warnings.append(
+                f"PARPADEO INEVITABLE — resolver por proyecto: {name} con "
+                f"d={d:.1f} m y v={speed:.0f} km/h da f={f:.1f} Hz "
+                f"(rango critico {f_min:.1f}-{f_max:.1f} Hz). No hay espaciado "
+                "factible fuera de la banda; plantear otra disposicion o "
+                "aceptar el parpadeo."
+            )
+        elif critical:
+            warnings.append(
+                f"PARPADEO: {name} con d={d:.1f} m y v={speed:.0f} km/h "
+                f"da f={f:.1f} Hz (rango critico {f_min:.1f}-{f_max:.1f} Hz). "
+                "Antes de ajustar luminarias manualmente, ajusta el "
+                f"espaciado de esta zona (objetivo d<={target:.1f} m) para "
+                "reducir el parpadeo."
+            )
+    return {
+        'speed_kmh': round(speed, 1),
+        'range_hz': [round(f_min, 2), round(f_max, 2)],
+        'zones': zones_out,
+        'critical_zones': [
+            name for name, data in zones_out.items() if data['critical']
+        ],
+        'warnings': warnings,
+    }
+
+
 def design_aphex_tunnel_optimized(
     zones_list:    list,
     params:        dict,
@@ -5407,8 +5864,18 @@ def design_aphex_tunnel_optimized(
         raw_threshold_spacing_caps
         if isinstance(raw_threshold_spacing_caps, dict) else {}
     )
+    raw_flicker_caps = params.get('flicker_fix_spacing_caps', {})
+    flicker_fix_spacing_caps = (
+        raw_flicker_caps
+        if isinstance(raw_flicker_caps, dict) else {}
+    )
 
     speed_kmh = float(params.get('speed_kmh', 80.0))
+    _flicker_avoid = bool(params.get('flicker_avoid_enabled', True))
+    _flicker_min = float(params.get('flicker_min_hz', 2.5) or 2.5)
+    _flicker_max = float(params.get('flicker_max_hz', 15.0) or 15.0)
+    _flicker_speed = speed_kmh if _flicker_avoid else 0.0
+    _flicker_unavoidable: list[str] = []
     Lth_cie   = float(params.get('Lth', 0.0))
     Lth_b_cie = float(params.get('Lth_b', Lth_cie))   # luminancia umbral portal B
     Lin_cie   = float(params.get('Lin', 0.0))
@@ -5540,6 +6007,8 @@ def design_aphex_tunnel_optimized(
             d_min=base_d_min, wall_offset=wall_offset,
             optimization_goal=optimization_goal,
             spacing_quantum_m=spacing_quantum,
+            speed_kmh=_flicker_speed, flicker_min_hz=_flicker_min,
+            flicker_max_hz=_flicker_max,
         )
 
         # Una fila central única puede no cubrir transversalmente una
@@ -5574,6 +6043,8 @@ def design_aphex_tunnel_optimized(
                     d_min=base_d_min, wall_offset=wall_offset,
                     optimization_goal=optimization_goal,
                     spacing_quantum_m=spacing_quantum,
+                    speed_kmh=_flicker_speed, flicker_min_hz=_flicker_min,
+                    flicker_max_hz=_flicker_max,
                 )
                 topology_trials.append({
                     'arrangement': proposed_arrangement,
@@ -5803,6 +6274,8 @@ def design_aphex_tunnel_optimized(
                         rtable=rtable, mf=mf, arrangement=arrangement,
                         I_min_pct=I_min_pct, tilt_grid=tilt_candidates,
                         wall_offset=wall_offset, direction=direction,
+                        speed_kmh=_flicker_speed, flicker_min_hz=_flicker_min,
+                        flicker_max_hz=_flicker_max,
                     )
 
                 if s_candidate < z_start - 1e-9 or s_candidate > z_end + 1e-9:
@@ -5819,6 +6292,8 @@ def design_aphex_tunnel_optimized(
                         rtable=rtable, mf=mf, arrangement=arrangement,
                         I_min_pct=I_min_pct, tilt_grid=tilt_candidates,
                         wall_offset=wall_offset, direction=direction,
+                        speed_kmh=_flicker_speed, flicker_min_hz=_flicker_min,
+                        flicker_max_hz=_flicker_max,
                     )
                     geometry = {
                         'optic': fallback['optic'],
@@ -5925,6 +6400,7 @@ def design_aphex_tunnel_optimized(
         tilt_use = float(_tilt_ov.get(z_name, -1))
         _tilt_grid_zone = [tilt_use] if tilt_use >= 0 else tilt_grid
         zone_spacing_cap = d_interior
+        requested_cap = 0.0
         if z_type in ('threshold', 'threshold_b'):
             raw_cap = threshold_spacing_caps.get(
                 z_name, threshold_spacing_caps.get('*'),
@@ -5933,16 +6409,29 @@ def design_aphex_tunnel_optimized(
                 requested_cap = float(raw_cap)
             except (TypeError, ValueError):
                 requested_cap = 0.0
-            if requested_cap > 0.0:
-                zone_spacing_cap = max(
-                    D_MIN, min(d_interior, requested_cap),
+        # Parpadeo: cap de espaciado aplicable a cualquier zona para
+        # sacar la frecuencia f = v/d de la banda critica.
+        _flicker_raw = flicker_fix_spacing_caps.get(
+            z_name, flicker_fix_spacing_caps.get('*'),
+        )
+        try:
+            _flicker_cap = float(_flicker_raw)
+        except (TypeError, ValueError):
+            _flicker_cap = 0.0
+        if _flicker_cap > 0.0 and (
+            requested_cap <= 0.0 or _flicker_cap < requested_cap
+        ):
+            requested_cap = _flicker_cap
+        if requested_cap > 0.0:
+            zone_spacing_cap = max(
+                D_MIN, min(d_interior, requested_cap),
+            )
+            if zone_spacing_cap < d_interior - 1e-9:
+                warnings_out.append(
+                    f"{z_name}: interdistancia limitada a "
+                    f"{zone_spacing_cap:.1f} m por cierre CIE 140 "
+                    "multiescena o parpadeo."
                 )
-                if zone_spacing_cap < d_interior - 1e-9:
-                    warnings_out.append(
-                        f"{z_name}: interdistancia limitada a "
-                        f"{zone_spacing_cap:.1f} m por cierre CIE 140 "
-                        "multiescena."
-                    )
         tandem_overrides = params.get('tandem_overrides', {}) or {}
         tandem_ov_zone   = tandem_overrides.get(z_name)   # True/False/None
 
@@ -5966,6 +6455,8 @@ def design_aphex_tunnel_optimized(
                 arrangement=arrangement, I_min_pct=I_min_pct,
                 tilt_grid=_tilt_grid_zone, d_min=D_MIN, d_max_hard=zone_spacing_cap,
                 wall_offset=wall_offset, tandem=False, direction=zone_direction,
+                speed_kmh=_flicker_speed, flicker_min_hz=_flicker_min,
+                flicker_max_hz=_flicker_max,
             )
             # Ademas de "individual infactible", tambien merece la pena comprobar
             # tandem cuando individual SI es factible pero a una d muy comprimida
@@ -5982,6 +6473,8 @@ def design_aphex_tunnel_optimized(
                     arrangement=arrangement, I_min_pct=I_min_pct,
                     tilt_grid=_tilt_grid_zone, d_min=D_MIN, d_max_hard=zone_spacing_cap,
                     wall_offset=wall_offset, tandem=True, direction=zone_direction,
+                    speed_kmh=_flicker_speed, flicker_min_hz=_flicker_min,
+                    flicker_max_hz=_flicker_max,
                 )
                 if not zres['feasible']:
                     if zres_t['feasible']:
@@ -6020,8 +6513,13 @@ def design_aphex_tunnel_optimized(
                 arrangement=arrangement, I_min_pct=I_min_pct,
                 tilt_grid=_tilt_grid_zone, d_min=D_MIN, d_max_hard=zone_spacing_cap,
                 wall_offset=wall_offset, tandem=True, direction=zone_direction,
+                speed_kmh=_flicker_speed, flicker_min_hz=_flicker_min,
+                flicker_max_hz=_flicker_max,
             )
             warnings_out.append(f'{z_name}: TÁNDEM MANUAL activado — espaciado {zres["d"]:.1f} m')
+
+        if zres and zres.get('flicker_unavoidable'):
+            _flicker_unavoidable.append(z_name)
 
         if zres is None or not zres['feasible']:
             tandem_note = " (con tándem — igualmente insuficiente, es la mejor opción disponible)" if use_tandem else ""
@@ -6225,6 +6723,7 @@ def design_aphex_tunnel_optimized(
             adaptation_spacing_override_m=params.get(
                 '_scene_reoptimization_adaptation_spacing_m',
             ),
+            flicker_fix_spacing_caps=flicker_fix_spacing_caps,
             )
         )
         warnings_out.extend(layer_messages)
@@ -6496,6 +6995,9 @@ def design_aphex_tunnel_optimized(
                             params.get(
                                 'scene_optimizer_mip_time_limit_s', 2.0,
                             ) or 2.0),
+                        excess_cap=float(
+                            params.get('scene_excess_ratio', 0.04) or 0.04,
+                        ),
                     )
                 )
                 warnings_out.extend(control_messages)
@@ -6826,6 +7328,13 @@ def design_aphex_tunnel_optimized(
                     diagnostic["verification"] = dict(
                         exact_diagnostics.get("final", {}),
                     )
+                elif exact_diagnostics.get("reason") == "excess_unresolved":
+                    # Exceso por encima del techo tras el recorte de
+                    # corriente: solo se resuelve densificando el layout.
+                    diagnostic["reason"] = "excess_unresolved"
+                    diagnostic["verification"] = dict(
+                        exact_diagnostics.get("final", {}),
+                    )
             except Exception as _scene_current_error:
                 result.warnings.append(
                     f"Ajuste individual CIE 140 de {scene_key} omitido: "
@@ -6878,7 +7387,10 @@ def design_aphex_tunnel_optimized(
                     # cierre. La autoridad es la verificación exacta: no se
                     # debe lanzar un rediseño físico en ese caso.
                     diagnostic["exact_compliant"] = True
-                    diagnostic.pop("reason", None)
+                    # El exceso no resuelto se conserva: es un shortfall
+                    # que la reoptimizacion fisica debe densificar.
+                    if diagnostic.get("reason") != "excess_unresolved":
+                        diagnostic.pop("reason", None)
                     diagnostic.pop("infeasibility_type", None)
         except Exception as _scene_exact_verification_err:
             result.warnings.append(
@@ -6887,6 +7399,17 @@ def design_aphex_tunnel_optimized(
             )
         performance["stages_s"]["scene_exact_verification"] = round(
             time.perf_counter() - phase_started, 4,
+        )
+    # Control de parpadeo (CIE 88): frecuencia f = v/d por zona.
+    try:
+        params['_flicker_unavoidable_zones'] = list(_flicker_unavoidable)
+        flicker = _flicker_diagnostics(result, speed_kmh, params)
+        result.performance['flicker'] = flicker
+        if flicker['warnings']:
+            result.warnings.extend(flicker['warnings'])
+    except Exception as _flicker_err:
+        result.warnings.append(
+            f"Control de parpadeo omitido por error: {_flicker_err}"
         )
     performance["total_s"] = round(
         time.perf_counter() - calculation_started, 4,
@@ -6968,11 +7491,17 @@ def _scene_control_shortfalls(result: TunnelLuminaireResult) -> list[dict]:
             "infeasible",
             "driver_mapping_deficit",
             "verification_deficit",
+            "excess_unresolved",
         }:
+            continue
+        # Soleado es el dimensionamiento fisico: su exceso no es una
+        # carencia de hardware y no debe forzar densificacion.
+        if reason == "excess_unresolved" and str(scene_key) == "sunny":
             continue
         shortfalls.append({
             "scene": str(scene_key),
             "reason": reason,
+            "kind": "excess" if reason == "excess_unresolved" else "deficit",
             "infeasibility_type": diagnostic.get("infeasibility_type"),
             "capacity_min_target_ratio": diagnostic.get(
                 "capacity_min_target_ratio",
@@ -6981,6 +7510,47 @@ def _scene_control_shortfalls(result: TunnelLuminaireResult) -> list[dict]:
             "verification": diagnostic.get("verification"),
         })
     return shortfalls
+
+
+def _l_shortfall_scenes(result: TunnelLuminaireResult) -> dict[str, float]:
+    """Escenas donde Lest < Lreq (minimum_L_ratio < 1). No negociable."""
+    diagnostics = (
+        (result.scenarios or {})
+        .get("global_control_optimization", {})
+        .get("scenes", {})
+    )
+    shortfalls: dict[str, float] = {}
+    for scene_key, diag in (diagnostics or {}).items():
+        if not isinstance(diag, dict):
+            continue
+        verification = diag.get("verification") or {}
+        try:
+            ratio = float(
+                verification.get("minimum_L_ratio", 1.0) or 1.0,
+            )
+        except (TypeError, ValueError):
+            continue
+        if ratio < 1.0 - 1e-6:
+            shortfalls[str(scene_key)] = ratio
+    return shortfalls
+
+
+def _all_scenes_compliant(result: TunnelLuminaireResult) -> bool:
+    """Todas las escenas diurnas cierran L, U0 y Ul (CIE 140)."""
+    diagnostics = (
+        (result.scenarios or {})
+        .get("global_control_optimization", {})
+        .get("scenes", {})
+    )
+    for _scene_key, diag in (diagnostics or {}).items():
+        if not isinstance(diag, dict):
+            continue
+        verification = diag.get("verification") or {}
+        if verification.get("available") is False:
+            continue
+        if verification.get("compliant") is False:
+            return False
+    return True
 
 
 def _threshold_targets_for_shortfalls(
@@ -6998,7 +7568,11 @@ def _threshold_targets_for_shortfalls(
     for shortfall in shortfalls:
         verification = shortfall.get("verification") or {}
         try:
-            position = float(verification.get("worst_field_s_m"))
+            position = float(verification.get(
+                "maximum_field_s_m"
+                if shortfall.get("kind") == "excess"
+                else "worst_field_s_m",
+            ))
         except (TypeError, ValueError):
             continue
         for zone in threshold_zones:
@@ -7197,6 +7771,23 @@ def _reoptimize_physical_layout_for_scenes(
     """
     shortfalls = _scene_control_shortfalls(baseline)
     baseline_snapshot = _layout_snapshot(baseline)
+    # Mejor candidato que cierra todos los deficits aunque conserve un
+    # exceso residual sobre el 4 %. Se prefiere a devolver la geometria
+    # base cuando esa base ni siquiera cierra L/U0/Ul.
+    best_clean: tuple | None = None
+
+    def _register_clean_candidate(candidate, attempt) -> None:
+        nonlocal best_clean
+        cand_shortfalls = _scene_control_shortfalls(candidate)
+        if any(item.get("kind") != "excess" for item in cand_shortfalls):
+            return
+        candidate._compute_totals()
+        key = (
+            len(cand_shortfalls),
+            float(getattr(candidate, "total_power_w", 0.0) or 0.0),
+        )
+        if best_clean is None or key < best_clean[0]:
+            best_clean = (key, candidate, dict(attempt))
     metadata = {
         "enabled": bool(params.get("auto_physical_reoptimization", True)),
         "status": "not_needed",
@@ -7285,6 +7876,7 @@ def _reoptimize_physical_layout_for_scenes(
                 "shortfalls": candidate_shortfalls,
                 "layout": _layout_snapshot(candidate),
             }
+            _register_clean_candidate(candidate, attempt)
             metadata["attempts"].append(attempt)
             attempts_remaining -= 1
             if not candidate_shortfalls:
@@ -7362,6 +7954,7 @@ def _reoptimize_physical_layout_for_scenes(
                 "shortfalls": candidate_shortfalls,
                 "layout": _layout_snapshot(candidate),
             }
+            _register_clean_candidate(candidate, attempt)
             metadata["attempts"].append(attempt)
             attempts_remaining -= 1
             if not candidate_shortfalls:
@@ -7450,6 +8043,7 @@ def _reoptimize_physical_layout_for_scenes(
             "shortfalls": candidate_shortfalls,
             "layout": _layout_snapshot(candidate),
         }
+        _register_clean_candidate(candidate, attempt)
         metadata["attempts"].append(attempt)
         if not candidate_shortfalls:
             metadata.update({
@@ -7469,6 +8063,109 @@ def _reoptimize_physical_layout_for_scenes(
             )
             candidate = _refine_selected_scene_controls(candidate, params)
             return _attach_scene_reoptimization_metadata(candidate, metadata)
+
+    if best_clean is not None:
+        _key, best_candidate, best_attempt = best_clean
+        baseline_deficit = any(
+            item.get("kind") != "excess" for item in shortfalls
+        )
+        baseline_excess = sum(
+            1 for item in shortfalls if item.get("kind") == "excess"
+        )
+        best_excess = _key[0]
+        if baseline_deficit or best_excess < baseline_excess:
+            metadata.update({
+                "status": "applied",
+                "excess_resolved": best_excess == 0,
+                "selected_scope": best_attempt.get("scope"),
+                "selected_spacing_m": best_attempt.get("spacing_m"),
+                "selected": best_attempt.get("layout"),
+                "message": (
+                    "Se ha redisenado la instalacion para cerrar los deficits "
+                    "CIE 140; el exceso sobre el 4 % queda limitado por el "
+                    "presupuesto de densificacion configurado."
+                ),
+            })
+            best_candidate.warnings.append(
+                "Reoptimizacion fisica aplicada: deficits CIE 140 cerrados; "
+                "si el exceso residual sobre el 4 % persiste, densificar "
+                "mas el umbral/transicion o relajar el techo."
+            )
+            best_candidate = _refine_selected_scene_controls(
+                best_candidate, params,
+            )
+            return _attach_scene_reoptimization_metadata(
+                best_candidate, metadata,
+            )
+
+    # Garantia de cumplimiento (L no negociable, U0/Ul normativos). Si
+    # tras la cadena normal queda alguna escena no conforme, se densifica
+    # hasta el limite constructivo y solo se acepta si cierra todo; si ni
+    # aun asi, el resultado se marca inviable y no puede presentarse como
+    # solucion valida.
+    if not _all_scenes_compliant(baseline):
+        floor_candidates = _scene_reoptimization_spacings(
+            baseline_snapshot["base_spacing_m"], params,
+        )
+        if floor_candidates:
+            retry_params = dict(params)
+            retry_params["d_fixed"] = floor_candidates[-1]
+            retry_params["_scene_reoptimization_attempt"] = True
+            c_candidate = design_aphex_tunnel_optimized(
+                zones_list=zones_list,
+                params=retry_params,
+                road_width_m=road_width_m,
+                tube_length_m=tube_length_m,
+                tube_id=tube_id,
+            )
+            attempt = {
+                "scope": "compliance_recovery",
+                "spacing_m": floor_candidates[-1],
+                "shortfalls": _scene_control_shortfalls(c_candidate),
+                "layout": _layout_snapshot(c_candidate),
+            }
+            metadata["attempts"].append(attempt)
+            if _all_scenes_compliant(c_candidate):
+                metadata.update({
+                    "status": "applied",
+                    "compliance_guaranteed": True,
+                    "selected_scope": "compliance_recovery",
+                    "selected_spacing_m": floor_candidates[-1],
+                    "selected": attempt["layout"],
+                    "message": (
+                        "Se ha densificado la instalacion al limite para "
+                        "garantizar L, U0 y Ul en todas las escenas."
+                    ),
+                })
+                c_candidate.warnings.append(
+                    "Densificacion por garantia de cumplimiento: L, U0 y Ul "
+                    "cerradas en todas las escenas."
+                )
+                c_candidate = _refine_selected_scene_controls(
+                    c_candidate, params,
+                )
+                return _attach_scene_reoptimization_metadata(
+                    c_candidate, metadata,
+                )
+        baseline_l = _l_shortfall_scenes(baseline)
+        performance = dict(getattr(baseline, "performance", {}) or {})
+        if baseline_l:
+            performance["luminance_infeasible"] = True
+            baseline.warnings.append(
+                "L INVIABLE: Lest queda por debajo de Lreq en "
+                + ", ".join(
+                    f"{k} ({v:.3f})" for k, v in baseline_l.items()
+                )
+                + ". El hardware no permite cerrar L; esta solucion no es valida."
+            )
+        else:
+            performance["compliance_infeasible"] = True
+            baseline.warnings.append(
+                "CUMPLIMIENTO INVIABLE: alguna escena no cierra U0/Ul ni "
+                "siquiera con la densidad maxima configurada; la solucion "
+                "no es valida."
+            )
+        baseline.performance = performance
 
     metadata["status"] = "unresolved"
     metadata["message"] = (
@@ -7917,6 +8614,98 @@ def calculate_quality_sensitivity(
     }
 
 
+def tunnel_luminaire_result_from_dict(data: dict) -> TunnelLuminaireResult:
+    """Reconstruye un resultado de luminarias desde su serializacion.
+
+    Permite recalcular solo una escena (p. ej. Crepuscular) con las
+    consignas manuales ya aplicadas, sin re-ejecutar la optimizacion
+    completa ni mover los datos de corriente del usuario.
+    """
+    zones: list = []
+    for z in (data.get("zones") or []):
+        if not isinstance(z, dict):
+            continue
+        setpoints = [dict(sp) for sp in (z.get("setpoints") or [])]
+        try:
+            zone = ZoneLuminaireDesign(
+                zone_type=z.get("zone_type", ""),
+                zone_name=z.get("zone_name", ""),
+                s_start=float(z.get("s_start", 0) or 0),
+                s_end=float(z.get("s_end", 0) or 0),
+                zone_length=float(z.get("zone_length", 0) or 0),
+                L_required=float(z.get("L_required", 0) or 0),
+                E_required=float(z.get("E_required", 0) or 0),
+                model=z.get("model", ""),
+                pcb=z.get("pcb", ""),
+                current_mA=int(z.get("current_mA", 0) or 0),
+                flux_lm=float(z.get("flux_lm", 0) or 0),
+                power_w=float(z.get("power_w", 0) or 0),
+                optic=z.get("optic", ""),
+                d_max_ul=float(z.get("d_max_ul", 0) or 0),
+                d_used=float(z.get("d_used", 0) or 0),
+                n_luminaires=int(z.get("n_luminaires", 0) or 0),
+                L_estimated=float(z.get("L_estimated", 0) or 0),
+                UF=float(z.get("UF", 0) or 0),
+                power_zone_w=float(z.get("power_zone_w", 0) or 0),
+                flux_zone_lm=float(z.get("flux_zone_lm", 0) or 0),
+                power_density_wm2=float(z.get("power_density_wm2", 0) or 0),
+                d_max=float(z.get("d_max", 0) or 0),
+                setpoints=setpoints,
+                tilt_deg=float(z.get("tilt_deg", 0) or 0),
+                n_tandem=int(z.get("n_tandem", 1) or 1),
+                tandem_offset_m=float(z.get("tandem_offset_m", 0) or 0),
+                Ul=float(z.get("Ul", 0) or 0),
+                profile_L_avg=z.get("profile_L_avg"),
+                profile_L_min=z.get("profile_L_min"),
+                profile_min_ratio=z.get("profile_min_ratio"),
+                profile_median_ratio=z.get("profile_median_ratio"),
+                profile_p95_ratio=z.get("profile_p95_ratio"),
+                profile_max_ratio=z.get("profile_max_ratio"),
+                control_layer=z.get("control_layer", "legacy"),
+                portal=z.get("portal"),
+                L_total_required=z.get("L_total_required"),
+                daylight_profile=z.get("daylight_profile"),
+            )
+        except (TypeError, ValueError):
+            continue
+        zones.append(zone)
+
+    lum_dict = data.get("luminaire") or {}
+    lum_spec = LuminaireSpec(
+        flux_lm=float(lum_dict.get("flux_lm", 0) or 0),
+        power_w=float(lum_dict.get("power_w", 0) or 0),
+        efficiency=float(lum_dict.get("efficiency", 0) or 0),
+        mounting_height_m=float(
+            lum_dict.get("mounting_height_m", 5.0) or 5.0,
+        ),
+        arrangement=lum_dict.get("arrangement", ""),
+        maintenance_factor=float(
+            lum_dict.get("maintenance_factor", 0.70) or 0.70,
+        ),
+        name=lum_dict.get("name", ""),
+    )
+    result = TunnelLuminaireResult(
+        tube_id=data.get("tube_id", "T1"),
+        luminaire=lum_spec,
+        road_surface_type=data.get(
+            "road_surface_type", "medium_asphalt",
+        ),
+        rho_eff=float(data.get("rho_eff", 0.085) or 0.085),
+        road_width_m=float(data.get("road_width_m", 7.0) or 7.0),
+        tube_length_m=float(data.get("tube_length_m", 300) or 300),
+        optic=data.get("optic", ""),
+        cct=data.get("cct", "4000K"),
+        I_max_mA=int(data.get("I_max_mA", 750) or 750),
+        arrangement=data.get("arrangement", "central_single"),
+        zones=zones,
+        architecture=data.get("architecture", "legacy_zonal"),
+        warnings=list(data.get("warnings") or []),
+        scenarios=dict(data.get("scenarios") or {}),
+    )
+    result._compute_totals()
+    return result
+
+
 def calculate_luminaire_layout(
     zones_list:       list,
     luminaire_params: dict,
@@ -7932,6 +8721,20 @@ def calculate_luminaire_layout(
     params = dict(luminaire_params)
     params.setdefault('road_width_m',  road_width_m)
     params.setdefault('tube_length_m', tube_length_m)
+
+    # Techo de exceso sobre Lreq configurable en el panel (%). Un unico
+    # control alimenta la cota dura de la matriz (scene_excess_ratio) y el
+    # techo del ajuste exacto (scene_exact_upper_ratio) para que ambos
+    # usen exactamente el mismo criterio al probar escenarios.
+    try:
+        _excess_pct = float(params.get('scene_excess_ratio_pct'))
+    except (TypeError, ValueError):
+        _excess_pct = 0.0
+    if _excess_pct > 0.0:
+        params['scene_excess_ratio'] = _excess_pct / 100.0
+        params.setdefault(
+            'scene_exact_upper_ratio', 1.0 + _excess_pct / 100.0,
+        )
 
     # ── Modo APHEX optimizado (U0/Ul objetivos via CIE 140 real) ─────────────
     if params.get('I_max_mA') or params.get('cct'):

@@ -14,10 +14,11 @@ type PhotometricProfile = { gamma_deg: number; c_angles_deg: number[]; normalize
 type LaneVisualGrid = { lane_index: number; observer_y_m: number; luminance_cd_m2: number[][] };
 type LaneProfile = { lane_index: number; observer_y_m: number; luminance_cd_m2: number[] };
 type VisualGrid = { xs_m: number[]; ys_m: number[]; illuminance_lx: number[][]; luminance_cd_m2: number[][]; lane_grids?: LaneVisualGrid[]; lane_profiles?: LaneProfile[]; normative_profile?: LaneProfile; worst_lane_index?: number; lane_centres_m?: number[]; lane_widths_m?: number[]; observer_x_m?: number; observer_distance_m?: number };
+type ReferenceRoad = { metrics: Metrics; visual_grid?: VisualGrid };
 type MapMetric = 'luminance' | 'illuminance';
 type LdtPair = { c_deg: number; mirror_c_deg: number; max_difference_pct: number; worst_gamma_deg: number; symmetric: boolean };
 type LdtDiagnostic = { name: string; company: string; flux_lm: number; power_w: number; c_angles_deg: number[]; gamma_angles_deg: number[]; intensities_cd_per_klm: number[][]; max_intensity_cd_per_klm: number; symmetry_tolerance_pct: number; pairs: LdtPair[]; symmetric: boolean };
-type Result = { feasible?: boolean; currents_ma: number[]; operating_point: OperatingPoint; metrics?: Metrics; photometric_profile?: PhotometricProfile; visual_grid?: VisualGrid; group_ldt?: LdtDiagnostic; luminaire_ldt?: LdtDiagnostic; reference_luminaire_ldt?: LdtDiagnostic | null; message?: string };
+type Result = { feasible?: boolean; currents_ma: number[]; operating_point: OperatingPoint; metrics?: Metrics; reference_road?: ReferenceRoad | null; photometric_profile?: PhotometricProfile; visual_grid?: VisualGrid; group_ldt?: LdtDiagnostic; luminaire_ldt?: LdtDiagnostic; reference_luminaire_ldt?: LdtDiagnostic | null; message?: string };
 
 const encodeFile = (file: File): Promise<FilePayload> => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -201,7 +202,8 @@ function App() {
       </form>
     </div>
     <section className="results-section"><div className="results-heading"><div><p className="eyebrow">LIVE OUTPUT / {lightingClass}</p><h2>Lectura de la solución</h2></div><span className={`result-state ${result?.metrics?.compliant ? 'good' : result ? 'warn' : ''}`}>{result?.metrics?.compliant ? 'CONFORME' : result ? 'REVISAR' : 'SIN CÁLCULO'}</span></div>
-      <div className="metric-grid"><Metric label="Flujo total" value={totalFlux ? `${format(totalFlux, 0)} lm` : '—'} /><Metric label="Potencia entrada" value={totalPower ? `${format(totalPower, 1)} W` : '—'} /><Metric label="Lavg" value={result?.metrics ? `${format(result.metrics.lavg_cd_m2, 2)} cd/m²` : '—'} /><Metric label="Uo" value={result?.metrics ? format(result.metrics.uo, 2) : '—'} /><Metric label="Ul" value={result?.metrics ? format(result.metrics.ul, 2) : '—'} /></div>
+       <div className="metric-grid"><Metric label="Flujo total" value={totalFlux ? `${format(totalFlux, 0)} lm` : '—'} /><Metric label="Potencia entrada" value={totalPower ? `${format(totalPower, 1)} W` : '—'} /><Metric label="Lavg" value={result?.metrics ? `${format(result.metrics.lavg_cd_m2, 2)} cd/m²` : '—'} /><Metric label="Uo" value={result?.metrics ? format(result.metrics.uo, 2) : '—'} /><Metric label="Ul" value={result?.metrics ? format(result.metrics.ul, 2) : '—'} /></div>
+       {result?.reference_road && result.metrics && <ReferenceComparison calculated={result.metrics} reference={result.reference_road.metrics} />}
         <div className="visual-card"><div className="card-title"><span>MAPA PUNTO A PUNTO</span><small>isocurvas / luminancia cd/m²</small></div>{result?.visual_grid ? <LuminanceMap grid={result.visual_grid} luminaireLdt={result.luminaire_ldt} carriagewayWidth={width * lanes} spacing={spacing} edgeOffset={edgeOffset} arrangement={arrangement} selectedLane={selectedLane} onLaneChange={setSelectedLane} /> : <div className="empty-result">Ejecuta una evaluación para visualizar la distribución sobre la calzada.</div>}</div>
         {result?.visual_grid?.normative_profile && <NormativeGraph xs={result.visual_grid.xs_m} profiles={result.visual_grid.lane_profiles || []} worstLane={result.visual_grid.worst_lane_index ?? result.visual_grid.normative_profile.lane_index} selectedLane={selectedLane} onLaneChange={setSelectedLane} />}
         {result?.group_ldt && <LdtDiagnostics title="DIAGNÓSTICO FOTOMÉTRICO / GRUPO" diagnostic={result.group_ldt} />}
@@ -215,6 +217,17 @@ function App() {
 }
 
 function Metric({ label, value }: { label: string; value: string }) { return <div className="metric"><span>{label}</span><strong>{value}</strong></div>; }
+
+function ReferenceComparison({ calculated, reference }: { calculated: Metrics; reference: Metrics }) {
+  const rows = [
+    ['Lavg', 'cd/m²', calculated.lavg_cd_m2, reference.lavg_cd_m2],
+    ['Uo', '', calculated.uo, reference.uo],
+    ['Ul', '', calculated.ul, reference.ul],
+    ['TI', '%', calculated.ti_pct, reference.ti_pct],
+    ['REI', '', calculated.rei, reference.rei],
+  ] as const;
+  return <section className="reference-comparison"><div className="card-title"><span>COMPARACIÓN VIAL / LDT COMPLETO</span><small>modelo calculado frente a referencia DIALux</small></div><div className="reference-comparison-grid"><div><b>Calculado por grupos</b><small>8 fuentes virtuales</small></div><div><b>LDT completo</b><small>fotometría cargada</small></div></div><table><thead><tr><th>Métrica</th><th>Calculado</th><th>Referencia</th><th>Diferencia</th></tr></thead><tbody>{rows.map(([label, unit, calculatedValue, referenceValue]) => <tr key={label}><th>{label} <small>{unit}</small></th><td>{calculatedValue.toFixed(3)}</td><td>{referenceValue.toFixed(3)}</td><td>{(calculatedValue - referenceValue).toFixed(3)}</td></tr>)}</tbody></table><p>La referencia se evalúa con su propio flujo declarado y no modifica la optimización.</p></section>;
+}
 
 function NormativeGraph({ xs, profiles, worstLane, selectedLane, onLaneChange }: { xs: number[]; profiles: LaneProfile[]; worstLane: number; selectedLane: number; onLaneChange: (lane: number) => void }) {
   const width = 920;

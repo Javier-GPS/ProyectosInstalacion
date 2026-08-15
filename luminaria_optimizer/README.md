@@ -54,6 +54,11 @@ Endpoints iniciales:
 solución. `/api/road/calculate` y `/api/optimize` calculan directamente la
 suma de las ocho fuentes virtuales.
 
+Ambos endpoints viales aceptan opcionalmente `reference_luminaire_ldt_base64`.
+Cuando se proporciona, evalúan también ese LDT completo como una única fuente
+con su flujo declarado y devuelven `reference_road` para comparar `Lavg`,
+`Uo`, `Ul`, `TI` y `REI` con la solución calculada por grupos.
+
 La API recibe los LDT y las tablas `.rtb` como Base64 para mantener el núcleo
 sin rutas de disco ni base de datos.
 

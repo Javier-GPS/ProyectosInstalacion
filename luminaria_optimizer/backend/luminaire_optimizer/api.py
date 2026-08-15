@@ -13,7 +13,7 @@ from .composition import DEFAULT_GROUP_ANGLES_DEG, compose_luminaire
 from .hl2x import HL2X_MAX_INPUT_POWER_W, Hl2xModel, calculate_luminaire_operating_point
 from .ldt import ldt_diagnostic, ldt_text, parse_ldt_text
 from .optimizer import optimize_currents, optimize_currents_symmetric
-from .road import RoadScenario, calculate_road, photometric_azimuth_profile
+from .road import RoadScenario, calculate_reference_road, calculate_road, photometric_azimuth_profile
 from .r_tables import load_rtable
 
 app = FastAPI(title="SALVI Luminaria Optimizer", version="0.1.0")
@@ -203,6 +203,10 @@ def optimize(request: RoadRequest):
             )
         else:
             raise ValueError("optimization_mode must be symmetric or independent")
+        reference_road = (
+            calculate_reference_road(reference_ldt, scenario, table)
+            if reference_ldt is not None else None
+        )
         return {
             "feasible": result.feasible,
             "currents_ma": list(result.currents_ma),
@@ -221,6 +225,10 @@ def optimize(request: RoadRequest):
                 symmetric=request.photometry_symmetry == "symmetric",
             ),
             "reference_luminaire_ldt": ldt_diagnostic(reference_ldt) if reference_ldt else None,
+            "reference_road": {
+                "metrics": reference_road.metrics.__dict__,
+                "visual_grid": reference_road.visual_grid,
+            } if reference_road else None,
         }
     except (ValueError, KeyError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -253,6 +261,10 @@ def road_calculate(request: RoadRequest):
             ldt, _model(request, ldt), request.currents_ma, scenario, table,
             cct_k=request.cct_k, cri=request.cri,
         )
+        reference_road = (
+            calculate_reference_road(reference_ldt, scenario, table)
+            if reference_ldt is not None else None
+        )
         return {
             "currents_ma": list(result.operating_point.currents_ma),
             "operating_point": _point_response(result.operating_point),
@@ -268,6 +280,10 @@ def road_calculate(request: RoadRequest):
                 symmetric=request.photometry_symmetry == "symmetric",
             ),
             "reference_luminaire_ldt": ldt_diagnostic(reference_ldt) if reference_ldt else None,
+            "reference_road": {
+                "metrics": reference_road.metrics.__dict__,
+                "visual_grid": reference_road.visual_grid,
+            } if reference_road else None,
         }
     except (ValueError, KeyError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

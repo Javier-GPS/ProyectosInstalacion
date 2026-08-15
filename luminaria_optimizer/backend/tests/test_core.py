@@ -14,6 +14,7 @@ from luminaire_optimizer.road import (
     _positions,
     _virtual_sources,
     calculate_road,
+    calculate_reference_road,
     luminance_from_flux,
     luminance_uniformity,
     luminance_uniformity_batch,
@@ -266,6 +267,20 @@ def test_precomputed_luminance_matches_road_calculation():
         np.array([point.group_flux_lm for point in operating.groups]),
     )
     np.testing.assert_allclose(fast[0], calculated.visual_grid["luminance_cd_m2"])
+
+
+def test_complete_luminaire_ldt_can_be_evaluated_as_reference_road():
+    scenario = RoadScenario(height_m=1.0, spacing_m=10.0)
+    table = ReducedLuminanceTable(
+        "test",
+        (0.0, 1.0, 2.0, 5.0, 10.0),
+        tuple(float(value) for value in range(0, 181, 10)),
+        tuple(tuple(1000.0 for _ in range(19)) for _ in range(5)),
+    )
+    result = calculate_reference_road(group_ldt(), scenario, table)
+    assert result.metrics.lavg_cd_m2 > 0
+    assert result.visual_grid is not None
+    assert result.metrics.power_limit_ok
 
 
 def test_visual_grid_exposes_each_observer_lane_and_normative_profile():

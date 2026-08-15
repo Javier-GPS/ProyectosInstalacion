@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import numpy as np
 
@@ -70,6 +70,14 @@ class RoadMetrics:
 class RoadCalculation:
     scenario: RoadScenario
     operating_point: LuminaireOperatingPoint
+    metrics: RoadMetrics
+    visual_grid: dict[str, object] | None = None
+
+
+@dataclass(frozen=True)
+class ReferenceRoadCalculation:
+    """Road result evaluated directly from a complete luminaire LDT."""
+
     metrics: RoadMetrics
     visual_grid: dict[str, object] | None = None
 
@@ -452,20 +460,17 @@ def _illuminance_grid(
     return grid
 
 
-def calculate_road(
+def _calculate_road_for_sources(
     group_ldt: LdtPhotometry,
-    model: Hl2xModel,
-    currents_ma: list[float] | tuple[float, ...],
+    sources: tuple[VirtualGroupSource, ...],
     scenario: RoadScenario,
     rtable: ReducedLuminanceTable,
     *,
-    cct_k: int,
-    cri: int,
-    include_visual_grid: bool = True,
-    include_glare_metrics: bool = True,
-) -> RoadCalculation:
-    operating = calculate_luminaire_operating_point(currents_ma, model, cct_k, cri)
-    sources = _virtual_sources(operating)
+    include_visual_grid: bool,
+    include_glare_metrics: bool,
+    power_limit_ok: bool,
+    power_input_w: float | None = None,
+) -> tuple[RoadMetrics, dict[str, object] | None]:
     xs, ys, _ = _road_points(scenario)
     lane_ys = _lane_y_points(scenario)
     lane_centres = []
@@ -510,10 +515,10 @@ def calculate_road(
     warnings = []
     if include_glare_metrics and group_ldt.gamma_angles_deg[-1] < 180.0:
         warnings.append("El LDT no contiene gamma > 90 grados; el TI no puede certificarse para esta altura")
-    power_limit_ok = operating.power_limit_ok
     criteria["Power"] = power_limit_ok
     if not power_limit_ok:
-        warnings.append(f"Potencia de entrada {operating.total_driver_power_w:.1f} W supera el limite de 30.0 W")
+        power_text = f"{power_input_w:.1f} W" if power_input_w is not None else "el límite"
+        warnings.append(f"Potencia de entrada {power_text} supera el limite de 30.0 W")
     metrics = RoadMetrics(
         worst_lavg, worst_uo, worst_ul, ti, rei, worst_minimum, worst_maximum,
         all(criteria.values()) and not warnings, criteria, tuple(warnings), True,
@@ -555,7 +560,57 @@ def calculate_road(
             "observer_x_m": -scenario.observer_distance_m,
             "observer_distance_m": scenario.observer_distance_m,
         }
+    return metrics, visual_grid
+
+
+def calculate_road(
+    group_ldt: LdtPhotometry,
+    model: Hl2xModel,
+    currents_ma: list[float] | tuple[float, ...],
+    scenario: RoadScenario,
+    rtable: ReducedLuminanceTable,
+    *,
+    cct_k: int,
+    cri: int,
+    include_visual_grid: bool = True,
+    include_glare_metrics: bool = True,
+) -> RoadCalculation:
+    operating = calculate_luminaire_operating_point(currents_ma, model, cct_k, cri)
+    metrics, visual_grid = _calculate_road_for_sources(
+        group_ldt,
+        _virtual_sources(operating),
+        scenario,
+        rtable,
+        include_visual_grid=include_visual_grid,
+        include_glare_metrics=include_glare_metrics,
+        power_limit_ok=operating.power_limit_ok,
+        power_input_w=operating.total_driver_power_w,
+    )
     return RoadCalculation(scenario, operating, metrics, visual_grid)
+
+
+def calculate_reference_road(
+    luminaire_ldt: LdtPhotometry,
+    scenario: RoadScenario,
+    rtable: ReducedLuminanceTable,
+    *,
+    include_visual_grid: bool = True,
+    include_glare_metrics: bool = True,
+) -> ReferenceRoadCalculation:
+    """Evaluate a complete LDT independently from the eight-group model."""
+    # The uploaded reference must remain an exact photometric benchmark even
+    # when the active design scenario is configured for optional symmetry.
+    reference_scenario = replace(scenario, photometry_symmetry="asymmetric")
+    metrics, visual_grid = _calculate_road_for_sources(
+        luminaire_ldt,
+        (VirtualGroupSource(0.0, luminaire_ldt.flux_lm),),
+        reference_scenario,
+        rtable,
+        include_visual_grid=include_visual_grid,
+        include_glare_metrics=include_glare_metrics,
+        power_limit_ok=True,
+    )
+    return ReferenceRoadCalculation(metrics, visual_grid)
 
 
 def _calculate_ti(

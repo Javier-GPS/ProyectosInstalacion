@@ -85,6 +85,13 @@ class LdtPhotometry:
         if self.symmetry not in (0, 1, 2, 3, 4):
             raise LdtError("Unsupported EULUMDAT symmetry code")
 
+    def _c_axis_is_circular(self) -> bool:
+        """Return whether the C grid covers a complete 360 degree turn."""
+        if len(self.c_angles_deg) < 2:
+            return False
+        step = self.c_angles_deg[1] - self.c_angles_deg[0]
+        return self.c_angles_deg[-1] - self.c_angles_deg[0] + step >= 360.0 - 1e-6
+
     def intensity_cd_per_klm(self, c_deg: float, gamma_deg: float) -> float:
         """Bilinearly interpolate the full expanded matrix."""
         self.validate()
@@ -96,7 +103,11 @@ class LdtPhotometry:
             return 0.0
         c = float(c_deg) % 360.0
         c_axis = self.c_angles_deg
-        if c_axis[-1] < 360.0 and c < c_axis[0]:
+        circular_c = self._c_axis_is_circular()
+        if not circular_c and (c < c_axis[0] or c > c_axis[-1]):
+            # A half-plane LDT is directional. Do not close C=180 to C=0.
+            return 0.0
+        if circular_c and c < c_axis[0]:
             c += 360.0
 
         def bracket(axis: list[float], value: float, circular: bool = False) -> tuple[int, int, float]:
@@ -113,7 +124,7 @@ class LdtPhotometry:
                     return index, index + 1, (value - axis[index]) / span
             return len(axis) - 2, len(axis) - 1, 1.0
 
-        c0, c1, wc = bracket(c_axis, c, circular=True)
+        c0, c1, wc = bracket(c_axis, c, circular=circular_c)
         g0, g1, wg = bracket(self.gamma_angles_deg, gamma)
         a = self.intensities_cd_per_klm[c0][g0]
         b = self.intensities_cd_per_klm[c0][g1]

@@ -133,20 +133,39 @@ def test_edge_offset_is_transverse_not_longitudinal():
     positions = _positions(scenario, k_min=0, k_max=1)
     assert [position[0] for position in positions] == [0.0, 10.0]
     assert [position[1] for position in positions] == [-0.75, -0.75]
-    assert [position[2] for position in positions] == [90.0, 90.0]
+    assert [position[2] for position in positions] == [0.0, 0.0]
 
 
 def test_bilateral_rows_face_the_carriageway():
     scenario = RoadScenario(height_m=1.0, spacing_m=10.0, arrangement="bilateral_paired")
     positions = _positions(scenario, k_min=0, k_max=0)
-    assert [position[2] for position in positions] == [90.0, -90.0]
+    assert [position[2] for position in positions] == [0.0, 180.0]
 
 
-def test_row_orientation_maps_interior_to_local_c0_after_c_plane_flip():
-    left = _angles_to_point(0.0, 1.0, -1.0, 90.0, 0.0)
-    right = _angles_to_point(0.0, -1.0, -1.0, -90.0, 0.0)
-    assert left[1] == pytest.approx(0.0)
-    assert right[1] % 360.0 == pytest.approx(0.0)
+def test_right_side_unilateral_luminaire_is_rotated_180_degrees():
+    scenario = RoadScenario(height_m=1.0, spacing_m=10.0, pole_side="right")
+    positions = _positions(scenario, k_min=0, k_max=0)
+    assert positions[0][2] == pytest.approx(180.0)
+
+
+def test_row_orientation_maps_interior_to_local_c90():
+    left = _angles_to_point(0.0, 1.0, -1.0, 0.0, 0.0)
+    right = _angles_to_point(0.0, -1.0, -1.0, 180.0, 0.0)
+    assert left[1] == pytest.approx(90.0)
+    assert right[1] == pytest.approx(90.0)
+
+
+def test_directional_ldt_does_not_wrap_c180_to_c0():
+    photometry = LdtPhotometry(
+        company="TEST",
+        name="Directional group",
+        c_angles_deg=[0.0, 90.0, 180.0],
+        gamma_angles_deg=[0.0, 45.0, 90.0],
+        intensities_cd_per_klm=[[100.0, 50.0, 0.0]] * 3,
+        lamp_sets=[LampSet("3", "HL2X", 897.81, "4000K", "70", 6.6)],
+    )
+    assert photometry.intensity_cd_per_klm(180.0, 45.0) == pytest.approx(50.0)
+    assert photometry.intensity_cd_per_klm(270.0, 45.0) == pytest.approx(0.0)
 
 
 def test_beta_uses_cie_140_complementary_angle():

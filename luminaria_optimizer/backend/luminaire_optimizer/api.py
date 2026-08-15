@@ -59,8 +59,8 @@ class RoadRequest(GroupRequest):
     tilt_deg: float = Field(default=0.0, ge=-10.0, le=10.0)
     maintenance_factor: float = Field(default=0.85, gt=0, le=1)
     lighting_class: str = "M3"
-    optimization_mode: str = "symmetric"
-    photometry_symmetry: str = "symmetric"
+    optimization_mode: str = "independent"
+    photometry_symmetry: str = "asymmetric"
 
 
 def _decode_text(value: str, label: str) -> str:

@@ -74,9 +74,15 @@ procedimiento físico aplicable.
 
 El paquete no depende de `luxStudio` ni de la aplicación de túneles.
 
-La optimización vial usa por defecto una primera fase simétrica (`G1=G8`,
-`G2=G7`, `G3=G6`, `G4=G5`) que busca únicamente `Uo` y `Ul` con la
-fotometría a temperatura de referencia. Después escala el perfil y valida
-`Lavg`, temperatura, potencia, `TI` y `REI` con el cálculo completo. La API
-conserva `optimization_mode="independent"` para comparar con el buscador
-anterior.
+La optimización vial usa por defecto corrientes independientes y conserva la
+direccionalidad del LDT. El modo simétrico (`G1=G8`, `G2=G7`, `G3=G6`,
+`G4=G5`) sigue disponible explícitamente para luminarias cuya fotometría real
+lo justifique. En ambos casos se valida `Lavg`, temperatura, potencia, `TI` y
+`REI` con el cálculo completo.
+
+En la convención vial, `C0/C180` son las direcciones longitudinales de la
+calzada y `C90/C270` las transversales. Un LDT cuyo eje C termina en `C180` se
+trata como direccional y no se cierra artificialmente hacia `C360/C0`.
+Las luminarias del lado derecho se giran 180 grados para que `C90` siga
+apuntando hacia la calzada; no se interpreta `C270` como el eje interior de
+esa luminaria.

@@ -109,7 +109,8 @@ function App() {
       carriageway_width_m: width * lanes,
       lane_widths_m: laneWidths,
       arrangement,
-      photometry_symmetry: 'symmetric',
+      optimization_mode: 'independent',
+      photometry_symmetry: 'asymmetric',
       maintenance_factor: maintenance,
       lighting_class: lightingClass,
     };
@@ -334,15 +335,16 @@ function LuminanceMapSvg({ grid, luminaireLdt, carriagewayWidth, spacing: interd
   contourPaths.push(<line key="observer-line" x1={xPosition(observerX)} y1={yPosition(observerY)} x2={xPosition(observerArrowEnd)} y2={yPosition(observerY)} stroke="#173e36" strokeWidth="2.2" />);
   contourPaths.push(<polygon key="observer-arrow" points={`${xPosition(observerArrowEnd)},${yPosition(observerY)} ${xPosition(observerArrowEnd) - 8},${yPosition(observerY) - 4} ${xPosition(observerArrowEnd) - 8},${yPosition(observerY) + 4}`} fill="#173e36" />);
   contourPaths.push(<text key="observer-label" x={xPosition(observerX)} y={yPosition(observerY) - 8} fill="#173e36" fontSize="9" fontFamily="DM Mono, monospace">OBSERVADOR {grid.observer_distance_m ? `· ${grid.observer_distance_m.toFixed(0)} m` : ''}</text>);
-   // Match the road solver after the 180-degree C-plane correction.
-   const luminairePositions = [
-     { x: 0, y: -edgeOffset, label: 'L1', orientation: 90 },
-     { x: interdistance, y: -edgeOffset, label: 'L2', orientation: 90 },
-    ...(arrangement === 'unilateral' ? [] : [
-       { x: arrangement === 'bilateral_staggered' ? interdistance / 2 : 0, y: carriagewayWidth + edgeOffset, label: 'L3', orientation: -90 },
-       { x: arrangement === 'bilateral_staggered' ? interdistance * 1.5 : interdistance, y: carriagewayWidth + edgeOffset, label: 'L4', orientation: -90 },
-    ]),
-  ];
+    // C0/C180 follow the road; the right row is rotated 180 degrees so C90
+    // points into the carriageway on both rows.
+    const luminairePositions = [
+      { x: 0, y: -edgeOffset, label: 'L1', orientation: 0 },
+      { x: interdistance, y: -edgeOffset, label: 'L2', orientation: 0 },
+     ...(arrangement === 'unilateral' ? [] : [
+        { x: arrangement === 'bilateral_staggered' ? interdistance / 2 : 0, y: carriagewayWidth + edgeOffset, label: 'L3', orientation: 180 },
+        { x: arrangement === 'bilateral_staggered' ? interdistance * 1.5 : interdistance, y: carriagewayWidth + edgeOffset, label: 'L4', orientation: 180 },
+     ]),
+   ];
    const ldtShape = (luminaire: typeof luminairePositions[number]) => {
      if (!luminaireLdt) return '';
      const maxIntensity = Math.max(luminaireLdt.max_intensity_cd_per_klm, 1);
@@ -406,11 +408,14 @@ function smoothLdtDiagnostic(diagnostic: LdtDiagnostic): LdtDiagnostic {
   const sample = (c: number, gamma: number) => {
     const axis = diagnostic.c_angles_deg;
     const normalized = ((c % 360) + 360) % 360;
+    const step = axis.length > 1 ? axis[1] - axis[0] : 360;
+    const circular = axis[axis.length - 1] - axis[0] + step >= 360 - 1e-6;
+    if (!circular && (normalized < axis[0] || normalized > axis[axis.length - 1])) return 0;
     let left = 0;
-    while (left < axis.length - 1 && axis[left + 1] <= normalized) left += 1;
+    const query = circular && normalized < axis[0] ? normalized + 360 : normalized;
+    while (left < axis.length - 1 && axis[left + 1] <= query) left += 1;
     const right = left === axis.length - 1 ? 0 : left + 1;
     const upper = right === 0 ? axis[0] + 360 : axis[right];
-    const query = right === 0 && normalized < axis[left] ? normalized + 360 : normalized;
     const fraction = (query - axis[left]) / (upper - axis[left]);
     const leftValue = pchipValue(diagnostic.gamma_angles_deg, diagnostic.intensities_cd_per_klm[left], gamma);
     const rightValue = pchipValue(diagnostic.gamma_angles_deg, diagnostic.intensities_cd_per_klm[right], gamma);

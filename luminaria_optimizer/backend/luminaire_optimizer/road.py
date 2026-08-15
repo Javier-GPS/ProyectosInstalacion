@@ -304,19 +304,22 @@ def photometric_azimuth_profile(
 
 
 def _positions(scenario: RoadScenario, *, k_min: int = -6, k_max: int = 7) -> list[tuple[float, float, float]]:
-    # Rotate the uploaded photometry 180 degrees from the previous mounting
-    # reference so its useful beam points into the carriageway.
+    # International road-lighting convention: C0/C180 are longitudinal and
+    # C90/C270 are transverse. Reverse the right row so C90 points inward on
+    # both sides while preserving the directional C0..C180 half-plane.
     width = scenario.carriageway_width_m
     left_y = -scenario.edge_offset_m if scenario.pole_side == "left" else width + scenario.edge_offset_m
     right_y = width + scenario.edge_offset_m if scenario.pole_side == "left" else -scenario.edge_offset_m
+    left_orientation = 0.0 if scenario.pole_side == "left" else 180.0
+    right_orientation = 180.0 if scenario.pole_side == "left" else 0.0
     if scenario.arrangement == "unilateral":
-        return [(k * scenario.spacing_m, left_y, 90.0) for k in range(k_min, k_max + 1)]
+        return [(k * scenario.spacing_m, left_y, left_orientation) for k in range(k_min, k_max + 1)]
     result = []
     for k in range(k_min, k_max + 1):
         x = k * scenario.spacing_m
-        result.append((x, left_y, 90.0))
+        result.append((x, left_y, left_orientation))
         x_right = x if scenario.arrangement == "bilateral_paired" else x + scenario.spacing_m / 2.0
-        result.append((x_right, right_y, -90.0))
+        result.append((x_right, right_y, right_orientation))
     return result
 
 

@@ -82,8 +82,9 @@ El paquete no depende de `luxStudio` ni de la aplicación de túneles.
 La optimización vial usa por defecto corrientes independientes y conserva la
 direccionalidad del LDT. El modo simétrico (`G1=G8`, `G2=G7`, `G3=G6`,
 `G4=G5`) sigue disponible explícitamente para luminarias cuya fotometría real
-lo justifique. En ambos casos se valida `Lavg`, temperatura, potencia, `TI` y
-`REI` con el cálculo completo.
+lo justifique. El selector solo limita las corrientes; ninguno de los dos
+modos busca, promedia ni simetriza el LDT. En ambos casos se valida `Lavg`,
+temperatura, potencia, `TI` y `REI` con el cálculo completo.
 
 En la convención vial, `C0/C180` son las direcciones longitudinales de la
 calzada y `C90/C270` las transversales. Un LDT cuyo eje C termina en `C180` se

@@ -205,8 +205,8 @@ def optimize_currents_symmetric(
     """Optimize mirrored groups first, then apply thermal/power scaling."""
     if initial_current_ma % HL2X_CURRENT_STEP_MA:
         raise ValueError("initial_current_ma must use 50 mA steps")
-    if scenario.photometry_symmetry != "symmetric":
-        scenario = replace(scenario, photometry_symmetry="symmetric")
+    # The mode only constrains currents. Never alter or symmetrise the LDT.
+    scenario = replace(scenario, photometry_symmetry="asymmetric")
     influence = precompute_luminance_influence(group_ldt, scenario, rtable)
     relative_vector, _, iterations = _relative_symmetric_profile(
         model, scenario, influence, cct_k=cct_k, cri=cri,
@@ -289,6 +289,8 @@ def optimize_currents(
 ) -> OptimizationResult:
     if initial_current_ma % HL2X_CURRENT_STEP_MA:
         raise ValueError("initial_current_ma must use 50 mA steps")
+    # Independent and symmetric modes both use the measured LDT as supplied.
+    scenario = replace(scenario, photometry_symmetry="asymmetric")
     current = max(0.0, min(HL2X_CURRENT_MAX_MA, initial_current_ma))
     vector = [current] * model.group_count
     calculation = calculate_road(

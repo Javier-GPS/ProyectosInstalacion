@@ -16,6 +16,7 @@ type LaneProfile = { lane_index: number; observer_y_m: number; luminance_cd_m2: 
 type VisualGrid = { xs_m: number[]; ys_m: number[]; illuminance_lx: number[][]; luminance_cd_m2: number[][]; lane_grids?: LaneVisualGrid[]; lane_profiles?: LaneProfile[]; normative_profile?: LaneProfile; worst_lane_index?: number; lane_centres_m?: number[]; lane_widths_m?: number[]; observer_x_m?: number; observer_distance_m?: number };
 type ReferenceRoad = { metrics: Metrics; visual_grid?: VisualGrid };
 type MapMetric = 'luminance' | 'illuminance';
+type OptimizationMode = 'independent' | 'symmetric';
 type LdtPair = { c_deg: number; mirror_c_deg: number; max_difference_pct: number; worst_gamma_deg: number; symmetric: boolean };
 type LdtDiagnostic = { name: string; company: string; flux_lm: number; power_w: number; c_angles_deg: number[]; gamma_angles_deg: number[]; intensities_cd_per_klm: number[][]; max_intensity_cd_per_klm: number; symmetry_tolerance_pct: number; pairs: LdtPair[]; symmetric: boolean };
 type Result = { feasible?: boolean; currents_ma: number[]; operating_point: OperatingPoint; metrics?: Metrics; reference_road?: ReferenceRoad | null; photometric_profile?: PhotometricProfile; visual_grid?: VisualGrid; group_ldt?: LdtDiagnostic; luminaire_ldt?: LdtDiagnostic; reference_luminaire_ldt?: LdtDiagnostic | null; message?: string };
@@ -59,6 +60,7 @@ function App() {
   const [tilt, setTilt] = useState(0.0);
   const [lanes, setLanes] = useState(1);
   const [arrangement, setArrangement] = useState('unilateral');
+  const [optimizationMode, setOptimizationMode] = useState<OptimizationMode>('independent');
   const [ambient, setAmbient] = useState(25);
   const [tsCoefficient, setTsCoefficient] = useState(0.3);
   const [driverEfficiency, setDriverEfficiency] = useState(0.9);
@@ -122,7 +124,7 @@ function App() {
       carriageway_width_m: width * lanes,
       lane_widths_m: laneWidths,
       arrangement,
-      optimization_mode: 'independent',
+      optimization_mode: optimizationMode,
       photometry_symmetry: 'asymmetric',
       maintenance_factor: maintenance,
       lighting_class: lightingClass,
@@ -192,9 +194,10 @@ function App() {
           <RoadAnimation width={width * lanes} height={height} spacing={spacing} edgeOffset={edgeOffset} arrangement={arrangement} />
           <p className="note"><span>i</span> Las luminarias opuestas se giran 180° y utilizan el mismo perfil de ocho corrientes.</p>
         </section>}
-        {activePanel === 'groups' && <section className="panel-content">
-          <div className="section-heading"><div><p className="eyebrow">PERFIL DE CONTROL</p><h2>Corriente por grupo</h2></div><span className="tag">0 — 2000 mA</span></div>
-          <div className="group-list">{GROUP_ANGLES.map((angle, index) => <div className="group-row" key={angle}><div className="group-index">G{String(index + 1).padStart(2, '0')}</div><div className="group-angle"><strong>{angle.toFixed(2)}°</strong><small>azimut C</small></div><input className="range" type="range" min={0} max={2000} step={50} value={currents[index]} onChange={event => updateCurrent(index, Number(event.target.value))} /><select className="current-select" value={currents[index]} onChange={event => updateCurrent(index, Number(event.target.value))}>{CURRENT_OPTIONS.map(value => <option key={value} value={value}>{value} mA</option>)}</select><span className="group-flow">{result ? `${format(result.operating_point.groups[index]?.group_flux_lm, 0)} lm` : '—'}</span></div>)}</div>
+         {activePanel === 'groups' && <section className="panel-content">
+           <div className="section-heading"><div><p className="eyebrow">PERFIL DE CONTROL</p><h2>Corriente por grupo</h2></div><span className="tag">0 — 2000 mA</span></div>
+           <div className="mode-field"><span>Distribución de corrientes</span><div className="mode-toggle" role="group" aria-label="Modo de optimización"><button type="button" className={optimizationMode === 'independent' ? 'active' : ''} onClick={() => setOptimizationMode('independent')}>Independiente</button><button type="button" className={optimizationMode === 'symmetric' ? 'active' : ''} onClick={() => setOptimizationMode('symmetric')}>Simétrico</button></div><small>Simétrico impone G1=G8, G2=G7, G3=G6 y G4=G5. No modifica ni simetriza el LDT.</small></div>
+           <div className="group-list">{GROUP_ANGLES.map((angle, index) => <div className="group-row" key={angle}><div className="group-index">G{String(index + 1).padStart(2, '0')}</div><div className="group-angle"><strong>{angle.toFixed(2)}°</strong><small>azimut C</small></div><input className="range" type="range" min={0} max={2000} step={50} value={currents[index]} onChange={event => updateCurrent(index, Number(event.target.value))} /><select className="current-select" value={currents[index]} onChange={event => updateCurrent(index, Number(event.target.value))}>{CURRENT_OPTIONS.map(value => <option key={value} value={value}>{value} mA</option>)}</select><span className="group-flow">{result ? `${format(result.operating_point.groups[index]?.group_flux_lm, 0)} lm` : '—'}</span></div>)}</div>
           <button className="equalize" type="button" onClick={() => setCurrents(Array(8).fill(currents[0]))}>Igualar los ocho grupos</button>
         </section>}
         {error && <div className="error-banner" role="alert">{error}</div>}

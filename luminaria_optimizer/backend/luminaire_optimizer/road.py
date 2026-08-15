@@ -88,6 +88,7 @@ class VirtualGroupSource:
 
     azimuth_deg: float
     flux_lm: float
+    directional_c0_c180: bool = True
 
 
 @dataclass(frozen=True)
@@ -130,6 +131,8 @@ def precompute_luminance_influence(
                         x - lum_x, y - lum_y, -scenario.height_m, orientation, scenario.tilt_deg,
                     )
                     if distance <= 0:
+                        continue
+                    if not 0.0 <= c <= 180.0:
                         continue
                     beta = _beta(
                         x, y, lum_x, lum_y,
@@ -229,6 +232,8 @@ def _group_intensity_cd(
     own optical axis. No composed LDT is generated during road optimization.
     """
     def total_at(c_deg: float) -> float:
+        if any(source.directional_c0_c180 for source in sources) and not 0.0 <= c_deg % 360.0 <= 180.0:
+            return 0.0
         return sum(
             _base_group_intensity(
                 group_ldt, c_deg - source.azimuth_deg, gamma_deg,
@@ -287,10 +292,13 @@ def photometric_azimuth_profile(
     group_profiles = []
     for source in sources:
         group_values = [
-            _base_group_intensity(
-                group_ldt, c - source.azimuth_deg, gamma_deg, symmetric=symmetric,
+            (
+                _base_group_intensity(
+                    group_ldt, c - source.azimuth_deg, gamma_deg, symmetric=symmetric,
+                )
+                * source.flux_lm / 1000.0
+                if 0.0 <= c <= 180.0 else 0.0
             )
-            * source.flux_lm / 1000.0
             for c in c_angles
         ]
         group_max = max(group_values, default=0.0)
@@ -625,7 +633,7 @@ def calculate_reference_road(
     reference_scenario = replace(scenario, photometry_symmetry="asymmetric")
     metrics, visual_grid = _calculate_road_for_sources(
         luminaire_ldt,
-        (VirtualGroupSource(0.0, luminaire_ldt.flux_lm),),
+        (VirtualGroupSource(0.0, luminaire_ldt.flux_lm, directional_c0_c180=False),),
         reference_scenario,
         rtable,
         include_visual_grid=include_visual_grid,

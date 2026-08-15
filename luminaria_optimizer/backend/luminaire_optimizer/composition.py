@@ -18,6 +18,8 @@ def compose_luminaire(group_ldt: LdtPhotometry, operating_point: LuminaireOperat
     total_flux = operating_point.total_flux_lm
     matrix: list[list[float]] = []
     def total_at(c: float, gamma: float) -> float:
+        if not 0.0 <= c % 360.0 <= 180.0:
+            return 0.0
         return sum(
             group_ldt.intensity_cd_per_klm(c - angle, gamma) * point.group_flux_lm / 1000.0
             for angle, point in zip(angles_deg, operating_point.groups)

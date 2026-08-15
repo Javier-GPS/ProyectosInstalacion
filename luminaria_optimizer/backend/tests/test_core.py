@@ -83,6 +83,13 @@ def test_road_uses_virtual_groups_without_composed_ldt():
     assert all(source.flux_lm > 0 for source in sources)
 
 
+def test_complete_group_composition_has_no_c180_to_c360_emission():
+    model = Hl2xModel(897.81)
+    operating = calculate_luminaire_operating_point([700] * 8, model, 4000, 70)
+    composed = compose_luminaire(group_ldt(), operating, c_step_deg=15.0, gamma_step_deg=45.0)
+    assert composed.intensity_cd_per_klm(270.0, 45.0) == pytest.approx(0.0)
+
+
 def test_photometric_profile_reports_oriented_curve():
     model = Hl2xModel(897.81)
     operating = calculate_luminaire_operating_point([700] * 8, model, 4000, 70)

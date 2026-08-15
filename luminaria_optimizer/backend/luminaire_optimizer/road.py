@@ -9,7 +9,7 @@ import numpy as np
 from .composition import DEFAULT_GROUP_ANGLES_DEG
 from .hl2x import Hl2xModel, LuminaireOperatingPoint, calculate_luminaire_operating_point
 from .ldt import LdtPhotometry
-from .normative import MClassRequirements, requirements_for
+from .normative import MClassRequirements, passes_maximum, passes_minimum, requirements_for
 from .r_tables import ReducedLuminanceTable
 
 
@@ -135,7 +135,8 @@ def precompute_luminance_influence(
                         x, y, lum_x, lum_y,
                         -scenario.observer_distance_m, observer_y,
                     )
-                    reflection = rtable.value(math.tan(math.radians(gamma)), beta)
+                    tan_gamma = math.hypot(x - lum_x, y - lum_y) / scenario.height_m
+                    reflection = rtable.value(tan_gamma, beta)
                     if reflection == 0.0:
                         continue
                     factor = reflection * geometry_factor / 1000.0
@@ -166,11 +167,11 @@ def luminance_uniformity(luminance: np.ndarray) -> tuple[float, float, float]:
         return 0.0, 0.0, 0.0
     averages = np.mean(luminance, axis=(1, 2))
     minima = np.min(luminance, axis=(1, 2))
-    row_minima = np.min(luminance, axis=2)
-    row_maxima = np.max(luminance, axis=2)
     uo = np.divide(minima, averages, out=np.zeros_like(minima), where=averages != 0)
-    longitudinal_min = np.min(row_minima, axis=1)
-    longitudinal_max = np.max(row_maxima, axis=1)
+    centre_index = luminance.shape[2] // 2
+    centreline = luminance[:, :, centre_index]
+    longitudinal_min = np.min(centreline, axis=1)
+    longitudinal_max = np.max(centreline, axis=1)
     ul = np.divide(
         longitudinal_min, longitudinal_max,
         out=np.zeros_like(longitudinal_min), where=longitudinal_max != 0,
@@ -185,14 +186,14 @@ def luminance_uniformity_batch(luminance: np.ndarray) -> tuple[np.ndarray, np.nd
         return empty, empty, empty
     averages_by_lane = np.mean(luminance, axis=(2, 3))
     minima_by_lane = np.min(luminance, axis=(2, 3))
-    row_minima = np.min(luminance, axis=3)
-    row_maxima = np.max(luminance, axis=3)
     uo_by_lane = np.divide(
         minima_by_lane, averages_by_lane,
         out=np.zeros_like(minima_by_lane), where=averages_by_lane != 0,
     )
-    longitudinal_min = np.min(row_minima, axis=2)
-    longitudinal_max = np.max(row_maxima, axis=2)
+    centre_index = luminance.shape[3] // 2
+    centreline = luminance[:, :, :, centre_index]
+    longitudinal_min = np.min(centreline, axis=2)
+    longitudinal_max = np.max(centreline, axis=2)
     ul_by_lane = np.divide(
         longitudinal_min, longitudinal_max,
         out=np.zeros_like(longitudinal_min), where=longitudinal_max != 0,
@@ -311,11 +312,19 @@ def photometric_azimuth_profile(
     }
 
 
-def _positions(scenario: RoadScenario, *, k_min: int = -6, k_max: int = 7) -> list[tuple[float, float, float]]:
+def _positions(
+    scenario: RoadScenario,
+    *,
+    k_min: int | None = None,
+    k_max: int | None = None,
+) -> list[tuple[float, float, float]]:
     # International road-lighting convention: C0/C180 are longitudinal and
     # C90/C270 are transverse. Reverse the right row so C90 points inward on
     # both sides while preserving the directional C0..C180 half-plane.
     width = scenario.carriageway_width_m
+    periods = max(5, math.ceil(5.0 * scenario.height_m / scenario.spacing_m) + 1)
+    k_min = -periods if k_min is None else k_min
+    k_max = periods if k_max is None else k_max
     left_y = -scenario.edge_offset_m if scenario.pole_side == "left" else width + scenario.edge_offset_m
     right_y = width + scenario.edge_offset_m if scenario.pole_side == "left" else -scenario.edge_offset_m
     left_orientation = 0.0 if scenario.pole_side == "left" else 180.0
@@ -379,8 +388,14 @@ def _beta(point_x: float, point_y: float, lum_x: float, lum_y: float, observer_x
 
 
 def _road_points(scenario: RoadScenario) -> tuple[list[float], list[float], list[int]]:
-    longitudinal_span = scenario.spacing_m * (1.5 if scenario.arrangement == "bilateral_staggered" else 1.0)
-    xs = [index * longitudinal_span / scenario.longitudinal_points for index in range(scenario.longitudinal_points + 1)]
+    longitudinal_count = (
+        10 if scenario.spacing_m <= 30.0
+        else max(10, math.ceil(scenario.spacing_m / 3.0))
+    )
+    xs = [
+        (2 * index - 1) * scenario.spacing_m / (2 * longitudinal_count)
+        for index in range(1, longitudinal_count + 1)
+    ]
     ys: list[float] = []
     lane_for_y: list[int] = []
     y_start = 0.0
@@ -429,7 +444,8 @@ def _luminance_grid(
                     symmetric=scenario.photometry_symmetry == "symmetric",
                 )
                 beta = _beta(x, y, lx, ly, -scenario.observer_distance_m, observer_y)
-                value += intensity * rtable.value(math.tan(math.radians(gamma)), beta) / scenario.height_m**2 * scenario.maintenance_factor
+                tan_gamma = math.hypot(x - lx, y - ly) / scenario.height_m
+                value += intensity * rtable.value(tan_gamma, beta) / scenario.height_m**2 * scenario.maintenance_factor
             row.append(value)
         luminance.append(row)
     return luminance
@@ -492,9 +508,9 @@ def _calculate_road_for_sources(
         minimum = min(flat) if flat else 0.0
         maximum = max(flat) if flat else 0.0
         uo = minimum / average if average else 0.0
-        longitudinal_minima = [min(row) for row in grid if row]
-        longitudinal_maxima = [max(row) for row in grid if row]
-        ul = min(longitudinal_minima) / max(longitudinal_maxima) if longitudinal_maxima and max(longitudinal_maxima) else 0.0
+        centre_index = len(grid[0]) // 2 if grid and grid[0] else 0
+        centreline = [row[centre_index] for row in grid if row]
+        ul = min(centreline) / max(centreline) if centreline and max(centreline) else 0.0
         lane_metrics.append((average, minimum, maximum, uo, ul))
     worst_lane_index = min(range(len(lane_metrics)), key=lambda index: lane_metrics[index][0])
     worst_lavg, _, _, worst_uo, _ = lane_metrics[worst_lane_index]
@@ -502,15 +518,21 @@ def _calculate_road_for_sources(
     worst_ul = min(item[4] for item in lane_metrics)
     worst_minimum = min(item[1] for item in lane_metrics)
     worst_maximum = max(item[2] for item in lane_metrics)
-    ti = max(_calculate_ti(group_ldt, sources, scenario, average) for average, *_ in lane_metrics) if include_glare_metrics else 0.0
+    ti = max(
+        _calculate_ti(
+            group_ldt, sources, scenario,
+            average / scenario.maintenance_factor,
+        )
+        for average, *_ in lane_metrics
+    ) if include_glare_metrics else 0.0
     rei = _calculate_rei(group_ldt, sources, scenario) if include_glare_metrics else 0.0
     req = requirements_for(scenario.lighting_class)
     criteria = {
-        "Lavg": worst_lavg >= req.luminance_avg_cd_m2,
-        "Uo": worst_uo >= req.uo_min,
-        "Ul": worst_ul >= req.ul_min,
-        "TI": ti <= req.ti_max_pct if include_glare_metrics else True,
-        "REI": rei >= req.rei_min if include_glare_metrics else True,
+        "Lavg": passes_minimum(worst_lavg, req.luminance_avg_cd_m2, 2),
+        "Uo": passes_minimum(worst_uo, req.uo_min, 2),
+        "Ul": passes_minimum(worst_ul, req.ul_min, 2),
+        "TI": passes_maximum(ti, req.ti_max_pct, 0) if include_glare_metrics else True,
+        "REI": passes_minimum(rei, req.rei_min, 2) if include_glare_metrics else True,
     }
     warnings = []
     if include_glare_metrics and group_ldt.gamma_angles_deg[-1] < 180.0:
@@ -622,27 +644,35 @@ def _calculate_ti(
     """Implement the EN 13201-3 veiling-luminance sweep used by SALVI."""
     # Use the centre of every lane and the operative longitudinal sweep.
     best = 0.0
+    longitudinal_count = (
+        10 if scenario.spacing_m <= 30.0
+        else max(10, math.ceil(scenario.spacing_m / 3.0))
+    )
+    ti_periods = max(5, math.ceil(500.0 / max(scenario.spacing_m, 0.1)) + 2)
     for lane_start, lane_width in _lane_ranges(scenario):
         y_obs = lane_start + lane_width / 2.0
-        for index in range(scenario.longitudinal_points):
-            observer_x = -2.75 * max(0.0, scenario.height_m - 1.5) + index * scenario.spacing_m / scenario.longitudinal_points
+        for index in range(longitudinal_count):
+            observer_x = -2.75 * max(0.0, scenario.height_m - 1.5) + index * scenario.spacing_m / longitudinal_count
             lv = 0.0
-            k_max = max(6, int(500.0 / scenario.spacing_m) + 2)
-            for lx, ly, orientation in _positions(scenario, k_max=k_max):
+            for lx, ly, orientation in _positions(
+                scenario, k_min=-ti_periods, k_max=ti_periods,
+            ):
                 dx, dy = lx - observer_x, ly - y_obs
                 vertical = 1.5 - scenario.height_m
                 distance, c, gamma = _angles_to_point(-dx, -dy, vertical, orientation, scenario.tilt_deg)
                 if distance <= 0 or dx <= 0 or dx > 500:
                     continue
                 lum_vertical = scenario.height_m - 1.5
-                theta = math.degrees(math.acos(max(-1.0, min(1.0, (dx * math.cos(math.radians(-1.0)) + lum_vertical * math.sin(math.radians(-1.0))) / distance))))
+                cos_theta = (dx * math.cos(math.radians(-1.0)) + lum_vertical * math.sin(math.radians(-1.0))) / distance
+                cos_theta = max(-1.0, min(1.0, cos_theta))
+                theta = math.degrees(math.acos(cos_theta))
                 if theta <= 0.1 or theta > 60.0:
                     continue
                 intensity = _group_intensity_cd(
                     group_ldt, sources, c, gamma,
                     symmetric=scenario.photometry_symmetry == "symmetric",
                 )
-                e_eye = intensity / (distance * distance)
+                e_eye = intensity * cos_theta / (distance * distance)
                 if theta <= 1.5:
                     lv += e_eye * (10.0 / theta**3 + 5.0 / theta**2 * (1.0 + (23.0 / 62.5) ** 4))
                 else:
@@ -665,18 +695,21 @@ def _calculate_rei(
     scenario: RoadScenario,
 ) -> float:
     """Calculate the minimum outer/inner illuminance strip ratio."""
-    lane_width = scenario.lane_widths_m[0]
-    samples = max(3, scenario.transverse_points_per_lane)
-    left_outer = [-lane_width + (i + 0.5) * lane_width / samples for i in range(samples)]
-    right_outer = [scenario.carriageway_width_m + (i + 0.5) * lane_width / samples for i in range(samples)]
-    left_inner = [(i + 0.5) * lane_width / samples for i in range(samples)]
-    right_start = scenario.carriageway_width_m - lane_width
-    right_inner = [right_start + (i + 0.5) * lane_width / samples for i in range(samples)]
+    lane_width = scenario.carriageway_width_m / max(len(scenario.lane_widths_m), 1)
+    strip_width = min(lane_width, scenario.carriageway_width_m / 2.0)
+    samples = max(3, math.ceil(strip_width / 1.5))
+    left_outer = [-strip_width + (i + 0.5) * strip_width / samples for i in range(samples)]
+    right_outer = [scenario.carriageway_width_m + (i + 0.5) * strip_width / samples for i in range(samples)]
+    left_inner = [(i + 0.5) * strip_width / samples for i in range(samples)]
+    right_start = scenario.carriageway_width_m - strip_width
+    right_inner = [right_start + (i + 0.5) * strip_width / samples for i in range(samples)]
+    xs, _, _ = _road_points(scenario)
+
     def average_at(points):
         values = []
         for y in points:
-            value = 0.0
-            for x in (0.0, scenario.spacing_m / 2.0):
+            for x in xs:
+                value = 0.0
                 for lx, ly, orientation in _positions(scenario):
                     distance, c, gamma = _angles_to_point(x - lx, y - ly, -scenario.height_m, orientation, scenario.tilt_deg)
                     if distance:
@@ -684,8 +717,10 @@ def _calculate_rei(
                             group_ldt, sources, c, gamma,
                             symmetric=scenario.photometry_symmetry == "symmetric",
                         ) * scenario.height_m / distance**3 * scenario.maintenance_factor
-            values.append(value / 2.0)
+                values.append(value)
         return sum(values) / len(values) if values else 0.0
-    left = average_at(left_outer) / average_at(left_inner) if average_at(left_inner) else 0.0
-    right = average_at(right_outer) / average_at(right_inner) if average_at(right_inner) else 0.0
+    left_inner_average = average_at(left_inner)
+    right_inner_average = average_at(right_inner)
+    left = average_at(left_outer) / left_inner_average if left_inner_average else 0.0
+    right = average_at(right_outer) / right_inner_average if right_inner_average else 0.0
     return min(left, right)

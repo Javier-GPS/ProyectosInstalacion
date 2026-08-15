@@ -138,6 +138,14 @@ def ldt_diagnostic(photometry: LdtPhotometry, *, tolerance_pct: float = 1.0) -> 
     """Return the LDT grid and C-plane mirror-pair diagnostics."""
     photometry.validate()
     angles = photometry.c_angles_deg
+    peak_c_index, peak_gamma_index = max(
+        (
+            (c_index, gamma_index)
+            for c_index, row in enumerate(photometry.intensities_cd_per_klm)
+            for gamma_index, _ in enumerate(row)
+        ),
+        key=lambda item: photometry.intensities_cd_per_klm[item[0]][item[1]],
+    )
     pairs: list[dict[str, object]] = []
     used: set[int] = set()
     for index, angle in enumerate(angles):
@@ -182,6 +190,8 @@ def ldt_diagnostic(photometry: LdtPhotometry, *, tolerance_pct: float = 1.0) -> 
         "gamma_angles_deg": photometry.gamma_angles_deg,
         "intensities_cd_per_klm": photometry.intensities_cd_per_klm,
         "max_intensity_cd_per_klm": max((max(row) for row in photometry.intensities_cd_per_klm), default=0.0),
+        "peak_c_deg": photometry.c_angles_deg[peak_c_index],
+        "peak_gamma_deg": photometry.gamma_angles_deg[peak_gamma_index],
         "symmetry_tolerance_pct": tolerance_pct,
         "pairs": pairs,
         "symmetric": all(bool(pair["symmetric"]) for pair in pairs),

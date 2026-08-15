@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from decimal import Decimal, ROUND_HALF_UP
 
 
 @dataclass(frozen=True)
@@ -28,3 +29,20 @@ def requirements_for(lighting_class: str) -> MClassRequirements:
         return M_CLASS_REQUIREMENTS[str(lighting_class).upper()]
     except KeyError as exc:
         raise ValueError("lighting_class must be M1..M6") from exc
+
+
+def normative_round(value: float, places: int) -> float:
+    """Round presented EN 13201 values using decimal half-up rounding."""
+    return float(
+        Decimal(str(float(value))).quantize(
+            Decimal("1").scaleb(-places), rounding=ROUND_HALF_UP,
+        )
+    )
+
+
+def passes_minimum(value: float, required: float, places: int) -> bool:
+    return normative_round(value, places) >= normative_round(required, places)
+
+
+def passes_maximum(value: float, required: float, places: int) -> bool:
+    return normative_round(value, places) <= normative_round(required, places)

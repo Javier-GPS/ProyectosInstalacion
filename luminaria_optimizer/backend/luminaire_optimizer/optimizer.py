@@ -124,6 +124,57 @@ def _relative_symmetric_profile(
     return _symmetric_vector(best_vector.tolist()), best_metrics, iterations
 
 
+def _relative_independent_profile(
+    model: Hl2xModel,
+    scenario: RoadScenario,
+    influence: LuminanceInfluence,
+    *,
+    cct_k: int,
+    cri: int,
+    initial_current_ma: float,
+) -> tuple[list[float], tuple[float, float, float], int]:
+    """Find eight relative channel levels using only Uo and Ul.
+
+    The influence matrix is linear in group flux, so the absolute scale is
+    deliberately absent here. It is selected later with the thermal model.
+    """
+    levels = np.arange(0.0, HL2X_CURRENT_MAX_MA + HL2X_CURRENT_STEP_MA, HL2X_CURRENT_STEP_MA)
+    flux_lookup = _reference_flux_lookup(model, cct_k, cri)
+
+    def evaluate(currents: np.ndarray) -> tuple[float, float, float]:
+        flux = flux_lookup[np.rint(currents / HL2X_CURRENT_STEP_MA).astype(int)]
+        return luminance_uniformity(luminance_from_flux(influence, flux))
+
+    vector = np.full(model.group_count, initial_current_ma, dtype=float)
+    metrics = evaluate(vector)
+    quality = _uniformity_quality(metrics[1], metrics[2], scenario)
+    iterations = 0
+    for _ in range(12):
+        improved = False
+        for group_index in range(model.group_count):
+            local_vector = vector
+            local_metrics = metrics
+            local_quality = quality
+            for level in levels:
+                candidate = vector.copy()
+                candidate[group_index] = level
+                candidate_metrics = evaluate(candidate)
+                candidate_quality = _uniformity_quality(
+                    candidate_metrics[1], candidate_metrics[2], scenario,
+                )
+                if candidate_quality < local_quality:
+                    local_vector, local_metrics, local_quality = (
+                        candidate, candidate_metrics, candidate_quality,
+                    )
+                iterations += 1
+            if local_quality < quality:
+                vector, metrics, quality = local_vector, local_metrics, local_quality
+                improved = True
+        if not improved:
+            break
+    return vector.tolist(), metrics, iterations
+
+
 def _scaled_symmetric_vector(pair_currents: list[float], maximum: int) -> list[float]:
     nonzero = max(pair_currents, default=0.0)
     if nonzero <= 0.0:
@@ -134,8 +185,19 @@ def _scaled_symmetric_vector(pair_currents: list[float], maximum: int) -> list[f
     return _symmetric_vector(pair)
 
 
+def _scaled_vector(relative_currents: list[float], maximum: int) -> list[float]:
+    nonzero = max(relative_currents, default=0.0)
+    if nonzero <= 0.0:
+        return [0.0] * len(relative_currents)
+    scale = maximum / nonzero
+    return [
+        max(0.0, min(HL2X_CURRENT_MAX_MA, round(value * scale / HL2X_CURRENT_STEP_MA) * HL2X_CURRENT_STEP_MA))
+        for value in relative_currents
+    ]
+
+
 def _final_scale_candidates(
-    pair_currents: list[float],
+    relative_currents: list[float],
     group_ldt: LdtPhotometry,
     model: Hl2xModel,
     scenario: RoadScenario,
@@ -143,10 +205,13 @@ def _final_scale_candidates(
     *,
     cct_k: int,
     cri: int,
+    symmetric: bool,
 ) -> list[list[float]]:
     """Find the useful absolute scale with a short monotonic search."""
-    if max(pair_currents, default=0.0) <= 0.0:
-        return [[0.0] * 8]
+    if max(relative_currents, default=0.0) <= 0.0:
+        return [[0.0] * (8 if symmetric else len(relative_currents))]
+
+    scale_vector = _scaled_symmetric_vector if symmetric else _scaled_vector
 
     req = requirements_for(scenario.lighting_class)
     cache: dict[int, RoadCalculation] = {}
@@ -156,9 +221,9 @@ def _final_scale_candidates(
         maximum -= maximum % int(HL2X_CURRENT_STEP_MA)
         if maximum not in cache:
             cache[maximum] = calculate_road(
-                group_ldt, model, _scaled_symmetric_vector(pair_currents, maximum),
+                group_ldt, model, scale_vector(relative_currents, maximum),
                 scenario, rtable, cct_k=cct_k, cri=cri,
-                include_visual_grid=False, include_glare_metrics=False,
+                include_visual_grid=False, include_glare_metrics=True,
             )
         return cache[maximum]
 
@@ -177,7 +242,7 @@ def _final_scale_candidates(
 
     levels = {int(HL2X_CURRENT_STEP_MA), int(HL2X_CURRENT_MAX_MA), target}
     levels.update(range(max(50, target - 200), min(2000, target + 200) + 1, 50))
-    return [_scaled_symmetric_vector(pair_currents, level) for level in sorted(levels)]
+    return [scale_vector(relative_currents, level) for level in sorted(levels)]
 
 
 def _final_quality(calculation: RoadCalculation, scenario: RoadScenario) -> tuple[float, ...]:
@@ -187,7 +252,10 @@ def _final_quality(calculation: RoadCalculation, scenario: RoadScenario) -> tupl
         max(0.0, req.luminance_avg_cd_m2 - metrics.lavg_cd_m2) / req.luminance_avg_cd_m2,
         max(0.0, req.uo_min - metrics.uo) / req.uo_min,
         max(0.0, req.ul_min - metrics.ul) / req.ul_min,
+        max(0.0, metrics.ti_pct - req.ti_max_pct) / req.ti_max_pct,
+        max(0.0, req.rei_min - metrics.rei) / req.rei_min,
         0.0 if metrics.power_limit_ok else 1.0,
+        1.0 if metrics.warnings else 0.0,
     )
     return (max(deficits), sum(deficits), calculation.operating_point.total_driver_power_w)
 
@@ -216,6 +284,7 @@ def optimize_currents_symmetric(
     candidates = _final_scale_candidates(
         pair_currents, group_ldt, model, scenario, rtable,
         cct_k=cct_k, cri=cri,
+        symmetric=True,
     )
     best_calculation = None
     best_quality = None
@@ -224,7 +293,7 @@ def optimize_currents_symmetric(
             calculation = calculate_road(
                 group_ldt, model, candidate_vector, scenario, rtable,
                 cct_k=cct_k, cri=cri,
-                include_visual_grid=False, include_glare_metrics=False,
+                include_visual_grid=False, include_glare_metrics=True,
             )
         except ValueError:
             continue
@@ -232,8 +301,6 @@ def optimize_currents_symmetric(
         if best_quality is None or quality < best_quality:
             best_calculation, best_quality = calculation, quality
         iterations += 1
-        if calculation.metrics.criteria["Lavg"] and calculation.metrics.power_limit_ok:
-            break
     if best_calculation is None:
         raise ValueError("No se pudo evaluar ningún perfil simétrico")
     message = ""
@@ -250,33 +317,6 @@ def optimize_currents_symmetric(
     )
 
 
-def _quality(calculation: RoadCalculation) -> tuple[float, ...]:
-    """Rank infeasible candidates by their worst normalized deficit."""
-    metrics = calculation.metrics
-    requirements = {
-        "Lavg": (metrics.lavg_cd_m2, calculation.scenario.lighting_class),
-    }
-    del requirements
-    criteria = metrics.criteria
-    # Before feasibility, prefer candidates that reduce the largest relative
-    # deficit. The metric values are compared against the same hard limits as
-    # ``calculate_road``; values are deliberately conservative here.
-    deficits = []
-    if not criteria.get("Lavg", False):
-        deficits.append(1.0 / max(metrics.lavg_cd_m2, 1e-9))
-    if not criteria.get("Uo", False):
-        deficits.append(1.0 / max(metrics.uo, 1e-9))
-    if not criteria.get("Ul", False):
-        deficits.append(1.0 / max(metrics.ul, 1e-9))
-    if not criteria.get("REI", False):
-        deficits.append(1.0 / max(metrics.rei, 1e-9))
-    if not criteria.get("TI", False):
-        deficits.append(max(metrics.ti_pct, 1.0))
-    if not criteria.get("Power", True):
-        deficits.append(metrics.power_limit_ok and 0.0 or 1.0 + calculation.operating_point.total_driver_power_w / 30.0)
-    return (max(deficits, default=0.0), sum(deficits), metrics.lavg_cd_m2)
-
-
 def optimize_currents(
     group_ldt: LdtPhotometry,
     model: Hl2xModel,
@@ -291,69 +331,40 @@ def optimize_currents(
         raise ValueError("initial_current_ma must use 50 mA steps")
     # Independent and symmetric modes both use the measured LDT as supplied.
     scenario = replace(scenario, photometry_symmetry="asymmetric")
-    current = max(0.0, min(HL2X_CURRENT_MAX_MA, initial_current_ma))
-    vector = [current] * model.group_count
-    calculation = calculate_road(
-        group_ldt, model, vector, scenario, rtable,
-        cct_k=cct_k, cri=cri, include_visual_grid=False,
+    influence = precompute_luminance_influence(group_ldt, scenario, rtable)
+    relative_vector, _, iterations = _relative_independent_profile(
+        model, scenario, influence, cct_k=cct_k, cri=cri,
+        initial_current_ma=initial_current_ma,
     )
-    iterations = 1
-
-    # Coordinate ascent finds a useful independent profile even when the
-    # equal-current profile cannot meet uniformity. At each step it tests all
-    # 41 hardware levels for the group with the largest current need.
-    best_quality = _quality(calculation)
-    for _ in range(12):
-        improved = False
-        for group_index in range(model.group_count):
-            local_best = calculation
-            local_vector = vector
-            local_quality = best_quality
-            for trial in range(41):
-                candidate_vector = vector[:]
-                candidate_vector[group_index] = trial * HL2X_CURRENT_STEP_MA
-                candidate = calculate_road(
-                    group_ldt, model, candidate_vector, scenario, rtable,
-                    cct_k=cct_k, cri=cri, include_visual_grid=False,
-                )
-                iterations += 1
-                quality = _quality(candidate)
-                if quality < local_quality or (candidate.metrics.compliant and not local_best.metrics.compliant):
-                    local_best, local_vector, local_quality = candidate, candidate_vector, quality
-            if local_quality < best_quality or (local_best.metrics.compliant and not calculation.metrics.compliant):
-                vector, calculation, best_quality = local_vector, local_best, local_quality
-                improved = True
-        if calculation.metrics.compliant or not improved:
-            break
-
-    if not calculation.metrics.compliant:
-        final = calculate_road(
-            group_ldt, model, vector, scenario, rtable,
-            cct_k=cct_k, cri=cri, include_visual_grid=True,
-        )
-        return OptimizationResult(
-            tuple(vector), final, False, iterations + 1,
-            "No se cumplen todos los criterios con corrientes independientes hasta 2.000 mA",
-        )
-
-    # Once feasible, reduce each group independently. Every trial uses the
-    # eight virtual sources directly, not a regenerated LDT.
-    for group_index in range(model.group_count):
-        for trial in range(int(vector[group_index] / HL2X_CURRENT_STEP_MA) - 1, -1, -1):
-            candidate_vector = vector[:]
-            candidate_vector[group_index] = trial * HL2X_CURRENT_STEP_MA
-            candidate = calculate_road(
+    candidates = _final_scale_candidates(
+        relative_vector, group_ldt, model, scenario, rtable,
+        cct_k=cct_k, cri=cri, symmetric=False,
+    )
+    best_calculation = None
+    best_quality = None
+    for candidate_vector in candidates:
+        try:
+            calculation = calculate_road(
                 group_ldt, model, candidate_vector, scenario, rtable,
-                cct_k=cct_k, cri=cri, include_visual_grid=False,
+                cct_k=cct_k, cri=cri,
+                include_visual_grid=False, include_glare_metrics=True,
             )
-            iterations += 1
-            if candidate.metrics.compliant:
-                vector = candidate_vector
-                calculation = candidate
-            else:
-                break
-    calculation = calculate_road(
-        group_ldt, model, vector, scenario, rtable,
-        cct_k=cct_k, cri=cri, include_visual_grid=True,
+        except ValueError:
+            continue
+        quality = _final_quality(calculation, scenario)
+        if best_quality is None or quality < best_quality:
+            best_calculation, best_quality = calculation, quality
+        iterations += 1
+    if best_calculation is None:
+        raise ValueError("No se pudo evaluar ningún perfil independiente")
+    final = calculate_road(
+        group_ldt, model, list(best_calculation.operating_point.currents_ma),
+        scenario, rtable, cct_k=cct_k, cri=cri, include_visual_grid=True,
     )
-    return OptimizationResult(tuple(vector), calculation, calculation.metrics.compliant, iterations, "")
+    message = "" if final.metrics.compliant else (
+        "Perfil independiente optimizado en Uo/Ul; se conserva la mejor escala validada"
+    )
+    return OptimizationResult(
+        tuple(final.operating_point.currents_ma), final, final.metrics.compliant,
+        iterations + 1, message,
+    )

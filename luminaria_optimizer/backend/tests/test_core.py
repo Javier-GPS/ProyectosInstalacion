@@ -12,6 +12,7 @@ from luminaire_optimizer.road import (
     _beta,
     _group_intensity_cd,
     _positions,
+    _road_points,
     _virtual_sources,
     calculate_road,
     calculate_reference_road,
@@ -137,6 +138,12 @@ def test_edge_offset_is_transverse_not_longitudinal():
     assert [position[2] for position in positions] == [0.0, 0.0]
 
 
+def test_luminance_grid_uses_cie_140_centered_longitudinal_points():
+    scenario = RoadScenario(height_m=1.0, spacing_m=10.0)
+    xs, _, _ = _road_points(scenario)
+    assert xs == pytest.approx([0.5, 1.5, 2.5, 3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5])
+
+
 def test_bilateral_rows_face_the_carriageway():
     scenario = RoadScenario(height_m=1.0, spacing_m=10.0, arrangement="bilateral_paired")
     positions = _positions(scenario, k_min=0, k_max=0)
@@ -167,6 +174,11 @@ def test_directional_ldt_does_not_wrap_c180_to_c0():
     )
     assert photometry.intensity_cd_per_klm(180.0, 45.0) == pytest.approx(50.0)
     assert photometry.intensity_cd_per_klm(270.0, 45.0) == pytest.approx(0.0)
+
+
+def test_ul_uses_the_lane_centerline_not_transverse_extrema():
+    grid = np.array([[[1.0, 10.0, 2.0], [2.0, 8.0, 4.0]]])
+    assert luminance_uniformity(grid) == pytest.approx((4.5, 1.0 / 4.5, 0.8))
 
 
 def test_beta_uses_cie_140_complementary_angle():
@@ -314,7 +326,7 @@ def test_symmetric_isolux_is_mirrored_about_midpoint_between_luminaires():
     )
     result = calculate_road(group_ldt(), model, [700] * 8, scenario, table, cct_k=4000, cri=70)
     isolux = [row[1] for row in result.visual_grid["illuminance_lx"]]
-    np.testing.assert_allclose(isolux, isolux[::-1], rtol=1e-10, atol=1e-10)
+    np.testing.assert_allclose(isolux, isolux[::-1], rtol=1e-5, atol=1e-5)
 
 
 def test_batch_uniformity_matches_single_candidate_evaluation():

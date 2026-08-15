@@ -18,7 +18,7 @@ type ReferenceRoad = { metrics: Metrics; visual_grid?: VisualGrid };
 type MapMetric = 'luminance' | 'illuminance';
 type OptimizationMode = 'independent' | 'symmetric';
 type LdtPair = { c_deg: number; mirror_c_deg: number; max_difference_pct: number; worst_gamma_deg: number; symmetric: boolean };
-type LdtDiagnostic = { name: string; company: string; flux_lm: number; power_w: number; c_angles_deg: number[]; gamma_angles_deg: number[]; intensities_cd_per_klm: number[][]; max_intensity_cd_per_klm: number; symmetry_tolerance_pct: number; pairs: LdtPair[]; symmetric: boolean };
+type LdtDiagnostic = { name: string; company: string; flux_lm: number; power_w: number; c_angles_deg: number[]; gamma_angles_deg: number[]; intensities_cd_per_klm: number[][]; max_intensity_cd_per_klm: number; peak_c_deg?: number; peak_gamma_deg?: number; symmetry_tolerance_pct: number; pairs: LdtPair[]; symmetric: boolean };
 type Result = { feasible?: boolean; currents_ma: number[]; operating_point: OperatingPoint; metrics?: Metrics; reference_road?: ReferenceRoad | null; photometric_profile?: PhotometricProfile; visual_grid?: VisualGrid; group_ldt?: LdtDiagnostic; luminaire_ldt?: LdtDiagnostic; reference_luminaire_ldt?: LdtDiagnostic | null; message?: string };
 
 const encodeFile = (file: File): Promise<FilePayload> => new Promise((resolve, reject) => {
@@ -395,7 +395,7 @@ function LuminanceMapSvg({ grid, luminaireLdt, carriagewayWidth, spacing: interd
 
 function LdtDiagnostics({ title, diagnostic }: { title: string; diagnostic: LdtDiagnostic }) {
   return <section className="ldt-diagnostic">
-    <div className="card-title"><span>{title}</span><small>{diagnostic.name} · {diagnostic.c_angles_deg.length} C × {diagnostic.gamma_angles_deg.length} gamma</small></div>
+    <div className="card-title"><span>{title}</span><small>{diagnostic.name} · {diagnostic.c_angles_deg.length} C × {diagnostic.gamma_angles_deg.length} gamma · pico C{diagnostic.peak_c_deg?.toFixed(1) ?? '—'} / gamma {diagnostic.peak_gamma_deg?.toFixed(1) ?? '—'}°</small></div>
     <div className="ldt-diagnostic-grid">
       <LdtSurface diagnostic={diagnostic} />
       <div className="ldt-pair-panel">

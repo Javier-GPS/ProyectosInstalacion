@@ -17,7 +17,7 @@ type VisualGrid = { xs_m: number[]; ys_m: number[]; illuminance_lx: number[][]; 
 type MapMetric = 'luminance' | 'illuminance';
 type LdtPair = { c_deg: number; mirror_c_deg: number; max_difference_pct: number; worst_gamma_deg: number; symmetric: boolean };
 type LdtDiagnostic = { name: string; company: string; flux_lm: number; power_w: number; c_angles_deg: number[]; gamma_angles_deg: number[]; intensities_cd_per_klm: number[][]; max_intensity_cd_per_klm: number; symmetry_tolerance_pct: number; pairs: LdtPair[]; symmetric: boolean };
-type Result = { feasible?: boolean; currents_ma: number[]; operating_point: OperatingPoint; metrics?: Metrics; photometric_profile?: PhotometricProfile; visual_grid?: VisualGrid; group_ldt?: LdtDiagnostic; luminaire_ldt?: LdtDiagnostic; message?: string };
+type Result = { feasible?: boolean; currents_ma: number[]; operating_point: OperatingPoint; metrics?: Metrics; photometric_profile?: PhotometricProfile; visual_grid?: VisualGrid; group_ldt?: LdtDiagnostic; luminaire_ldt?: LdtDiagnostic; reference_luminaire_ldt?: LdtDiagnostic | null; message?: string };
 
 const encodeFile = (file: File): Promise<FilePayload> => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -44,6 +44,7 @@ function FileDrop({ label, hint, file, accept, onFile }: { label: string; hint: 
 
 function App() {
   const [ldt, setLdt] = useState<FilePayload>(null);
+  const [referenceLdt, setReferenceLdt] = useState<FilePayload>(null);
   const [rtable, setRtable] = useState<FilePayload>(null);
   const [currents, setCurrents] = useState<number[]>(Array(8).fill(700));
   const [cct, setCct] = useState(4000);
@@ -68,6 +69,7 @@ function App() {
   const [error, setError] = useState('');
   const [activePanel, setActivePanel] = useState<'model' | 'road' | 'groups'>('model');
   const [groupLdtDiagnostic, setGroupLdtDiagnostic] = useState<LdtDiagnostic | null>(null);
+  const [referenceLdtDiagnostic, setReferenceLdtDiagnostic] = useState<LdtDiagnostic | null>(null);
 
   const laneWidths = useMemo(() => Array(lanes).fill(width), [lanes, width]);
   const totalFlux = result?.operating_point.total_flux_lm;
@@ -85,10 +87,20 @@ function App() {
       if (response.ok) setGroupLdtDiagnostic(await response.json());
     } catch { /* The full calculation will report the error if inspection is unavailable. */ }
   };
+  const handleReferenceLdt = async (file: FilePayload) => {
+    setReferenceLdt(file);
+    setReferenceLdtDiagnostic(null);
+    if (!file) return;
+    try {
+      const response = await fetch(`${API_URL}/api/ldt/inspect`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group_ldt_base64: file.base64 }) });
+      if (response.ok) setReferenceLdtDiagnostic(await response.json());
+    } catch { /* The full calculation will report the error if inspection is unavailable. */ }
+  };
   const requestBody = () => {
     if (!ldt || !rtable) throw new Error('Carga el LDT del grupo y una tabla R/C2 antes de calcular.');
     return {
       group_ldt_base64: ldt.base64,
+      reference_luminaire_ldt_base64: referenceLdt?.base64 || null,
       rtable_base64: rtable.base64,
       rtable_name: rtableName,
       reference_group_flux_lm: 897.81,
@@ -162,8 +174,9 @@ function App() {
         </nav>
         {activePanel === 'model' && <section className="panel-content">
           <div className="section-heading"><div><p className="eyebrow">BASE FOTOMÉTRICA</p><h2>Modelo de referencia</h2></div><span className="tag">HL2X / 3535</span></div>
-           <div className="file-grid"><FileDrop label="LDT del grupo" hint="3 LED + lente / EULUMDAT" file={ldt} accept=".ldt" onFile={handleLdt} /></div>
+           <div className="file-grid"><FileDrop label="LDT del grupo" hint="3 LED + lente / EULUMDAT" file={ldt} accept=".ldt" onFile={handleLdt} /><FileDrop label="LDT completo de referencia" hint="Luminaria completa / DIALux" file={referenceLdt} accept=".ldt" onFile={handleReferenceLdt} /></div>
            {groupLdtDiagnostic && <LdtDiagnostics title="LDT DEL GRUPO / 3 LED + LENTE" diagnostic={groupLdtDiagnostic} />}
+           {referenceLdtDiagnostic && <LdtDiagnostics title="LDT COMPLETO / REFERENCIA DIALUX" diagnostic={referenceLdtDiagnostic} />}
           <div className="field-grid three"><label className="field"><span>CCT</span><select value={cct} onChange={event => setCct(Number(event.target.value))}>{CCT_OPTIONS.map(value => <option key={value} value={value}>{value} K</option>)}</select></label><label className="field"><span>CRI</span><select value={cri} onChange={event => setCri(Number(event.target.value))}><option value={70}>70</option><option value={80}>80</option><option value={90}>90</option></select></label></div>
           <div className="field-grid three"><NumberField label="Ambiente" value={ambient} onChange={setAmbient} suffix="°C" min={-40} max={80} /><NumberField label="Coef. Tsp" value={tsCoefficient} onChange={setTsCoefficient} suffix="°C/W" step={0.01} min={0} /><NumberField label="Driver" value={driverEfficiency} onChange={setDriverEfficiency} suffix="η" step={0.01} min={0.1} max={1} /></div>
           <p className="note"><span>i</span> El flujo del LDT es el anclaje fotométrico del grupo. La temperatura y la corriente modifican el flujo mediante el modelo iterativo HL2X.</p>
@@ -191,8 +204,9 @@ function App() {
       <div className="metric-grid"><Metric label="Flujo total" value={totalFlux ? `${format(totalFlux, 0)} lm` : '—'} /><Metric label="Potencia entrada" value={totalPower ? `${format(totalPower, 1)} W` : '—'} /><Metric label="Lavg" value={result?.metrics ? `${format(result.metrics.lavg_cd_m2, 2)} cd/m²` : '—'} /><Metric label="Uo" value={result?.metrics ? format(result.metrics.uo, 2) : '—'} /><Metric label="Ul" value={result?.metrics ? format(result.metrics.ul, 2) : '—'} /></div>
         <div className="visual-card"><div className="card-title"><span>MAPA PUNTO A PUNTO</span><small>isocurvas / luminancia cd/m²</small></div>{result?.visual_grid ? <LuminanceMap grid={result.visual_grid} luminaireLdt={result.luminaire_ldt} carriagewayWidth={width * lanes} spacing={spacing} edgeOffset={edgeOffset} arrangement={arrangement} selectedLane={selectedLane} onLaneChange={setSelectedLane} /> : <div className="empty-result">Ejecuta una evaluación para visualizar la distribución sobre la calzada.</div>}</div>
         {result?.visual_grid?.normative_profile && <NormativeGraph xs={result.visual_grid.xs_m} profiles={result.visual_grid.lane_profiles || []} worstLane={result.visual_grid.worst_lane_index ?? result.visual_grid.normative_profile.lane_index} selectedLane={selectedLane} onLaneChange={setSelectedLane} />}
-       {result?.group_ldt && <LdtDiagnostics title="DIAGNÓSTICO FOTOMÉTRICO / GRUPO" diagnostic={result.group_ldt} />}
-       {result?.luminaire_ldt && <LdtDiagnostics title="DIAGNÓSTICO FOTOMÉTRICO / LUMINARIA CALCULADA" diagnostic={result.luminaire_ldt} />}
+        {result?.group_ldt && <LdtDiagnostics title="DIAGNÓSTICO FOTOMÉTRICO / GRUPO" diagnostic={result.group_ldt} />}
+        {result?.luminaire_ldt && <LdtDiagnostics title="DIAGNÓSTICO FOTOMÉTRICO / LUMINARIA CALCULADA" diagnostic={result.luminaire_ldt} />}
+        {result?.reference_luminaire_ldt && <LdtDiagnostics title="DIAGNÓSTICO FOTOMÉTRICO / REFERENCIA DIALUX" diagnostic={result.reference_luminaire_ldt} />}
       <div className="group-results"><div className="card-title"><span>RESULTADO POR GRUPO</span><small>perfil aplicado en todas las luminarias</small></div><div className="group-results-grid">{GROUP_ANGLES.map((angle, index) => { const group = result?.operating_point.groups[index]; return <div className="group-result" key={angle}><strong>G{index + 1}</strong><span>{angle.toFixed(2)}° C</span><b>{result ? `${format(result.currents_ma[index], 0)} mA` : '—'}</b><small>{group ? `${format(group.group_flux_lm, 0)} lm · ${format(group.group_power_w, 1)} W` : 'sin cálculo'}</small></div>; })}</div></div>
        <div className="result-lower"><div className="profile-card"><div className="card-title"><span>PERFIL AZIMUTAL ACTIVO</span><label className="gamma-picker">gamma <select value={displayGamma} onChange={event => setDisplayGamma(Number(event.target.value))}><option value={0}>0°</option><option value={15}>15°</option><option value={30}>30°</option><option value={45}>45°</option><option value={60}>60°</option><option value={75}>75°</option><option value={90}>90°</option></select></label></div><div className="polar"><div className="polar-ring ring-1" /><div className="polar-ring ring-2" /><div className="polar-axis axis-x" /><div className="polar-axis axis-y" />{groupPolarCurves.map((points, index) => <svg className="polar-curve group-curve" viewBox="0 0 240 240" key={`group-curve-${index}`}><polyline points={points} /></svg>)}{polarCurve && <svg className="polar-curve total-curve" viewBox="0 0 240 240" aria-label={`Fotometría a gamma ${displayGamma} grados`}><polyline points={polarCurve} /></svg>}{GROUP_ANGLES.map((angle, index) => <span key={angle} className="polar-ray" style={{ transform: `rotate(${angle - 90}deg)`, height: result ? `${groupFluxes[index] / maxGroupFlux * 72}%` : '0%' }}><i /></span>)}<div className="polar-center">8<span>G</span></div></div><div className="polar-legend"><span className="photometry-key">curva gruesa: suma</span><span>curvas finas: grupos relativos</span></div>{polarProfile && <p className="profile-readout">Imax {format(polarProfile.max_intensity_cd, 0)} cd · gamma {polarProfile.gamma_deg.toFixed(0)}° · máximos orientados por grupo</p>}</div><div className="criteria-card"><div className="card-title"><span>CRITERIOS EN 13201</span><small>{rtableName} / {cct} K / CRI {cri}</small></div>{result?.metrics ? Object.entries(result.metrics.criteria).map(([name, passed]) => <div className="criterion" key={name}><span>{name}</span><strong className={passed ? 'pass' : 'fail'}>{passed ? 'OK' : 'NO'}</strong></div>) : <div className="empty-result">Ejecuta una evaluación para ver el cumplimiento de la clase {lightingClass}.</div>}{result?.metrics?.warnings.map(warning => <p className="warning" key={warning}>! {warning}</p>)}</div></div>
     </section>

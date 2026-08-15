@@ -28,6 +28,7 @@ app.add_middleware(
 
 class GroupRequest(BaseModel):
     group_ldt_base64: str
+    reference_luminaire_ldt_base64: str | None = None
     reference_group_flux_lm: float = Field(default=897.81, gt=0)
     reference_cct_k: int = 4000
     reference_cri: int = 70
@@ -68,6 +69,14 @@ def _decode_text(value: str, label: str) -> str:
         return base64.b64decode(value).decode("latin-1")
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"invalid base64 for {label}") from exc
+
+
+def _reference_ldt(request: GroupRequest):
+    if not request.reference_luminaire_ldt_base64:
+        return None
+    return parse_ldt_text(
+        _decode_text(request.reference_luminaire_ldt_base64, "reference_luminaire_ldt"),
+    )
 
 
 def _model(request: GroupRequest, group_ldt):
@@ -161,6 +170,7 @@ def compose(request: GroupRequest):
 def optimize(request: RoadRequest):
     try:
         ldt = parse_ldt_text(_decode_text(request.group_ldt_base64, "group_ldt"))
+        reference_ldt = _reference_ldt(request)
         with tempfile.NamedTemporaryFile(suffix=".rtb", delete=False) as handle:
             handle.write(base64.b64decode(request.rtable_base64))
             rtable_path = Path(handle.name)
@@ -210,6 +220,7 @@ def optimize(request: RoadRequest):
                 ldt, result.calculation.operating_point, cct_k=request.cct_k, cri=request.cri,
                 symmetric=request.photometry_symmetry == "symmetric",
             ),
+            "reference_luminaire_ldt": ldt_diagnostic(reference_ldt) if reference_ldt else None,
         }
     except (ValueError, KeyError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -220,6 +231,7 @@ def road_calculate(request: RoadRequest):
     """Evaluate a supplied eight-channel profile without optimizing it."""
     try:
         ldt = parse_ldt_text(_decode_text(request.group_ldt_base64, "group_ldt"))
+        reference_ldt = _reference_ldt(request)
         with tempfile.NamedTemporaryFile(suffix=".rtb", delete=False) as handle:
             handle.write(base64.b64decode(request.rtable_base64))
             rtable_path = Path(handle.name)
@@ -255,6 +267,7 @@ def road_calculate(request: RoadRequest):
                 ldt, result.operating_point, cct_k=request.cct_k, cri=request.cri,
                 symmetric=request.photometry_symmetry == "symmetric",
             ),
+            "reference_luminaire_ldt": ldt_diagnostic(reference_ldt) if reference_ldt else None,
         }
     except (ValueError, KeyError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

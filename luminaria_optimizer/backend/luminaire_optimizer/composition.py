@@ -6,6 +6,10 @@ from .ldt import LdtPhotometry, LampSet
 
 # Eight equal azimuth sectors mirrored about the transverse road plane C=90°.
 DEFAULT_GROUP_ANGLES_DEG = (11.25, 33.75, 56.25, 78.75, 101.25, 123.75, 146.25, 168.75)
+# The supplied group LDT is referenced 90° counter-clockwise from the road
+# convention used by the complete luminaire. In the plan-view display, positive
+# C therefore moves clockwise.
+GROUP_C_ROTATION_DEG = 90.0
 
 
 def compose_luminaire(group_ldt: LdtPhotometry, operating_point: LuminaireOperatingPoint, *, angles_deg: tuple[float, ...] = DEFAULT_GROUP_ANGLES_DEG, c_step_deg: float = 1.0, gamma_step_deg: float = 1.0, cct_k: int | None = None, cri: int | None = None, symmetric: bool = False) -> LdtPhotometry:
@@ -21,7 +25,7 @@ def compose_luminaire(group_ldt: LdtPhotometry, operating_point: LuminaireOperat
         if not 0.0 <= c % 360.0 <= 180.0:
             return 0.0
         return sum(
-            group_ldt.intensity_cd_per_klm(c - angle, gamma) * point.group_flux_lm / 1000.0
+            group_ldt.intensity_cd_per_klm(c - angle - GROUP_C_ROTATION_DEG, gamma) * point.group_flux_lm / 1000.0
             for angle, point in zip(angles_deg, operating_point.groups)
         )
 

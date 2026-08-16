@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from luminaire_optimizer.composition import DEFAULT_GROUP_ANGLES_DEG, compose_luminaire
+from luminaire_optimizer.composition import DEFAULT_GROUP_ANGLES_DEG, GROUP_C_ROTATION_DEG, compose_luminaire
 from luminaire_optimizer.hl2x import Hl2xModel, calculate_luminaire_operating_point
 from luminaire_optimizer.ldt import LdtPhotometry, LampSet, ldt_diagnostic, ldt_text, parse_ldt_text
 from luminaire_optimizer.r_tables import ReducedLuminanceTable, load_rtable
@@ -88,6 +88,22 @@ def test_complete_group_composition_has_no_c180_to_c360_emission():
     operating = calculate_luminaire_operating_point([700] * 8, model, 4000, 70)
     composed = compose_luminaire(group_ldt(), operating, c_step_deg=15.0, gamma_step_deg=45.0)
     assert composed.intensity_cd_per_klm(270.0, 45.0) == pytest.approx(0.0)
+
+
+def test_directional_group_ldt_is_rotated_clockwise_into_road_frame():
+    directional = LdtPhotometry(
+        company="TEST",
+        name="Directional group",
+        c_angles_deg=[0.0, 90.0, 180.0],
+        gamma_angles_deg=[0.0, 45.0, 90.0],
+        intensities_cd_per_klm=[[100.0, 100.0, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+        lamp_sets=[LampSet("3", "HL2X", 897.81, "4000K", "70", 6.6)],
+    )
+    operating = calculate_luminaire_operating_point([700] * 8, Hl2xModel(897.81), 4000, 70)
+    sources = _virtual_sources(operating, angles_deg=(0.0,) * 8)
+    assert GROUP_C_ROTATION_DEG == pytest.approx(90.0)
+    assert _group_intensity_cd(directional, sources, 90.0, 45.0) > 0
+    assert _group_intensity_cd(directional, sources, 0.0, 45.0) == pytest.approx(0.0)
 
 
 def test_photometric_profile_reports_oriented_curve():

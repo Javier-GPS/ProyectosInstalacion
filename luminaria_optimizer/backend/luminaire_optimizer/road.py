@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
-from .composition import DEFAULT_GROUP_ANGLES_DEG
+from .composition import DEFAULT_GROUP_ANGLES_DEG, GROUP_C_ROTATION_DEG
 from .hl2x import Hl2xModel, LuminaireOperatingPoint, calculate_luminaire_operating_point
 from .ldt import LdtPhotometry
 from .normative import MClassRequirements, passes_maximum, passes_minimum, requirements_for
@@ -146,13 +146,13 @@ def precompute_luminance_influence(
                     for group_index, angle in enumerate(angles_deg):
                         symmetric = scenario.photometry_symmetry == "symmetric"
                         contribution = _base_group_intensity(
-                            group_ldt, c - angle, gamma, symmetric=symmetric,
+                            group_ldt, c - angle - GROUP_C_ROTATION_DEG, gamma, symmetric=symmetric,
                         )
                         if symmetric:
                             contribution = 0.5 * (
                                 contribution
                                 + _base_group_intensity(
-                                    group_ldt, 180.0 - c - angle, gamma, symmetric=True,
+                                    group_ldt, 180.0 - c - angle - GROUP_C_ROTATION_DEG, gamma, symmetric=True,
                                 )
                             )
                         matrices[lane_index, x_index, y_index, group_index] += contribution * factor
@@ -236,7 +236,7 @@ def _group_intensity_cd(
             return 0.0
         return sum(
             _base_group_intensity(
-                group_ldt, c_deg - source.azimuth_deg, gamma_deg,
+                group_ldt, c_deg - source.azimuth_deg - GROUP_C_ROTATION_DEG, gamma_deg,
                 symmetric=symmetric,
             )
             * source.flux_lm / 1000.0
@@ -294,7 +294,7 @@ def photometric_azimuth_profile(
         group_values = [
             (
                 _base_group_intensity(
-                    group_ldt, c - source.azimuth_deg, gamma_deg, symmetric=symmetric,
+                    group_ldt, c - source.azimuth_deg - GROUP_C_ROTATION_DEG, gamma_deg, symmetric=symmetric,
                 )
                 * source.flux_lm / 1000.0
                 if 0.0 <= c <= 180.0 else 0.0

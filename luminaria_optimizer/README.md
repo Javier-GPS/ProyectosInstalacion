@@ -89,6 +89,8 @@ temperatura, potencia, `TI` y `REI` con el cálculo completo.
 En la convención vial, `C0/C180` son las direcciones longitudinales de la
 calzada y `C90/C270` las transversales. Un LDT cuyo eje C termina en `C180` se
 trata como direccional y no se cierra artificialmente hacia `C360/C0`.
+El LDT de grupo se gira 90° en sentido horario al trasladarlo al marco de la
+luminaria completa; después se conserva únicamente la emisión completa `C0–C180`.
 Las luminarias del lado derecho se giran 180 grados para que `C90` siga
 apuntando hacia la calzada; no se interpreta `C270` como el eje interior de
 esa luminaria.

@@ -2,7 +2,7 @@ import { ChangeEvent, FormEvent, PointerEvent, useMemo, useRef, useState } from 
 
 const API_URL = (import.meta.env.VITE_OPTIMIZER_API_URL || 'http://127.0.0.1:8760').replace(/\/$/, '');
 const GROUP_ANGLES = [11.25, 33.75, 56.25, 78.75, 101.25, 123.75, 146.25, 168.75];
-const CURRENT_OPTIONS = Array.from({ length: 41 }, (_, index) => index * 50);
+const GROUP_C_ROTATION_DEG = 90;
 const CCT_OPTIONS = [2200, 2700, 3000, 3500, 4000, 5000, 5700, 6500];
 
 type FilePayload = { name: string; base64: string } | null;
@@ -19,7 +19,7 @@ type MapMetric = 'luminance' | 'illuminance';
 type OptimizationMode = 'independent' | 'symmetric';
 type LdtPair = { c_deg: number; mirror_c_deg: number; max_difference_pct: number; worst_gamma_deg: number; symmetric: boolean };
 type LdtDiagnostic = { name: string; company: string; flux_lm: number; power_w: number; c_angles_deg: number[]; gamma_angles_deg: number[]; intensities_cd_per_klm: number[][]; max_intensity_cd_per_klm: number; peak_c_deg?: number; peak_gamma_deg?: number; symmetry_tolerance_pct: number; pairs: LdtPair[]; symmetric: boolean };
-type Result = { feasible?: boolean; currents_ma: number[]; operating_point: OperatingPoint; metrics?: Metrics; reference_road?: ReferenceRoad | null; photometric_profile?: PhotometricProfile; visual_grid?: VisualGrid; group_ldt?: LdtDiagnostic; luminaire_ldt?: LdtDiagnostic; reference_luminaire_ldt?: LdtDiagnostic | null; message?: string };
+type Result = { feasible?: boolean; currents_ma: number[]; tilt_deg?: number; operating_point: OperatingPoint; metrics?: Metrics; reference_road?: ReferenceRoad | null; photometric_profile?: PhotometricProfile; visual_grid?: VisualGrid; group_ldt?: LdtDiagnostic; luminaire_ldt?: LdtDiagnostic; reference_luminaire_ldt?: LdtDiagnostic | null; message?: string };
 
 const encodeFile = (file: File): Promise<FilePayload> => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -140,6 +140,7 @@ function App() {
       if (!response.ok) throw new Error(data.detail || 'El backend ha rechazado la solicitud.');
       setResult(data);
       if (data.currents_ma) setCurrents(data.currents_ma);
+      if (typeof data.tilt_deg === 'number') setTilt(data.tilt_deg);
       setActivePanel('groups');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'No se pudo completar el cálculo.');
@@ -196,7 +197,7 @@ function App() {
         </section>}
          {activePanel === 'groups' && <section className="panel-content">
            <div className="section-heading"><div><p className="eyebrow">PERFIL DE CONTROL</p><h2>Corriente por grupo</h2></div><span className="tag">0 — 2000 mA</span></div>
-            <div className="group-list">{GROUP_ANGLES.map((angle, index) => <div className="group-row" key={angle}><div className="group-index">G{String(index + 1).padStart(2, '0')}</div><div className="group-angle"><strong>{angle.toFixed(2)}°</strong><small>azimut C</small></div><input className="range" type="range" min={0} max={2000} step={50} value={currents[index]} onChange={event => updateCurrent(index, Number(event.target.value))} /><select className="current-select" value={currents[index]} onChange={event => updateCurrent(index, Number(event.target.value))}>{CURRENT_OPTIONS.map(value => <option key={value} value={value}>{value} mA</option>)}</select><span className="group-flow">{result ? `${format(result.operating_point.groups[index]?.group_flux_lm, 0)} lm` : '—'}</span></div>)}</div>
+            <div className="group-list">{GROUP_ANGLES.map((angle, index) => <div className="group-row" key={angle}><div className="group-index">G{String(index + 1).padStart(2, '0')}</div><div className="group-angle"><strong>{angle.toFixed(2)}°</strong><small>azimut C</small></div><input className="range" type="range" min={0} max={2000} step={1} value={currents[index]} onChange={event => updateCurrent(index, Number(event.target.value))} /><input className="current-select" type="number" min={0} max={2000} step={1} value={currents[index]} onChange={event => updateCurrent(index, Number(event.target.value))} /><span className="group-flow">{result ? `${format(result.operating_point.groups[index]?.group_flux_lm, 0)} lm` : '—'}</span></div>)}</div>
           <button className="equalize" type="button" onClick={() => setCurrents(Array(8).fill(currents[0]))}>Igualar los ocho grupos</button>
         </section>}
         {error && <div className="error-banner" role="alert">{error}</div>}
@@ -206,7 +207,7 @@ function App() {
     <section className="results-section"><div className="results-heading"><div><p className="eyebrow">LIVE OUTPUT / {lightingClass}</p><h2>Lectura de la solución</h2></div><span className={`result-state ${result?.metrics?.compliant ? 'good' : result ? 'warn' : ''}`}>{result?.metrics?.compliant ? 'CONFORME' : result ? 'REVISAR' : 'SIN CÁLCULO'}</span></div>
        <div className="metric-grid"><Metric label="Flujo total" value={totalFlux ? `${format(totalFlux, 0)} lm` : '—'} /><Metric label="Potencia entrada" value={totalPower ? `${format(totalPower, 1)} W` : '—'} /><Metric label="Lavg" value={result?.metrics ? `${format(result.metrics.lavg_cd_m2, 2)} cd/m²` : '—'} /><Metric label="Uo" value={result?.metrics ? format(result.metrics.uo, 2) : '—'} /><Metric label="Ul" value={result?.metrics ? format(result.metrics.ul, 2) : '—'} /></div>
        {result?.reference_road && result.metrics && <ReferenceComparison calculated={result.metrics} reference={result.reference_road.metrics} />}
-        <div className="visual-card"><div className="card-title"><span>MAPA PUNTO A PUNTO</span><small>isocurvas / luminancia cd/m²</small></div>{result?.visual_grid ? <LuminanceMap grid={result.visual_grid} luminaireLdt={result.luminaire_ldt} carriagewayWidth={width * lanes} spacing={spacing} edgeOffset={edgeOffset} arrangement={arrangement} selectedLane={selectedLane} onLaneChange={setSelectedLane} /> : <div className="empty-result">Ejecuta una evaluación para visualizar la distribución sobre la calzada.</div>}</div>
+         <div className="visual-card"><div className="card-title"><span>MAPA PUNTO A PUNTO</span><small>isocurvas / luminancia cd/m²</small></div>{result?.visual_grid ? <LuminanceMap grid={result.visual_grid} groupLdt={result.group_ldt} luminaireLdt={result.luminaire_ldt} luminaireHeight={height} carriagewayWidth={width * lanes} spacing={spacing} edgeOffset={edgeOffset} arrangement={arrangement} selectedLane={selectedLane} onLaneChange={setSelectedLane} /> : <div className="empty-result">Ejecuta una evaluación para visualizar la distribución sobre la calzada.</div>}</div>
         {result?.visual_grid?.normative_profile && <NormativeGraph xs={result.visual_grid.xs_m} profiles={result.visual_grid.lane_profiles || []} worstLane={result.visual_grid.worst_lane_index ?? result.visual_grid.normative_profile.lane_index} selectedLane={selectedLane} onLaneChange={setSelectedLane} />}
         {result?.group_ldt && <LdtDiagnostics title="DIAGNÓSTICO FOTOMÉTRICO / GRUPO" diagnostic={result.group_ldt} />}
         {result?.luminaire_ldt && <LdtDiagnostics title="DIAGNÓSTICO FOTOMÉTRICO / LUMINARIA CALCULADA" diagnostic={result.luminaire_ldt} />}
@@ -269,13 +270,13 @@ function RoadAnimation({ width, height, spacing, edgeOffset, arrangement }: { wi
   </svg></div>;
 }
 
-function LuminanceMap(props: { grid: VisualGrid; luminaireLdt?: LdtDiagnostic; carriagewayWidth: number; spacing: number; edgeOffset: number; arrangement: string; selectedLane: number; onLaneChange: (lane: number) => void }) {
+function LuminanceMap(props: { grid: VisualGrid; groupLdt?: LdtDiagnostic; luminaireLdt?: LdtDiagnostic; luminaireHeight: number; carriagewayWidth: number; spacing: number; edgeOffset: number; arrangement: string; selectedLane: number; onLaneChange: (lane: number) => void }) {
   const [metric, setMetric] = useState<MapMetric>('luminance');
   const laneCount = props.grid.lane_grids?.length || 1;
   return <div className="luminance-map-shell"><div className="map-toolbar"><label><span>Magnitud</span><select value={metric} onChange={event => setMetric(event.target.value as MapMetric)}><option value="luminance">Luminancia / cd/m²</option><option value="illuminance">Iluminancia / lux</option></select></label>{laneCount > 1 && <label><span>Carril del observador</span><select value={Math.min(props.selectedLane, laneCount - 1)} onChange={event => props.onLaneChange(Number(event.target.value))}>{Array.from({ length: laneCount }, (_, index) => <option key={index} value={index}>Carril {index + 1}</option>)}</select></label>}</div><LuminanceMapSvg {...props} metric={metric} /> </div>;
 }
 
-function LuminanceMapSvg({ grid, luminaireLdt, carriagewayWidth, spacing: interdistance, edgeOffset, arrangement, selectedLane, metric }: { grid: VisualGrid; luminaireLdt?: LdtDiagnostic; carriagewayWidth: number; spacing: number; edgeOffset: number; arrangement: string; selectedLane: number; metric: MapMetric }) {
+function LuminanceMapSvg({ grid, groupLdt, luminaireLdt, luminaireHeight, carriagewayWidth, spacing: interdistance, edgeOffset, arrangement, selectedLane, metric }: { grid: VisualGrid; groupLdt?: LdtDiagnostic; luminaireLdt?: LdtDiagnostic; luminaireHeight: number; carriagewayWidth: number; spacing: number; edgeOffset: number; arrangement: string; selectedLane: number; metric: MapMetric }) {
   const laneGrids = grid.lane_grids || [];
   const activeLane = Math.min(selectedLane, Math.max(laneGrids.length - 1, 0));
   const values = metric === 'illuminance' ? grid.illuminance_lx : laneGrids[activeLane]?.luminance_cd_m2 || grid.luminance_cd_m2;
@@ -310,6 +311,7 @@ function LuminanceMapSvg({ grid, luminaireLdt, carriagewayWidth, spacing: interd
   const laneCentres = grid.lane_centres_m || [];
   const observerY = laneCentres[activeLane] ?? carriagewayWidth / 2;
   const [showLdt, setShowLdt] = useState(false);
+  const showGroupMaxima = true;
   const sample = (u: number, v: number) => {
     const x = Math.max(0, Math.min(xCount - 1, u * (xCount - 1)));
     const y = Math.max(0, Math.min(yCount - 1, v * (yCount - 1)));
@@ -386,9 +388,29 @@ function LuminanceMapSvg({ grid, luminaireLdt, carriagewayWidth, spacing: interd
         const radians = (angle + luminaire.orientation) * Math.PI / 180;
         return `${xPosition(luminaire.x + Math.cos(radians) * radius)},${yPosition(luminaire.y + Math.sin(radians) * radius)}`;
      }).join(' ');
+    };
+   const maxGamma = groupLdt?.peak_gamma_deg ?? 0;
+   const maxLocalC = groupLdt?.peak_c_deg ?? 0;
+   const rayToMapEdge = (x: number, y: number, dx: number, dy: number) => {
+     const distances = [
+       dx > 0 ? (mapMaxX - x) / dx : dx < 0 ? (mapMinX - x) / dx : Infinity,
+       dy > 0 ? (mapMaxY - y) / dy : dy < 0 ? (mapMinY - y) / dy : Infinity,
+     ].filter(distance => distance >= 0 && Number.isFinite(distance));
+     return Math.min(...distances, Math.hypot(mapRangeX, mapRangeY));
    };
-   const ldtCells = showLdt && luminaireLdt ? luminairePositions.map((luminaire, index) => <polygon key={`ldt-azimuth-${index}`} className="map-ldt-shape" points={ldtShape(luminaire)} />) : [];
-  const ldtVisualScale = .12;
+   const maxIntensityLines = showGroupMaxima && groupLdt ? luminairePositions.flatMap((luminaire, luminaireIndex) => GROUP_ANGLES.map((groupAngle, groupIndex) => {
+     const direction = (maxLocalC + GROUP_C_ROTATION_DEG + groupAngle + luminaire.orientation) * Math.PI / 180;
+     const dx = Math.cos(direction);
+     const dy = Math.sin(direction);
+     const physicalReach = maxGamma >= 89.5 ? Infinity : luminaireHeight * Math.tan(maxGamma * Math.PI / 180);
+     const reach = Math.min(physicalReach, rayToMapEdge(luminaire.x, luminaire.y, dx, dy));
+     const endX = luminaire.x + dx * reach;
+     const endY = luminaire.y + dy * reach;
+     const displayC = ((maxLocalC + GROUP_C_ROTATION_DEG + groupAngle + luminaire.orientation) % 360 + 360) % 360;
+     return <g key={`group-max-${luminaireIndex}-${groupIndex}`} className="map-group-max"><title>{`${luminaire.label} · G${groupIndex + 1} · C${displayC.toFixed(1)}° · gamma ${maxGamma.toFixed(1)}°`}</title><line x1={xPosition(luminaire.x)} y1={yPosition(luminaire.y)} x2={xPosition(endX)} y2={yPosition(endY)} /><circle cx={xPosition(endX)} cy={yPosition(endY)} r="2" /></g>;
+    })) : [];
+    const ldtCells = [...maxIntensityLines, ...(showLdt && luminaireLdt ? luminairePositions.map((luminaire, index) => <polygon key={`ldt-azimuth-${index}`} className="map-ldt-shape" points={ldtShape(luminaire)} />) : [])];
+   const ldtVisualScale = .12;
   return <div className="luminance-map"><div className="heatmap-labels"><span>L / cd/m²</span><span>rango {minimum.toFixed(2)} — {maximum.toFixed(2)} cd/m²</span></div><label className="ldt-map-toggle"><input type="checkbox" checked={showLdt} onChange={event => setShowLdt(event.target.checked)} disabled={!luminaireLdt} /> Mostrar vista cenital del LDT completo <small>(escala visual ×{ldtVisualScale.toFixed(2)})</small></label><svg className="luminance-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Mapa de luminancia con isocurvas y luminarias"><rect width={width} height={height} fill="#eef3ec" />{surface}{contourPaths}<rect x={xPosition(0)} y={yPosition(0)} width={xPosition(spacing) - xPosition(0)} height={yPosition(carriagewayWidth) - yPosition(0)} fill="none" stroke="#173e36" strokeWidth="1.5" /><path d={`M${left} ${top + plotHeight}H${left + plotWidth}M${left} ${top}V${top + plotHeight}`} stroke="#173e36" strokeWidth="1" /><text x={left + plotWidth - 8} y={top + plotHeight + 24} textAnchor="end" fill="#52685a" fontSize="10">x / longitudinal</text><text x={left - 8} y={top + 10} textAnchor="end" fill="#52685a" fontSize="10">y / transversal</text>{values.flatMap((row, x) => row.map((value, y) => { const u = xCount > 1 ? (grid.xs_m[x] - mapMinX) / (mapMaxX - mapMinX) : .5; const v = yCount > 1 ? (grid.ys_m[y] - mapMinY) / (mapMaxY - mapMinY) : .5; return <g key={`measurement-${x}-${y}`}><circle cx={px(u)} cy={py(v)} r="3.2" fill="#fff" stroke="#173e36" strokeWidth="1" /><text x={px(u) + 5} y={py(v) - 5} fill="#173e36" fontSize="9" fontFamily="DM Mono, monospace" paintOrder="stroke" stroke="#eef3ec" strokeWidth="3">{value.toFixed(2)}</text></g>; }))}{ldtCells}{luminairePositions.map((luminaire, index) => <g key={`luminaire-${index}`} className="map-luminaire"><line x1={xPosition(luminaire.x)} y1={yPosition(luminaire.y)} x2={xPosition(luminaire.x)} y2={yPosition(luminaire.y < 0 ? 0 : carriagewayWidth)} /><circle cx={xPosition(luminaire.x)} cy={yPosition(luminaire.y)} r="7" /><text x={xPosition(luminaire.x) + 10} y={yPosition(luminaire.y) + 4}>{luminaire.label}</text></g>)}</svg><div className="heatmap-caption"><span>puntos blancos = mediciones originales</span><span>cenital LDT completo · escala visual de orientación · disposición {arrangement}</span></div></div>;
 }
 

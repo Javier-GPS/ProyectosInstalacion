@@ -13,7 +13,7 @@ from .composition import DEFAULT_GROUP_ANGLES_DEG, compose_luminaire
 from .r_tables import ReducedLuminanceTable, load_rtable
 from .normative import M_CLASS_REQUIREMENTS, MClassRequirements, requirements_for
 from .road import RoadCalculation, RoadMetrics, RoadScenario, calculate_reference_road, calculate_road
-from .optimizer import OptimizationResult, optimize_currents, optimize_currents_symmetric
+from .optimizer import OptimizationResult, optimize_currents, optimize_currents_and_tilt, optimize_currents_symmetric
 from .config import DEFAULT_GROUP_FLUX_LM
 
 __all__ = [
@@ -38,6 +38,7 @@ __all__ = [
     "calculate_road",
     "calculate_reference_road",
     "optimize_currents",
+    "optimize_currents_and_tilt",
     "optimize_currents_symmetric",
     "parse_ldt",
     "write_ldt",

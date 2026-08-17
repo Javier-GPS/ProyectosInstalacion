@@ -140,8 +140,6 @@ def _validate_currents(currents_ma: tuple[float, ...], model: Hl2xModel) -> None
     for current in currents_ma:
         if current < 0 or current > HL2X_CURRENT_MAX_MA:
             raise ValueError("group current is outside 0..2000 mA")
-        if abs(current / HL2X_CURRENT_STEP_MA - round(current / HL2X_CURRENT_STEP_MA)) > 1e-9:
-            raise ValueError("group current must use 50 mA steps")
 
 
 def calculate_luminaire_operating_point(currents_ma: list[float] | tuple[float, ...], model: Hl2xModel, cct_k: int, cri: int) -> LuminaireOperatingPoint:

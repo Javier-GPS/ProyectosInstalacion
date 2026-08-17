@@ -22,7 +22,7 @@ from luminaire_optimizer.road import (
     precompute_luminance_influence,
 )
 from luminaire_optimizer.road import _base_group_intensity, photometric_azimuth_profile
-from luminaire_optimizer.optimizer import _symmetric_vector
+from luminaire_optimizer.optimizer import _symmetric_vector, _uniformity_quality, optimize_currents_and_tilt
 
 
 def group_ldt() -> LdtPhotometry:
@@ -55,8 +55,8 @@ def test_hl2x_low_current_flux_extrapolates_from_zero():
 
 def test_current_step_and_published_cct_cri_validation():
     model = Hl2xModel(897.81)
-    with pytest.raises(ValueError):
-        calculate_luminaire_operating_point([725] * 8, model, 4000, 70)
+    continuous = calculate_luminaire_operating_point([725] * 8, model, 4000, 70)
+    assert continuous.currents_ma == pytest.approx((725.0,) * 8)
     with pytest.raises(ValueError):
         calculate_luminaire_operating_point([700] * 8, model, 6500, 80)
 
@@ -215,6 +215,27 @@ def test_beta_uses_cie_140_complementary_angle():
 def test_symmetric_profile_mirrors_the_four_optical_pairs():
     assert _symmetric_vector([50, 100, 150, 200]) == [50, 100, 150, 200, 200, 150, 100, 50]
     assert DEFAULT_GROUP_ANGLES_DEG[0] + DEFAULT_GROUP_ANGLES_DEG[-1] == pytest.approx(180.0)
+
+
+def test_uniformity_quality_prioritizes_the_weakest_uniformity():
+    assert _uniformity_quality(0.70, 0.70) < _uniformity_quality(0.70, 0.69)
+    assert _uniformity_quality(0.70, 0.75) < _uniformity_quality(0.68, 0.80)
+
+
+def test_optimizer_returns_tilt_and_relative_current_solution():
+    table = ReducedLuminanceTable(
+        "test",
+        (0.0, 1.0, 2.0, 5.0, 10.0),
+        tuple(float(value) for value in range(0, 181, 10)),
+        tuple(tuple(1000.0 for _ in range(19)) for _ in range(5)),
+    )
+    result = optimize_currents_and_tilt(
+        group_ldt(), Hl2xModel(897.81), RoadScenario(height_m=1.0, spacing_m=10.0),
+        table, cct_k=4000, cri=70, optimization_mode="independent",
+    )
+    assert -10.0 <= result.calculation.scenario.tilt_deg <= 10.0
+    assert len(result.currents_ma) == 8
+    assert "Tilt optimizado" in result.message
 
 
 def test_symmetric_photometry_averages_the_reflected_base_ldt():

@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from .composition import DEFAULT_GROUP_ANGLES_DEG, compose_luminaire
 from .hl2x import HL2X_MAX_INPUT_POWER_W, Hl2xModel, calculate_luminaire_operating_point
 from .ldt import ldt_diagnostic, ldt_text, parse_ldt_text
-from .optimizer import optimize_currents, optimize_currents_symmetric
+from .optimizer import optimize_currents_and_tilt
 from .road import RoadScenario, calculate_reference_road, calculate_road, photometric_azimuth_profile
 from .r_tables import load_rtable
 
@@ -193,25 +193,22 @@ def optimize(request: RoadRequest):
             lighting_class=request.lighting_class,
             photometry_symmetry=request.photometry_symmetry,
         )
-        if request.optimization_mode == "symmetric":
-            result = optimize_currents_symmetric(
-                ldt, model, scenario, table, cct_k=request.cct_k, cri=request.cri,
-            )
-        elif request.optimization_mode == "independent":
-            result = optimize_currents(
-                ldt, model, scenario, table, cct_k=request.cct_k, cri=request.cri,
-            )
-        else:
-            raise ValueError("optimization_mode must be symmetric or independent")
+        result = optimize_currents_and_tilt(
+            ldt, model, scenario, table,
+            cct_k=request.cct_k, cri=request.cri,
+            optimization_mode=request.optimization_mode,
+        )
         reference_road = (
-            calculate_reference_road(reference_ldt, scenario, table)
+            calculate_reference_road(reference_ldt, result.calculation.scenario, table)
             if reference_ldt is not None else None
         )
         return {
             "feasible": result.feasible,
             "currents_ma": list(result.currents_ma),
+            "relative_currents_ma": list(result.relative_currents_ma),
             "iterations": result.iterations,
             "message": result.message,
+            "tilt_deg": result.calculation.scenario.tilt_deg,
             "operating_point": _point_response(result.calculation.operating_point),
             "metrics": result.calculation.metrics.__dict__,
             "visual_grid": result.calculation.visual_grid,
@@ -267,6 +264,7 @@ def road_calculate(request: RoadRequest):
         )
         return {
             "currents_ma": list(result.operating_point.currents_ma),
+            "tilt_deg": result.scenario.tilt_deg,
             "operating_point": _point_response(result.operating_point),
             "metrics": result.metrics.__dict__,
             "visual_grid": result.visual_grid,

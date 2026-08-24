@@ -25,8 +25,8 @@ type LdtPair = { c_deg: number; mirror_c_deg: number; max_difference_pct: number
 type LdtDiagnostic = { name: string; company: string; flux_lm: number; power_w: number; c_angles_deg: number[]; gamma_angles_deg: number[]; intensities_cd_per_klm: number[][]; max_intensity_cd_per_klm: number; peak_c_deg?: number; peak_gamma_deg?: number; symmetry_tolerance_pct: number; pairs: LdtPair[]; symmetric: boolean };
 type PreviewRayStatus = 'transmitted' | 'missed' | 'untransmitted';
 type LedSelection = 'all' | 0 | 1 | 2;
-type PreviewRay = { led_index: number; status: PreviewRayStatus; origin_xyz: number[]; entry_xyz: number[] | null; exit_xyz: number[] | null; direction_xyz: number[] | null; power_lm: number; transmitted_power_lm: number; c_deg: number | null; gamma_deg: number | null; tir: boolean; tir_count: number };
-type GeometryMeshPart = { vertices: number[][]; faces: number[][] };
+type PreviewRay = { led_index: number; status: PreviewRayStatus; origin_xyz: number[]; entry_xyz: number[] | null; exit_xyz: number[] | null; direction_xyz: number[] | null; power_lm: number; transmitted_power_lm: number; c_deg: number | null; gamma_deg: number | null; tir: boolean; tir_count: number; entry_surface_index: number | null; exit_surface_index: number | null };
+type GeometryMeshPart = { vertices: number[][]; faces: number[][]; surface_ids?: number[]; surface_labels?: string[] };
 type GeometryMesh = { units: string; coordinate_system: string; coordinate_frame: string; lens: GeometryMeshPart; leds: Array<GeometryMeshPart & { led_index: number }> };
 type RayAngleConfig = { c_mirror: boolean; c_offset_deg: number; gamma_flip: boolean; c_convention: string; gamma_convention: string };
 type GeometryTraceData = { geometry: { solid_count: number; led_count: number; lens_volume: number; lens_faces: number; lens_triangles?: number; lens_bbox_mm: { xmin: number; xmax: number; ymin: number; ymax: number; zmin: number; zmax: number }; led_origins_mm: number[][] }; trace: { source_ray_count: number; led_count: number; traced_ray_count: number; input_flux_lm: number; missed_ray_count: number; missed_flux_lm: number; intercepted_ray_count: number; intercepted_flux_lm: number; transmitted_ray_count: number; transmitted_flux_lm: number; total_internal_reflection_count: number; untransmitted_flux_lm: number; transmission_pct: number; preview_ray_count?: number; preview_status_counts?: Record<string, number> }; ldt: LdtDiagnostic; ldt_base64: string; preview_rays: number[][]; preview_rays_detail?: PreviewRay[]; preview_geometry_mesh?: GeometryMesh; ray_angle_config?: RayAngleConfig };
@@ -323,6 +323,7 @@ function GeometryTraceView({ data }: { data: GeometryTraceData }) {
   const [rayLimit, setRayLimit] = useState(Math.min(5000, details.length || 5000));
   const [colorMode, setColorMode] = useState<'status' | 'led'>('status');
   const [ledSelection, setLedSelection] = useState<LedSelection>('all');
+  const [selectedSurfaceIndex, setSelectedSurfaceIndex] = useState<number | null>(null);
   const [statusVisibility, setStatusVisibility] = useState<Record<PreviewRayStatus, boolean>>({ transmitted: true, missed: true, untransmitted: true });
   const [showRays, setShowRays] = useState(true);
   const [showLens, setShowLens] = useState(true);
@@ -331,25 +332,31 @@ function GeometryTraceView({ data }: { data: GeometryTraceData }) {
   const [showAxes, setShowAxes] = useState(true);
   const [selectedRayIndex, setSelectedRayIndex] = useState<number | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+  const lensMeshRef = useRef<THREE.Mesh | null>(null);
   const lensGroupRef = useRef<THREE.Group | null>(null);
   const ledGroupRef = useRef<THREE.Group | null>(null);
+  const surfaceHighlightRef = useRef<THREE.Group | null>(null);
   const gridRef = useRef<THREE.Object3D | null>(null);
   const axesRef = useRef<THREE.Object3D | null>(null);
   const rayGroupRef = useRef<THREE.Group | null>(null);
   const selectedGroupRef = useRef<THREE.Group | null>(null);
   const selectedRayIndexRef = useRef<number | null>(null);
+  const selectedSurfaceIndexRef = useRef<number | null>(null);
   const rebuildRaysRef = useRef<() => void>(() => undefined);
+  const rebuildSurfaceRef = useRef<() => void>(() => undefined);
   const rebuildSelectedRef = useRef<() => void>(() => undefined);
   const resetViewRef = useRef<() => void>(() => undefined);
-  const settingsRef = useRef({ rayLimit, colorMode, ledSelection, statusVisibility, showRays });
+  const settingsRef = useRef({ rayLimit, colorMode, ledSelection, surfaceIndex: selectedSurfaceIndex, statusVisibility, showRays });
   const selectedRay = selectedRayIndex == null ? null : details[selectedRayIndex] || null;
   const maxRayCount = details.length;
   const rayOptions = [...new Set([100, 500, 1000, 2500, 5000, 10000, 20000].filter(value => value < maxRayCount).concat(maxRayCount > 0 ? [maxRayCount] : []))].sort((a, b) => a - b);
   selectedRayIndexRef.current = selectedRayIndex;
+  selectedSurfaceIndexRef.current = selectedSurfaceIndex;
 
   useEffect(() => {
     setRayLimit(Math.min(5000, details.length || 5000));
     setSelectedRayIndex(null);
+    setSelectedSurfaceIndex(null);
   }, [data]);
 
   useEffect(() => {
@@ -385,8 +392,13 @@ function GeometryTraceView({ data }: { data: GeometryTraceData }) {
     const lensMaterial = new THREE.MeshPhysicalMaterial({ color: '#b9e77a', transparent: true, opacity: .34, roughness: .28, metalness: .02, side: THREE.DoubleSide, depthWrite: false });
     const lensMesh = makeGeometryMesh(meshPayload.lens, lensMaterial);
     lensGroup.add(lensMesh);
+    lensMesh.userData.surfaceIds = meshPayload.lens.surface_ids || [];
+    lensMeshRef.current = lensMesh;
     const lensEdges = new THREE.LineSegments(new THREE.EdgesGeometry(lensMesh.geometry, 24), new THREE.LineBasicMaterial({ color: '#dcebd7', transparent: true, opacity: .34 }));
     lensGroup.add(lensEdges);
+    const surfaceHighlight = new THREE.Group();
+    scene.add(surfaceHighlight);
+    surfaceHighlightRef.current = surfaceHighlight;
     const modelBox = new THREE.Box3().setFromObject(modelGroup);
     const modelSize = modelBox.getSize(new THREE.Vector3());
     const extent = Math.max(modelSize.x, modelSize.y, modelSize.z, 1);
@@ -481,10 +493,23 @@ function GeometryTraceView({ data }: { data: GeometryTraceData }) {
         if (child) disposeThreeObject(child);
       }
     };
+    const rebuildSurface = () => {
+      clearGroup(surfaceHighlight);
+      const surfaceIndex = selectedSurfaceIndexRef.current;
+      const surfaceIds = meshPayload.lens.surface_ids || [];
+      if (surfaceIndex == null || !surfaceIds.length) return;
+      const faces = meshPayload.lens.faces.filter((_, index) => surfaceIds[index] === surfaceIndex);
+      if (!faces.length) return;
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(meshPayload.lens.vertices.flat(), 3));
+      geometry.setIndex(faces.flat());
+      geometry.computeVertexNormals();
+      surfaceHighlight.add(new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color: '#ef7348', transparent: true, opacity: .62, side: THREE.DoubleSide, depthTest: false })));
+    };
     const rebuildRays = () => {
       clearGroup(rayGroup);
       if (!settingsRef.current.showRays) return;
-      const records = details.map((ray, index) => ({ ray, index })).filter(({ ray }) => (settingsRef.current.ledSelection === 'all' || ray.led_index === settingsRef.current.ledSelection) && settingsRef.current.statusVisibility[ray.status]).slice(0, settingsRef.current.rayLimit);
+      const records = details.map((ray, index) => ({ ray, index })).filter(({ ray }) => (settingsRef.current.ledSelection === 'all' || ray.led_index === settingsRef.current.ledSelection) && (settingsRef.current.surfaceIndex == null || ray.entry_surface_index === settingsRef.current.surfaceIndex || ray.exit_surface_index === settingsRef.current.surfaceIndex) && settingsRef.current.statusVisibility[ray.status]).slice(0, settingsRef.current.rayLimit);
       if (records.length) rayGroup.add(buildLine(records));
     };
     const rebuildSelected = () => {
@@ -494,8 +519,10 @@ function GeometryTraceView({ data }: { data: GeometryTraceData }) {
       selectedGroup.add(buildLine([{ ray: details[index], index }], true));
     };
     rebuildRaysRef.current = rebuildRays;
+    rebuildSurfaceRef.current = rebuildSurface;
     rebuildSelectedRef.current = rebuildSelected;
     rebuildRays();
+    rebuildSurface();
     rebuildSelected();
 
     const raycaster = new THREE.Raycaster();
@@ -507,6 +534,13 @@ function GeometryTraceView({ data }: { data: GeometryTraceData }) {
       pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
       const hit = raycaster.intersectObject(rayGroup, true)[0];
+      const surfaceHit = raycaster.intersectObject(lensMesh, false)[0];
+      const surfaceIds = lensMesh.userData.surfaceIds as number[] | undefined;
+      if ((event.shiftKey || !hit) && surfaceHit?.faceIndex != null && surfaceIds?.[surfaceHit.faceIndex] != null) {
+        setSelectedSurfaceIndex(surfaceIds[surfaceHit.faceIndex]);
+        setSelectedRayIndex(null);
+        return;
+      }
       if (!hit || hit.index == null) return;
       const line = hit.object as THREE.LineSegments;
       const segmentMap = line.userData.segmentMap as number[] | undefined;
@@ -541,7 +575,9 @@ function GeometryTraceView({ data }: { data: GeometryTraceData }) {
       renderer.dispose();
       if (renderer.domElement.parentElement === container) container.removeChild(renderer.domElement);
       lensGroupRef.current = null;
+      lensMeshRef.current = null;
       ledGroupRef.current = null;
+      surfaceHighlightRef.current = null;
       gridRef.current = null;
       axesRef.current = null;
       rayGroupRef.current = null;
@@ -550,25 +586,29 @@ function GeometryTraceView({ data }: { data: GeometryTraceData }) {
   }, [data]);
 
   useEffect(() => {
-    settingsRef.current = { rayLimit, colorMode, ledSelection, statusVisibility, showRays };
+    settingsRef.current = { rayLimit, colorMode, ledSelection, surfaceIndex: selectedSurfaceIndex, statusVisibility, showRays };
     if (lensGroupRef.current) lensGroupRef.current.visible = showLens;
     if (ledGroupRef.current) ledGroupRef.current.visible = showLeds;
     if (gridRef.current) gridRef.current.visible = showGrid;
     if (axesRef.current) axesRef.current.visible = showAxes;
-    if (selectedGroupRef.current) selectedGroupRef.current.visible = showRays && Boolean(selectedRay) && (ledSelection === 'all' || selectedRay?.led_index === ledSelection) && Boolean(selectedRay && statusVisibility[selectedRay.status]);
+    if (selectedGroupRef.current) selectedGroupRef.current.visible = showRays && Boolean(selectedRay) && (ledSelection === 'all' || selectedRay?.led_index === ledSelection) && (selectedSurfaceIndex == null || selectedRay?.entry_surface_index === selectedSurfaceIndex || selectedRay?.exit_surface_index === selectedSurfaceIndex) && Boolean(selectedRay && statusVisibility[selectedRay.status]);
     rebuildRaysRef.current();
-  }, [rayLimit, colorMode, ledSelection, statusVisibility, showRays, showLens, showLeds, showGrid, showAxes, selectedRay]);
+    rebuildSurfaceRef.current();
+  }, [rayLimit, colorMode, ledSelection, selectedSurfaceIndex, statusVisibility, showRays, showLens, showLeds, showGrid, showAxes, selectedRay]);
 
   useEffect(() => { rebuildSelectedRef.current(); }, [selectedRayIndex]);
 
   const toggleStatus = (status: PreviewRayStatus) => setStatusVisibility(previous => ({ ...previous, [status]: !previous[status] }));
   const selectedCount = details.filter(ray => (ledSelection === 'all' || ray.led_index === ledSelection) && statusVisibility[ray.status]).length;
   const ledCounts = [0, 1, 2].map(index => details.filter(ray => ray.led_index === index).length);
+  const surfaceLabels = data.preview_geometry_mesh?.lens.surface_labels ?? [];
+  const selectedSurfaceLabel = selectedSurfaceIndex == null ? '' : surfaceLabels[selectedSurfaceIndex] || `Superficie ${selectedSurfaceIndex + 1}`;
   return <section className="geometry-preview">
-    <div className="geometry-preview-head"><div><span>VISOR 3D / GEOMETRÍA + RAYOS</span><small>{data.trace.traced_ray_count.toLocaleString('es-ES')} trazados · {details.length.toLocaleString('es-ES')} cargados · coordenadas mm</small></div><button type="button" className="geometry-reset" onClick={() => resetViewRef.current()}>AJUSTAR VISTA</button></div>
-    <div className="geometry-view-layout"><div ref={canvasRef} className="geometry-canvas" role="img" aria-label="Visor 3D de lente, LED y rayos"><div className="geometry-canvas-help">ARRASTRAR: ROTAR · RUEDA: ZOOM · BOTÓN DERECHO: DESPLAZAR</div></div><GeometryAnglePanel data={data} ray={selectedRay} rayIndex={selectedRayIndex} /></div>
+    <div className="geometry-preview-head"><div><span>VISOR 3D / GEOMETRÍA + RAYOS</span><small>{data.trace.traced_ray_count.toLocaleString('es-ES')} trazados · {details.length.toLocaleString('es-ES')} cargados · coordenadas mm{selectedSurfaceLabel ? ` · filtro: ${selectedSurfaceLabel}` : ''}</small></div><button type="button" className="geometry-reset" onClick={() => resetViewRef.current()}>AJUSTAR VISTA</button></div>
+    <div className="geometry-view-layout"><div ref={canvasRef} className="geometry-canvas" role="img" aria-label="Visor 3D de lente, LED y rayos"><div className="geometry-canvas-help">ARRASTRAR: ROTAR · RUEDA: ZOOM · CLIC: SELECCIONAR · SHIFT: SUPERFICIE</div></div><GeometryAnglePanel data={data} ray={selectedRay} rayIndex={selectedRayIndex} /></div>
     <div className="geometry-view-controls"><label><span>LED visible</span><select value={ledSelection} onChange={event => setLedSelection(event.target.value === 'all' ? 'all' : Number(event.target.value) as 0 | 1 | 2)}><option value="all">Todos los LED ({details.length.toLocaleString('es-ES')})</option><option value="0">LED 1 ({ledCounts[0].toLocaleString('es-ES')})</option><option value="1">LED 2 ({ledCounts[1].toLocaleString('es-ES')})</option><option value="2">LED 3 ({ledCounts[2].toLocaleString('es-ES')})</option></select></label><label><span>Rayos visibles</span><select value={Math.min(rayLimit, maxRayCount || rayLimit)} disabled={!maxRayCount} onChange={event => setRayLimit(Number(event.target.value))}>{rayOptions.map(value => <option key={value} value={value}>{value.toLocaleString('es-ES')}</option>)}</select></label><label><span>Color por</span><select value={colorMode} onChange={event => setColorMode(event.target.value as 'status' | 'led')}><option value="status">Estado óptico</option><option value="led">LED de origen</option></select></label><label className="geometry-check"><input type="checkbox" checked={showRays} onChange={event => setShowRays(event.target.checked)} /> rayos</label><label className="geometry-check"><input type="checkbox" checked={showLens} onChange={event => setShowLens(event.target.checked)} /> lente</label><label className="geometry-check"><input type="checkbox" checked={showLeds} onChange={event => setShowLeds(event.target.checked)} /> LED</label><label className="geometry-check"><input type="checkbox" checked={showGrid} onChange={event => setShowGrid(event.target.checked)} /> rejilla</label><label className="geometry-check"><input type="checkbox" checked={showAxes} onChange={event => setShowAxes(event.target.checked)} /> ejes</label></div>
-    <div className="geometry-status-filters">{(Object.keys(RAY_STATUS_LABELS) as PreviewRayStatus[]).map(status => <label key={status}><input type="checkbox" checked={statusVisibility[status]} onChange={() => toggleStatus(status)} /><i style={{ background: RAY_STATUS_COLORS[status] }} />{RAY_STATUS_LABELS[status]} <small>{data.trace.preview_status_counts?.[status] ?? 0}</small></label>)}<span>{Math.min(rayLimit, selectedCount).toLocaleString('es-ES')} visibles activos</span></div>
+     <div className="geometry-surface-filter"><span>{selectedSurfaceLabel ? `FILTRANDO RAYOS DE ${selectedSurfaceLabel}` : 'SHIFT + CLIC SOBRE LA LENTE PARA FILTRAR POR SUPERFICIE'}</span><button type="button" disabled={selectedSurfaceIndex == null} onClick={() => setSelectedSurfaceIndex(null)}>Quitar filtro</button></div>
+     <div className="geometry-status-filters">{(Object.keys(RAY_STATUS_LABELS) as PreviewRayStatus[]).map(status => <label key={status}><input type="checkbox" checked={statusVisibility[status]} onChange={() => toggleStatus(status)} /><i style={{ background: RAY_STATUS_COLORS[status] }} />{RAY_STATUS_LABELS[status]} <small>{data.trace.preview_status_counts?.[status] ?? 0}</small></label>)}<span>{Math.min(rayLimit, selectedCount).toLocaleString('es-ES')} visibles activos</span></div>
     <div className="geometry-stats"><span><b>{data.geometry.lens_triangles?.toLocaleString('es-ES') || '—'}</b> triángulos lente</span><span><b>{data.trace.transmission_pct.toFixed(2)}%</b> transmisión</span><span><b>{data.trace.total_internal_reflection_count.toLocaleString('es-ES')}</b> TIR</span><span><b>{data.ldt.peak_c_deg?.toFixed(0) ?? '—'}° / {data.ldt.peak_gamma_deg?.toFixed(0) ?? '—'}°</b> pico C / gamma</span></div>
   </section>;
 }

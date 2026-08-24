@@ -102,6 +102,8 @@ class _PreviewCollector:
         input_power: float,
         output_power: float,
         tir_count: int,
+        entry_surface_index: int | None = None,
+        exit_surface_index: int | None = None,
     ) -> None:
         if self.limit <= 0:
             return
@@ -135,6 +137,8 @@ class _PreviewCollector:
             "gamma_deg": gamma_deg,
             "tir": bool(tir_count),
             "tir_count": int(tir_count),
+            "entry_surface_index": entry_surface_index,
+            "exit_surface_index": exit_surface_index,
         }
         bucket.append((self._sequence, record))
         self._sequence += 1
@@ -152,6 +156,8 @@ class _PreviewCollector:
         input_power: np.ndarray,
         output_power: np.ndarray,
         tir_counts: np.ndarray,
+        entry_surface_indices: np.ndarray,
+        exit_surface_indices: np.ndarray,
     ) -> None:
         if self.limit <= 0:
             return
@@ -175,6 +181,14 @@ class _PreviewCollector:
                     input_power=float(input_power[index]),
                     output_power=float(output_power[index]),
                     tir_count=int(tir_counts[index]),
+                    entry_surface_index=(
+                        int(entry_surface_indices[index])
+                        if entry_hit[index] and entry_surface_indices[index] >= 0 else None
+                    ),
+                    exit_surface_index=(
+                        int(exit_surface_indices[index])
+                        if status_value == "transmitted" and exit_surface_indices[index] >= 0 else None
+                    ),
                 )
 
     def add_one(
@@ -337,17 +351,18 @@ def _trace_single_lens_ray(
     return "untransmitted", entry_point, None, current_direction, 0.0, tir_count
 
 
-def _mesh_hits(mesh: Any, origins: np.ndarray, directions: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+def _mesh_hits(mesh: Any, origins: np.ndarray, directions: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Find the nearest forward triangle hit for every ray in a batch."""
     count = len(origins)
     distance = np.full(count, np.inf, dtype=np.float64)
     points = np.zeros((count, 3), dtype=np.float64)
     normals = np.zeros((count, 3), dtype=np.float64)
+    triangles = np.full(count, -1, dtype=np.int64)
     locations, ray_indices, triangle_indices = mesh.ray.intersects_location(
         origins, directions, multiple_hits=True,
     )
     if len(locations) == 0:
-        return distance, points, normals, np.zeros(count, dtype=bool)
+        return distance, points, normals, np.zeros(count, dtype=bool), triangles
     ray_indices = np.asarray(ray_indices, dtype=np.int64)
     triangle_indices = np.asarray(triangle_indices, dtype=np.int64)
     locations = np.asarray(locations, dtype=np.float64)
@@ -356,7 +371,7 @@ def _mesh_hits(mesh: Any, origins: np.ndarray, directions: np.ndarray) -> tuple[
     )
     valid = distances > 1e-4
     if not np.any(valid):
-        return distance, points, normals, np.zeros(count, dtype=bool)
+        return distance, points, normals, np.zeros(count, dtype=bool), triangles
     ray_indices = ray_indices[valid]
     triangle_indices = triangle_indices[valid]
     locations = locations[valid]
@@ -371,7 +386,8 @@ def _mesh_hits(mesh: Any, origins: np.ndarray, directions: np.ndarray) -> tuple[
         distance[ray_index] = distances[index]
         points[ray_index] = locations[index]
         normals[ray_index] = mesh.face_normals[triangle_indices[index]]
-    return distance, points, normals, selected
+        triangles[ray_index] = triangle_indices[index]
+    return distance, points, normals, selected, triangles
 
 
 def _refract_batch(
@@ -406,7 +422,12 @@ def _trace_mesh_batch(
     max_bounces: int,
 ) -> dict[str, Any]:
     """Trace a batch through the tessellated lens with vectorized bounces."""
-    _, entry_points, entry_normals, hit = _mesh_hits(mesh, origins, directions)
+    _, entry_points, entry_normals, hit, entry_triangles = _mesh_hits(mesh, origins, directions)
+    surface_ids = getattr(mesh, "triangle_surface_ids", None)
+    entry_surfaces = np.full(len(origins), -1, dtype=np.int64)
+    if surface_ids is not None:
+        surface_ids = np.asarray(surface_ids, dtype=np.int64)
+        entry_surfaces[hit] = surface_ids[entry_triangles[hit]]
     intercepted_flux = float(source_flux[hit].sum())
     missed_flux = float(source_flux[~hit].sum())
     statuses = np.full(len(origins), "missed", dtype=object)
@@ -414,6 +435,7 @@ def _trace_mesh_batch(
     final_directions = directions.copy()
     output_power = np.zeros(len(origins), dtype=np.float64)
     exit_points = np.zeros_like(entry_points)
+    exit_surfaces = np.full(len(origins), -1, dtype=np.int64)
     tir_counts = np.zeros(len(origins), dtype=np.int64)
     current_points = entry_points.copy()
     current_directions, entry_transmission, entry_valid = _refract_batch(
@@ -428,7 +450,7 @@ def _trace_mesh_batch(
         if len(active_indices) == 0:
             break
         probe = current_points[active_indices] + current_directions[active_indices] * 1e-4
-        _, next_points, next_normals, next_hit = _mesh_hits(
+        _, next_points, next_normals, next_hit, next_triangles = _mesh_hits(
             mesh, probe, current_directions[active_indices],
         )
         active[active_indices[~next_hit]] = False
@@ -448,6 +470,8 @@ def _trace_mesh_batch(
             power = source_flux[exiting_indices] * optical_transmission
             statuses[exiting_indices] = "transmitted"
             exit_points[exiting_indices] = next_points[next_hit][can_exit]
+            if surface_ids is not None:
+                exit_surfaces[exiting_indices] = surface_ids[next_triangles[next_hit][can_exit]]
             final_directions[exiting_indices] = exit_directions[can_exit]
             output_power[exiting_indices] = power
             transmitted_rows.append(np.column_stack((
@@ -483,7 +507,9 @@ def _trace_mesh_batch(
         "statuses": statuses,
         "entry_points": entry_points,
         "entry_hit": hit,
+        "entry_surface_indices": entry_surfaces,
         "exit_points": exit_points,
+        "exit_surface_indices": exit_surfaces,
         "final_directions": final_directions,
         "output_power": output_power,
         "tir_counts": tir_counts,
@@ -579,6 +605,8 @@ def trace_tm25(
                     input_power=source_flux,
                     output_power=batch["output_power"],
                     tir_counts=batch["tir_counts"],
+                    entry_surface_indices=batch["entry_surface_indices"],
+                    exit_surface_indices=batch["exit_surface_indices"],
                 )
             traced_count += len(origins)
             missed_count += batch["missed_count"]

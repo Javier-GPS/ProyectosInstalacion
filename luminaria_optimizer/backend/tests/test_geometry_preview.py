@@ -48,13 +48,20 @@ def test_step_geometry_serializes_global_meshes_as_json_lists():
         emission_origins=(),
         lens_mesh=lens_mesh,
         led_meshes=(led_mesh, led_mesh, led_mesh),
+        lens_surface_ids=(4,),
+        lens_surface_labels=("Face 5 - CYLINDER",),
     )
 
     payload = geometry.mesh_payload()
 
     assert payload["units"] == "mm"
     assert payload["coordinate_system"] == "global"
-    assert payload["lens"] == {"vertices": [[10.0, 20.0, 30.0]], "faces": [[0, 0, 0]]}
+    assert payload["lens"] == {
+        "vertices": [[10.0, 20.0, 30.0]],
+        "faces": [[0, 0, 0]],
+        "surface_ids": [4],
+        "surface_labels": ["Face 5 - CYLINDER"],
+    }
     assert len(payload["leds"]) == 3
     assert payload["leds"][2]["led_index"] == 2
     assert payload["leds"][2]["vertices"] == [[40.0, 50.0, 60.0]]
@@ -87,6 +94,8 @@ def test_visual_trace_is_bounded_and_keeps_distinct_statuses():
     assert all(len(detail["origin_xyz"]) == 3 for detail in details)
     assert all(detail["c_deg"] is not None for detail in details)
     assert all(detail["gamma_deg"] is not None for detail in details)
+    assert all("entry_surface_index" in detail for detail in details)
+    assert all("exit_surface_index" in detail for detail in details)
     assert result.traced_ray_count == 9
     assert result.transmitted_rays.shape[1] == 7
 

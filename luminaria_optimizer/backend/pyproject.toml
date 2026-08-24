@@ -9,5 +9,8 @@ description = "Photometric and electrical optimizer for an eight-group HL2X lumi
 requires-python = ">=3.11"
 dependencies = ["fastapi>=0.110", "numpy>=1.26", "pydantic>=2.0", "uvicorn>=0.29"]
 
+[project.optional-dependencies]
+geometry = ["cadquery>=2.8,<3", "trimesh>=5,<6", "embreex>=4,<5"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

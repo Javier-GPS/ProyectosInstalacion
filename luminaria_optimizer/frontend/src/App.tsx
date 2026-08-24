@@ -1,11 +1,15 @@
-import { ChangeEvent, FormEvent, PointerEvent, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, FormEvent, PointerEvent, useEffect, useMemo, useRef, useState } from 'react';
+import * as THREE from 'three';
+import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
 const API_URL = (import.meta.env.VITE_OPTIMIZER_API_URL || 'http://127.0.0.1:8760').replace(/\/$/, '');
 const GROUP_ANGLES = [11.25, 33.75, 56.25, 78.75, 101.25, 123.75, 146.25, 168.75];
 const GROUP_C_ROTATION_DEG = 90;
 const CCT_OPTIONS = [2200, 2700, 3000, 3500, 4000, 5000, 5700, 6500];
+const MAX_PREVIEW_RAYS = 20000;
 
 type FilePayload = { name: string; base64: string } | null;
+const DEFAULT_RAYSET_NAME = 'LUXEON HL2Z_5000000Rays_IESTM25.tm25ray';
 type OperatingGroup = { current_ma: number; group_flux_lm: number; vf_v: number; group_power_w: number; tj_c: number; kt: number };
 type OperatingPoint = { groups: OperatingGroup[]; total_flux_lm: number; total_driver_power_w: number; solder_temperature_c: number; converged: boolean; power_limit_ok: boolean };
 type Metrics = { lavg_cd_m2: number; uo: number; ul: number; ti_pct: number; rei: number; compliant: boolean; criteria: Record<string, boolean>; warnings: string[]; power_limit_ok: boolean };
@@ -19,6 +23,13 @@ type MapMetric = 'luminance' | 'illuminance' | 'reference-luminance' | 'referenc
 type OptimizationMode = 'independent' | 'symmetric';
 type LdtPair = { c_deg: number; mirror_c_deg: number; max_difference_pct: number; worst_gamma_deg: number; symmetric: boolean };
 type LdtDiagnostic = { name: string; company: string; flux_lm: number; power_w: number; c_angles_deg: number[]; gamma_angles_deg: number[]; intensities_cd_per_klm: number[][]; max_intensity_cd_per_klm: number; peak_c_deg?: number; peak_gamma_deg?: number; symmetry_tolerance_pct: number; pairs: LdtPair[]; symmetric: boolean };
+type PreviewRayStatus = 'transmitted' | 'missed' | 'untransmitted';
+type LedSelection = 'all' | 0 | 1 | 2;
+type PreviewRay = { led_index: number; status: PreviewRayStatus; origin_xyz: number[]; entry_xyz: number[] | null; exit_xyz: number[] | null; direction_xyz: number[] | null; power_lm: number; transmitted_power_lm: number; c_deg: number | null; gamma_deg: number | null; tir: boolean; tir_count: number };
+type GeometryMeshPart = { vertices: number[][]; faces: number[][] };
+type GeometryMesh = { units: string; coordinate_system: string; coordinate_frame: string; lens: GeometryMeshPart; leds: Array<GeometryMeshPart & { led_index: number }> };
+type RayAngleConfig = { c_mirror: boolean; c_offset_deg: number; gamma_flip: boolean; c_convention: string; gamma_convention: string };
+type GeometryTraceData = { geometry: { solid_count: number; led_count: number; lens_volume: number; lens_faces: number; lens_triangles?: number; lens_bbox_mm: { xmin: number; xmax: number; ymin: number; ymax: number; zmin: number; zmax: number }; led_origins_mm: number[][] }; trace: { source_ray_count: number; led_count: number; traced_ray_count: number; input_flux_lm: number; missed_ray_count: number; missed_flux_lm: number; intercepted_ray_count: number; intercepted_flux_lm: number; transmitted_ray_count: number; transmitted_flux_lm: number; total_internal_reflection_count: number; untransmitted_flux_lm: number; transmission_pct: number; preview_ray_count?: number; preview_status_counts?: Record<string, number> }; ldt: LdtDiagnostic; ldt_base64: string; preview_rays: number[][]; preview_rays_detail?: PreviewRay[]; preview_geometry_mesh?: GeometryMesh; ray_angle_config?: RayAngleConfig };
 type Result = { feasible?: boolean; currents_ma: number[]; tilt_deg?: number; operating_point: OperatingPoint; metrics?: Metrics; reference_road?: ReferenceRoad | null; photometric_profile?: PhotometricProfile; visual_grid?: VisualGrid; group_ldt?: LdtDiagnostic; luminaire_ldt?: LdtDiagnostic; reference_luminaire_ldt?: LdtDiagnostic | null; message?: string };
 
 const encodeFile = (file: File): Promise<FilePayload> => new Promise((resolve, reject) => {
@@ -32,20 +43,26 @@ function NumberField({ label, value, onChange, suffix, min, max, step }: { label
   return <label className="field"><span>{label}</span><div className="number-input"><input type="number" value={value} min={min} max={max} step={step} onChange={event => onChange(Number(event.target.value))} /><small>{suffix}</small></div></label>;
 }
 
-function FileDrop({ label, hint, file, accept, onFile }: { label: string; hint: string; file: FilePayload; accept: string; onFile: (file: FilePayload) => void }) {
+function FileDrop({ label, hint, file, accept, onFile, defaultName }: { label: string; hint: string; file: FilePayload; accept: string; onFile: (file: FilePayload) => void; defaultName?: string }) {
   const handle = async (event: ChangeEvent<HTMLInputElement>) => {
     const selected = event.target.files?.[0];
     if (selected) onFile(await encodeFile(selected));
   };
-  return <label className={`file-drop ${file ? 'loaded' : ''}`}>
+  return <label className={`file-drop ${file || defaultName ? 'loaded' : ''}`}>
     <input type="file" accept={accept} onChange={handle} />
-    <span className="file-glyph">{file ? '✓' : '+'}</span>
-    <span><strong>{file ? file.name : label}</strong><small>{file ? 'Archivo cargado' : hint}</small></span>
+    <span className="file-glyph">{file ? '✓' : defaultName ? '·' : '+'}</span>
+    <span><strong>{file ? file.name : defaultName || label}</strong><small>{file ? 'Archivo cargado' : defaultName ? 'Fuente por defecto · pulsa para cambiar' : hint}</small></span>
   </label>;
 }
 
 function App() {
   const [ldt, setLdt] = useState<FilePayload>(null);
+  const [modelMode, setModelMode] = useState<'ldt' | 'geometry'>('ldt');
+  const [stepFile, setStepFile] = useState<FilePayload>(null);
+  const [raysetFile, setRaysetFile] = useState<FilePayload>(null);
+  const [rayCount, setRayCount] = useState(10000);
+  const [lensIndex, setLensIndex] = useState(1.49);
+  const [geometryTrace, setGeometryTrace] = useState<GeometryTraceData | null>(null);
   const [referenceLdt, setReferenceLdt] = useState<FilePayload>(null);
   const [rtable, setRtable] = useState<FilePayload>(null);
   const [currents, setCurrents] = useState<number[]>(Array(8).fill(700));
@@ -98,6 +115,39 @@ function App() {
       const response = await fetch(`${API_URL}/api/ldt/inspect`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ group_ldt_base64: file.base64 }) });
       if (response.ok) setReferenceLdtDiagnostic(await response.json());
     } catch { /* The full calculation will report the error if inspection is unavailable. */ }
+  };
+  const runGeometryTrace = async () => {
+    if (!stepFile) {
+      setError('Carga el STEP de la lente antes de calcular.');
+      return;
+    }
+    setError(''); setBusy(true);
+    try {
+      const response = await fetch(`${API_URL}/api/geometry/trace`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          step_base64: stepFile.base64,
+          rayset_base64: raysetFile?.base64 || null,
+          step_filename: stepFile.name,
+          rayset_filename: raysetFile?.name || DEFAULT_RAYSET_NAME,
+          sample_count: rayCount,
+          chunk_size: 10000,
+          lens_index: lensIndex,
+          preview_ray_count: MAX_PREVIEW_RAYS,
+          c_mirror: true,
+          c_offset_deg: 0,
+        }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || 'El trazado geométrico ha fallado.');
+      if (!data.preview_geometry_mesh || !Array.isArray(data.preview_rays_detail)) throw new Error('El backend está desactualizado. Cierra y vuelve a arrancar luminaria_optimizer.');
+      setGeometryTrace(data);
+      setLdt({ name: `LDT generado · ${rayCount.toLocaleString('es-ES')} rayos`, base64: data.ldt_base64 });
+      setGroupLdtDiagnostic(data.ldt);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'No se pudo calcular la lente.');
+    } finally { setBusy(false); }
   };
   const requestBody = () => {
     if (!ldt || !rtable) throw new Error('Carga el LDT del grupo y una tabla R/C2 antes de calcular.');
@@ -177,9 +227,15 @@ function App() {
           <button type="button" className={activePanel === 'groups' ? 'active' : ''} onClick={() => setActivePanel('groups')}><b>03</b> Corrientes</button>
         </nav>
         {activePanel === 'model' && <section className="panel-content">
-          <div className="section-heading"><div><p className="eyebrow">BASE FOTOMÉTRICA</p><h2>Modelo de referencia</h2></div><span className="tag">HL2X / 3535</span></div>
-           <div className="file-grid"><FileDrop label="LDT del grupo" hint="3 LED + lente / EULUMDAT" file={ldt} accept=".ldt" onFile={handleLdt} /><FileDrop label="LDT completo de referencia" hint="Luminaria completa / DIALux" file={referenceLdt} accept=".ldt" onFile={handleReferenceLdt} /></div>
-           {groupLdtDiagnostic && <LdtDiagnostics title="LDT DEL GRUPO / 3 LED + LENTE" diagnostic={groupLdtDiagnostic} />}
+            <div className="section-heading"><div><p className="eyebrow">BASE FOTOMÉTRICA</p><h2>Modelo de referencia</h2></div><span className="tag">HL2X / 3535</span></div>
+           <div className="model-mode" role="group" aria-label="Modo de entrada del modelo"><button type="button" className={modelMode === 'ldt' ? 'active' : ''} onClick={() => setModelMode('ldt')}>Usar LDT</button><button type="button" className={modelMode === 'geometry' ? 'active' : ''} onClick={() => setModelMode('geometry')}>Calcular desde STEP</button></div>
+           {modelMode === 'ldt' ? <div className="file-grid"><FileDrop label="LDT del grupo" hint="3 LED + lente / EULUMDAT" file={ldt} accept=".ldt" onFile={handleLdt} /><FileDrop label="LDT completo de referencia" hint="Luminaria completa / DIALux" file={referenceLdt} accept=".ldt" onFile={handleReferenceLdt} /></div> : <>
+              <div className="file-grid"><FileDrop label="STEP: lente + 3 LED" hint="ensamblaje CAD / mm" file={stepFile} accept=".step,.stp" onFile={setStepFile} /><FileDrop label="Ray file TM-25" hint="fuente LED / .tm25ray" file={raysetFile} defaultName={DEFAULT_RAYSET_NAME} accept=".tm25ray,.tm25,.ray" onFile={setRaysetFile} /></div>
+               <div className="geometry-controls"><label className="field"><span>Rayos calculados por LED</span><select value={rayCount} onChange={event => setRayCount(Number(event.target.value))}><option value={10000}>10.000 · rápido</option><option value={100000}>100.000 · validación</option><option value={1000000}>1.000.000 · LDT final</option><option value={5000000}>5.000.000 · máxima precisión</option></select></label><NumberField label="Índice de refracción" value={lensIndex} onChange={setLensIndex} suffix="n" step={0.001} min={1.0} max={3.0} /><div><p className="geometry-note">C mirror · Embree acelerado · visor hasta {MAX_PREVIEW_RAYS.toLocaleString('es-ES')}</p><button type="button" className="geometry-run" onClick={runGeometryTrace} disabled={busy}>{busy ? 'Trazando rayos…' : 'Calcular LDT desde la lente'} <span>→</span></button></div></div>
+             {geometryTrace && <GeometryTraceView data={geometryTrace} />}
+             {geometryTrace && <LdtDiagnostics title="LDT CALCULADO / 3 LED + LENTE" diagnostic={geometryTrace.ldt} showPlaneProfiles />}
+           </>}
+           {modelMode === 'ldt' && groupLdtDiagnostic && <LdtDiagnostics title="LDT DEL GRUPO / 3 LED + LENTE" diagnostic={groupLdtDiagnostic} showPlaneProfiles />}
            {referenceLdtDiagnostic && <LdtDiagnostics title="LDT COMPLETO / REFERENCIA DIALUX" diagnostic={referenceLdtDiagnostic} />}
           <div className="field-grid three"><label className="field"><span>CCT</span><select value={cct} onChange={event => setCct(Number(event.target.value))}>{CCT_OPTIONS.map(value => <option key={value} value={value}>{value} K</option>)}</select></label><label className="field"><span>CRI</span><select value={cri} onChange={event => setCri(Number(event.target.value))}><option value={70}>70</option><option value={80}>80</option><option value={90}>90</option></select></label></div>
           <div className="field-grid three"><NumberField label="Ambiente" value={ambient} onChange={setAmbient} suffix="°C" min={-40} max={80} /><NumberField label="Coef. Tsp" value={tsCoefficient} onChange={setTsCoefficient} suffix="°C/W" step={0.01} min={0} /><NumberField label="Driver" value={driverEfficiency} onChange={setDriverEfficiency} suffix="η" step={0.01} min={0.1} max={1} /></div>
@@ -209,7 +265,7 @@ function App() {
        {result?.reference_road && result.metrics && <ReferenceComparison calculated={result.metrics} reference={result.reference_road.metrics} />}
          <div className="visual-card"><div className="card-title"><span>MAPA PUNTO A PUNTO</span><small>isocurvas / luminancia cd/m²</small></div>{result?.visual_grid ? <LuminanceMap grid={result.visual_grid} referenceGrid={result.reference_road?.visual_grid} groupLdt={result.group_ldt} luminaireLdt={result.luminaire_ldt} referenceLdt={result.reference_luminaire_ldt || undefined} luminaireHeight={height} carriagewayWidth={width * lanes} spacing={spacing} edgeOffset={edgeOffset} arrangement={arrangement} selectedLane={selectedLane} onLaneChange={setSelectedLane} /> : <div className="empty-result">Ejecuta una evaluación para visualizar la distribución sobre la calzada.</div>}</div>
         {result?.visual_grid?.normative_profile && <NormativeGraph xs={result.visual_grid.xs_m} profiles={result.visual_grid.lane_profiles || []} worstLane={result.visual_grid.worst_lane_index ?? result.visual_grid.normative_profile.lane_index} selectedLane={selectedLane} onLaneChange={setSelectedLane} />}
-        {result?.group_ldt && <LdtDiagnostics title="DIAGNÓSTICO FOTOMÉTRICO / GRUPO" diagnostic={result.group_ldt} />}
+         {result?.group_ldt && <LdtDiagnostics title="DIAGNÓSTICO FOTOMÉTRICO / GRUPO" diagnostic={result.group_ldt} showPlaneProfiles />}
         {result?.luminaire_ldt && <LdtDiagnostics title="DIAGNÓSTICO FOTOMÉTRICO / LUMINARIA CALCULADA" diagnostic={result.luminaire_ldt} />}
         {result?.reference_luminaire_ldt && <LdtDiagnostics title="DIAGNÓSTICO FOTOMÉTRICO / REFERENCIA DIALUX" diagnostic={result.reference_luminaire_ldt} />}
       <div className="group-results"><div className="card-title"><span>RESULTADO POR GRUPO</span><small>perfil aplicado en todas las luminarias</small></div><div className="group-results-grid">{GROUP_ANGLES.map((angle, index) => { const group = result?.operating_point.groups[index]; return <div className="group-result" key={angle}><strong>G{index + 1}</strong><span>{angle.toFixed(2)}° C</span><b>{result ? `${format(result.currents_ma[index], 0)} mA` : '—'}</b><small>{group ? `${format(group.group_flux_lm, 0)} lm · ${format(group.group_power_w, 1)} W` : 'sin cálculo'}</small></div>; })}</div></div>
@@ -220,6 +276,302 @@ function App() {
 }
 
 function Metric({ label, value }: { label: string; value: string }) { return <div className="metric"><span>{label}</span><strong>{value}</strong></div>; }
+
+const RAY_STATUS_LABELS: Record<PreviewRayStatus, string> = { transmitted: 'Transmitido', missed: 'No interceptado', untransmitted: 'No transmitido' };
+const RAY_STATUS_COLORS: Record<PreviewRayStatus, string> = { transmitted: '#b9e77a', missed: '#879a91', untransmitted: '#ef7348' };
+const LED_COLORS = ['#68d8ff', '#f4c95d', '#d995ff'];
+
+function disposeThreeObject(object: THREE.Object3D) {
+  object.traverse(child => {
+    if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments || child instanceof THREE.Line) child.geometry.dispose();
+    if (child instanceof THREE.Mesh || child instanceof THREE.LineSegments || child instanceof THREE.Line) {
+      const materials = Array.isArray(child.material) ? child.material : [child.material];
+      materials.forEach(material => material.dispose());
+    }
+  });
+}
+
+function makeGeometryMesh(part: GeometryMeshPart, material: THREE.Material) {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(part.vertices.flat(), 3));
+  geometry.setIndex(part.faces.flat());
+  geometry.computeVertexNormals();
+  return new THREE.Mesh(geometry, material);
+}
+
+function GeometryAnglePanel({ data, ray, rayIndex }: { data: GeometryTraceData; ray: PreviewRay | null; rayIndex: number | null }) {
+  const c = ray?.c_deg ?? data.ldt.peak_c_deg ?? null;
+  const gamma = ray?.gamma_deg ?? data.ldt.peak_gamma_deg ?? null;
+  const angle = ((c ?? 0) - 90) * Math.PI / 180;
+  const radius = Math.min(73, Math.max(0, (gamma ?? 0) / 180) * 73);
+  const point = { x: 90 + Math.cos(angle) * radius, y: 90 + Math.sin(angle) * radius };
+  const config = data.ray_angle_config;
+  return <aside className="geometry-angle-panel">
+    <div className="geometry-side-title"><span>ÁNGULO FOTOMÉTRICO</span><small>{ray ? `RAYO ${rayIndex == null ? '' : rayIndex + 1}` : 'PICO LDT'}</small></div>
+    <svg className="geometry-angle-map" viewBox="0 0 180 180" role="img" aria-label="Mapa polar de C y gamma">
+      <circle cx="90" cy="90" r="73" fill="#173e36" stroke="#41685b" /><circle cx="90" cy="90" r="48" fill="none" stroke="#41685b" /><circle cx="90" cy="90" r="24" fill="none" stroke="#41685b" /><path d="M17 90H163M90 17V163" stroke="#41685b" strokeDasharray="2 3" /><line x1="90" y1="90" x2={point.x} y2={point.y} stroke="#b9e77a" strokeWidth="1.2" /><circle cx={point.x} cy={point.y} r="4" fill="#ef7348" stroke="#f7f8f3" strokeWidth="1" /><text x="90" y="12" textAnchor="middle" fill="#b9e77a" fontSize="8" fontFamily="DM Mono, monospace">C0 / gamma 0</text><text x="169" y="93" textAnchor="end" fill="#b9e77a" fontSize="8" fontFamily="DM Mono, monospace">C90</text><text x="90" y="176" textAnchor="middle" fill="#b9e77a" fontSize="8" fontFamily="DM Mono, monospace">C180</text><text x="12" y="93" fill="#b9e77a" fontSize="8" fontFamily="DM Mono, monospace">C270</text>
+    </svg>
+    <div className="geometry-angle-readout"><strong>{c == null ? '—' : `${c.toFixed(1)}°`} <small>C</small></strong><strong>{gamma == null ? '—' : `${gamma.toFixed(1)}°`} <small>gamma</small></strong></div>
+    <p className="geometry-angle-note">Radio = gamma / 180° · color de selección = naranja</p>
+    {ray && <div className="geometry-ray-readout"><span><i style={{ background: RAY_STATUS_COLORS[ray.status] }} />{RAY_STATUS_LABELS[ray.status]}</span><span>LED {ray.led_index + 1} · {ray.transmitted_power_lm.toExponential(2)} lm</span>{ray.tir && <span className="geometry-tir">TIR × {ray.tir_count}</span>}</div>}
+    {config && <p className="geometry-angle-config">{config.c_mirror ? 'C espejo' : 'C directo'} · offset {config.c_offset_deg.toFixed(1)}°</p>}
+  </aside>;
+}
+
+function GeometryTraceView({ data }: { data: GeometryTraceData }) {
+  const details = data.preview_rays_detail ?? [];
+  const [rayLimit, setRayLimit] = useState(Math.min(5000, details.length || 5000));
+  const [colorMode, setColorMode] = useState<'status' | 'led'>('status');
+  const [ledSelection, setLedSelection] = useState<LedSelection>('all');
+  const [statusVisibility, setStatusVisibility] = useState<Record<PreviewRayStatus, boolean>>({ transmitted: true, missed: true, untransmitted: true });
+  const [showRays, setShowRays] = useState(true);
+  const [showLens, setShowLens] = useState(true);
+  const [showLeds, setShowLeds] = useState(true);
+  const [showGrid, setShowGrid] = useState(true);
+  const [showAxes, setShowAxes] = useState(true);
+  const [selectedRayIndex, setSelectedRayIndex] = useState<number | null>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const lensGroupRef = useRef<THREE.Group | null>(null);
+  const ledGroupRef = useRef<THREE.Group | null>(null);
+  const gridRef = useRef<THREE.Object3D | null>(null);
+  const axesRef = useRef<THREE.Object3D | null>(null);
+  const rayGroupRef = useRef<THREE.Group | null>(null);
+  const selectedGroupRef = useRef<THREE.Group | null>(null);
+  const selectedRayIndexRef = useRef<number | null>(null);
+  const rebuildRaysRef = useRef<() => void>(() => undefined);
+  const rebuildSelectedRef = useRef<() => void>(() => undefined);
+  const resetViewRef = useRef<() => void>(() => undefined);
+  const settingsRef = useRef({ rayLimit, colorMode, ledSelection, statusVisibility, showRays });
+  const selectedRay = selectedRayIndex == null ? null : details[selectedRayIndex] || null;
+  const maxRayCount = details.length;
+  const rayOptions = [...new Set([100, 500, 1000, 2500, 5000, 10000, 20000].filter(value => value < maxRayCount).concat(maxRayCount > 0 ? [maxRayCount] : []))].sort((a, b) => a - b);
+  selectedRayIndexRef.current = selectedRayIndex;
+
+  useEffect(() => {
+    setRayLimit(Math.min(5000, details.length || 5000));
+    setSelectedRayIndex(null);
+  }, [data]);
+
+  useEffect(() => {
+    const container = canvasRef.current;
+    const meshPayload = data.preview_geometry_mesh;
+    if (!container || !meshPayload) return undefined;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color('#102d28');
+    const camera = new THREE.PerspectiveCamera(42, 1, 0.01, 1000);
+    camera.up.set(0, 0, 1);
+    const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.domElement.className = 'geometry-canvas-element';
+    container.appendChild(renderer.domElement);
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.screenSpacePanning = true;
+    controls.mouseButtons.LEFT = THREE.MOUSE.ROTATE;
+    controls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
+    controls.touches.ONE = THREE.TOUCH.ROTATE;
+    controls.touches.TWO = THREE.TOUCH.DOLLY_PAN;
+    scene.add(new THREE.HemisphereLight(0xdcebd7, 0x153b34, 2.2));
+    const keyLight = new THREE.DirectionalLight(0xffffff, 2.6);
+    keyLight.position.set(25, -35, 45);
+    scene.add(keyLight);
+
+    const modelGroup = new THREE.Group();
+    const lensGroup = new THREE.Group();
+    const ledGroup = new THREE.Group();
+    modelGroup.add(lensGroup, ledGroup);
+    scene.add(modelGroup);
+    const lensMaterial = new THREE.MeshPhysicalMaterial({ color: '#b9e77a', transparent: true, opacity: .34, roughness: .28, metalness: .02, side: THREE.DoubleSide, depthWrite: false });
+    const lensMesh = makeGeometryMesh(meshPayload.lens, lensMaterial);
+    lensGroup.add(lensMesh);
+    const lensEdges = new THREE.LineSegments(new THREE.EdgesGeometry(lensMesh.geometry, 24), new THREE.LineBasicMaterial({ color: '#dcebd7', transparent: true, opacity: .34 }));
+    lensGroup.add(lensEdges);
+    const modelBox = new THREE.Box3().setFromObject(modelGroup);
+    const modelSize = modelBox.getSize(new THREE.Vector3());
+    const extent = Math.max(modelSize.x, modelSize.y, modelSize.z, 1);
+    meshPayload.leds.forEach((led, index) => {
+      const material = new THREE.MeshStandardMaterial({ color: LED_COLORS[index % LED_COLORS.length], transparent: true, opacity: .78, roughness: .36, metalness: .1, side: THREE.DoubleSide });
+      const mesh = makeGeometryMesh(led, material);
+      ledGroup.add(mesh);
+      const origin = data.geometry.led_origins_mm[index];
+      if (origin) {
+        const marker = new THREE.Mesh(new THREE.SphereGeometry(extent * .025, 12, 8), new THREE.MeshBasicMaterial({ color: LED_COLORS[index % LED_COLORS.length] }));
+        marker.position.set(origin[0], origin[1], origin[2]);
+        ledGroup.add(marker);
+      }
+    });
+    const grid = new THREE.GridHelper(Math.max(50, extent * 4), 24, '#41685b', '#284b43');
+    grid.rotation.x = Math.PI / 2;
+    scene.add(grid);
+    const axes = new THREE.AxesHelper(Math.max(10, extent * .8));
+    scene.add(axes);
+    const cGuideGeometry = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(-extent * .65, 0, 0), new THREE.Vector3(extent * .65, 0, 0),
+      new THREE.Vector3(0, -extent * .65, 0), new THREE.Vector3(0, extent * .65, 0),
+    ]);
+    scene.add(new THREE.LineSegments(cGuideGeometry, new THREE.LineBasicMaterial({ color: '#5b8975', transparent: true, opacity: .45 })));
+    const rayGroup = new THREE.Group();
+    const selectedGroup = new THREE.Group();
+    scene.add(rayGroup, selectedGroup);
+    lensGroupRef.current = lensGroup;
+    ledGroupRef.current = ledGroup;
+    gridRef.current = grid;
+    axesRef.current = axes;
+    rayGroupRef.current = rayGroup;
+    selectedGroupRef.current = selectedGroup;
+
+    const fitView = () => {
+      const bounds = new THREE.Box3().setFromObject(modelGroup);
+      const center = bounds.getCenter(new THREE.Vector3());
+      const size = bounds.getSize(new THREE.Vector3());
+      const radius = Math.max(size.x, size.y, size.z, 1);
+      camera.position.copy(center).add(new THREE.Vector3(radius * 1.65, -radius * 1.75, radius * 1.2));
+      camera.near = radius / 100;
+      camera.far = radius * 30;
+      camera.updateProjectionMatrix();
+      controls.target.copy(center);
+      controls.update();
+    };
+    resetViewRef.current = fitView;
+    fitView();
+
+    const buildLine = (records: Array<{ ray: PreviewRay; index: number }>, highlight = false) => {
+      const positions: number[] = [];
+      const colors: number[] = [];
+      const segmentMap: number[] = [];
+      const rayLength = Math.max(extent * .22, 2.5);
+      const addSegment = (start: THREE.Vector3, end: THREE.Vector3, color: THREE.Color, index: number) => {
+        positions.push(start.x, start.y, start.z, end.x, end.y, end.z);
+        colors.push(color.r, color.g, color.b, color.r, color.g, color.b);
+        segmentMap.push(index);
+      };
+      records.forEach(({ ray, index }) => {
+        const origin = new THREE.Vector3(...ray.origin_xyz);
+        const direction = new THREE.Vector3(...(ray.direction_xyz || [0, 0, 1])).normalize();
+        const entry = ray.entry_xyz ? new THREE.Vector3(...ray.entry_xyz) : null;
+        const exit = ray.exit_xyz ? new THREE.Vector3(...ray.exit_xyz) : null;
+        const activeColorMode = settingsRef.current.colorMode;
+        const base = highlight ? new THREE.Color('#ffffff') : new THREE.Color(activeColorMode === 'led' ? LED_COLORS[ray.led_index % LED_COLORS.length] : (RAY_STATUS_COLORS[ray.status] || '#879a91'));
+        const incoming = highlight ? base : new THREE.Color(activeColorMode === 'led' ? LED_COLORS[ray.led_index % LED_COLORS.length] : '#68d8ff');
+        const internal = highlight ? base : new THREE.Color(ray.tir && activeColorMode === 'status' ? '#f4c95d' : base);
+        if (!entry) {
+          addSegment(origin, origin.clone().add(direction.clone().multiplyScalar(rayLength)), base, index);
+          return;
+        }
+        addSegment(origin, entry, incoming, index);
+        if (exit) {
+          addSegment(entry, exit, internal, index);
+          addSegment(exit, exit.clone().add(direction.clone().multiplyScalar(rayLength)), base, index);
+        } else {
+          addSegment(entry, entry.clone().add(direction.clone().multiplyScalar(rayLength)), internal, index);
+        }
+      });
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+      const material = new THREE.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: highlight ? .98 : .72, depthTest: !highlight });
+      const line = new THREE.LineSegments(geometry, material);
+      line.userData.segmentMap = segmentMap;
+      return line;
+    };
+    const clearGroup = (group: THREE.Group) => {
+      while (group.children.length) {
+        const child = group.children.pop();
+        if (child) disposeThreeObject(child);
+      }
+    };
+    const rebuildRays = () => {
+      clearGroup(rayGroup);
+      if (!settingsRef.current.showRays) return;
+      const records = details.map((ray, index) => ({ ray, index })).filter(({ ray }) => (settingsRef.current.ledSelection === 'all' || ray.led_index === settingsRef.current.ledSelection) && settingsRef.current.statusVisibility[ray.status]).slice(0, settingsRef.current.rayLimit);
+      if (records.length) rayGroup.add(buildLine(records));
+    };
+    const rebuildSelected = () => {
+      clearGroup(selectedGroup);
+      const index = selectedRayIndexRef.current;
+      if (index == null || !details[index]) return;
+      selectedGroup.add(buildLine([{ ray: details[index], index }], true));
+    };
+    rebuildRaysRef.current = rebuildRays;
+    rebuildSelectedRef.current = rebuildSelected;
+    rebuildRays();
+    rebuildSelected();
+
+    const raycaster = new THREE.Raycaster();
+    raycaster.params.Line.threshold = Math.max(extent * .012, .18);
+    const pointer = new THREE.Vector2();
+    const handleClick = (event: MouseEvent) => {
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      const hit = raycaster.intersectObject(rayGroup, true)[0];
+      if (!hit || hit.index == null) return;
+      const line = hit.object as THREE.LineSegments;
+      const segmentMap = line.userData.segmentMap as number[] | undefined;
+      const segmentIndex = Math.floor(hit.index / 2);
+      const recordIndex = segmentMap?.[segmentIndex];
+      if (recordIndex != null) setSelectedRayIndex(recordIndex);
+    };
+    renderer.domElement.addEventListener('click', handleClick);
+    const resize = () => {
+      const width = Math.max(container.clientWidth, 260);
+      const height = Math.max(container.clientHeight, 360);
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+      renderer.setSize(width, height, false);
+    };
+    const observer = new ResizeObserver(resize);
+    observer.observe(container);
+    resize();
+    let animationFrame = 0;
+    const animate = () => {
+      controls.update();
+      renderer.render(scene, camera);
+      animationFrame = window.requestAnimationFrame(animate);
+    };
+    animate();
+    return () => {
+      window.cancelAnimationFrame(animationFrame);
+      observer.disconnect();
+      renderer.domElement.removeEventListener('click', handleClick);
+      controls.dispose();
+      disposeThreeObject(scene);
+      renderer.dispose();
+      if (renderer.domElement.parentElement === container) container.removeChild(renderer.domElement);
+      lensGroupRef.current = null;
+      ledGroupRef.current = null;
+      gridRef.current = null;
+      axesRef.current = null;
+      rayGroupRef.current = null;
+      selectedGroupRef.current = null;
+    };
+  }, [data]);
+
+  useEffect(() => {
+    settingsRef.current = { rayLimit, colorMode, ledSelection, statusVisibility, showRays };
+    if (lensGroupRef.current) lensGroupRef.current.visible = showLens;
+    if (ledGroupRef.current) ledGroupRef.current.visible = showLeds;
+    if (gridRef.current) gridRef.current.visible = showGrid;
+    if (axesRef.current) axesRef.current.visible = showAxes;
+    if (selectedGroupRef.current) selectedGroupRef.current.visible = showRays && Boolean(selectedRay) && (ledSelection === 'all' || selectedRay?.led_index === ledSelection) && Boolean(selectedRay && statusVisibility[selectedRay.status]);
+    rebuildRaysRef.current();
+  }, [rayLimit, colorMode, ledSelection, statusVisibility, showRays, showLens, showLeds, showGrid, showAxes, selectedRay]);
+
+  useEffect(() => { rebuildSelectedRef.current(); }, [selectedRayIndex]);
+
+  const toggleStatus = (status: PreviewRayStatus) => setStatusVisibility(previous => ({ ...previous, [status]: !previous[status] }));
+  const selectedCount = details.filter(ray => (ledSelection === 'all' || ray.led_index === ledSelection) && statusVisibility[ray.status]).length;
+  const ledCounts = [0, 1, 2].map(index => details.filter(ray => ray.led_index === index).length);
+  return <section className="geometry-preview">
+    <div className="geometry-preview-head"><div><span>VISOR 3D / GEOMETRÍA + RAYOS</span><small>{data.trace.traced_ray_count.toLocaleString('es-ES')} trazados · {details.length.toLocaleString('es-ES')} cargados · coordenadas mm</small></div><button type="button" className="geometry-reset" onClick={() => resetViewRef.current()}>AJUSTAR VISTA</button></div>
+    <div className="geometry-view-layout"><div ref={canvasRef} className="geometry-canvas" role="img" aria-label="Visor 3D de lente, LED y rayos"><div className="geometry-canvas-help">ARRASTRAR: ROTAR · RUEDA: ZOOM · BOTÓN DERECHO: DESPLAZAR</div></div><GeometryAnglePanel data={data} ray={selectedRay} rayIndex={selectedRayIndex} /></div>
+    <div className="geometry-view-controls"><label><span>LED visible</span><select value={ledSelection} onChange={event => setLedSelection(event.target.value === 'all' ? 'all' : Number(event.target.value) as 0 | 1 | 2)}><option value="all">Todos los LED ({details.length.toLocaleString('es-ES')})</option><option value="0">LED 1 ({ledCounts[0].toLocaleString('es-ES')})</option><option value="1">LED 2 ({ledCounts[1].toLocaleString('es-ES')})</option><option value="2">LED 3 ({ledCounts[2].toLocaleString('es-ES')})</option></select></label><label><span>Rayos visibles</span><select value={Math.min(rayLimit, maxRayCount || rayLimit)} disabled={!maxRayCount} onChange={event => setRayLimit(Number(event.target.value))}>{rayOptions.map(value => <option key={value} value={value}>{value.toLocaleString('es-ES')}</option>)}</select></label><label><span>Color por</span><select value={colorMode} onChange={event => setColorMode(event.target.value as 'status' | 'led')}><option value="status">Estado óptico</option><option value="led">LED de origen</option></select></label><label className="geometry-check"><input type="checkbox" checked={showRays} onChange={event => setShowRays(event.target.checked)} /> rayos</label><label className="geometry-check"><input type="checkbox" checked={showLens} onChange={event => setShowLens(event.target.checked)} /> lente</label><label className="geometry-check"><input type="checkbox" checked={showLeds} onChange={event => setShowLeds(event.target.checked)} /> LED</label><label className="geometry-check"><input type="checkbox" checked={showGrid} onChange={event => setShowGrid(event.target.checked)} /> rejilla</label><label className="geometry-check"><input type="checkbox" checked={showAxes} onChange={event => setShowAxes(event.target.checked)} /> ejes</label></div>
+    <div className="geometry-status-filters">{(Object.keys(RAY_STATUS_LABELS) as PreviewRayStatus[]).map(status => <label key={status}><input type="checkbox" checked={statusVisibility[status]} onChange={() => toggleStatus(status)} /><i style={{ background: RAY_STATUS_COLORS[status] }} />{RAY_STATUS_LABELS[status]} <small>{data.trace.preview_status_counts?.[status] ?? 0}</small></label>)}<span>{Math.min(rayLimit, selectedCount).toLocaleString('es-ES')} visibles activos</span></div>
+    <div className="geometry-stats"><span><b>{data.geometry.lens_triangles?.toLocaleString('es-ES') || '—'}</b> triángulos lente</span><span><b>{data.trace.transmission_pct.toFixed(2)}%</b> transmisión</span><span><b>{data.trace.total_internal_reflection_count.toLocaleString('es-ES')}</b> TIR</span><span><b>{data.ldt.peak_c_deg?.toFixed(0) ?? '—'}° / {data.ldt.peak_gamma_deg?.toFixed(0) ?? '—'}°</b> pico C / gamma</span></div>
+  </section>;
+}
 
 function ReferenceComparison({ calculated, reference }: { calculated: Metrics; reference: Metrics }) {
   const rows = [
@@ -417,7 +769,7 @@ function LuminanceMapSvg({ grid, groupLdt, luminaireLdt, luminaireHeight, carria
   return <div className="luminance-map"><div className="heatmap-labels"><span>L / cd/m²</span><span>rango {minimum.toFixed(2)} — {maximum.toFixed(2)} cd/m²</span></div><label className="ldt-map-toggle"><input type="checkbox" checked={showLdt} onChange={event => setShowLdt(event.target.checked)} disabled={!luminaireLdt} /> Mostrar vista cenital del LDT completo <small>(escala visual ×{ldtVisualScale.toFixed(2)})</small></label><svg className="luminance-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Mapa de luminancia con isocurvas y luminarias"><rect width={width} height={height} fill="#eef3ec" />{surface}{contourPaths}<rect x={xPosition(0)} y={yPosition(0)} width={xPosition(spacing) - xPosition(0)} height={yPosition(carriagewayWidth) - yPosition(0)} fill="none" stroke="#173e36" strokeWidth="1.5" /><path d={`M${left} ${top + plotHeight}H${left + plotWidth}M${left} ${top}V${top + plotHeight}`} stroke="#173e36" strokeWidth="1" /><text x={left + plotWidth - 8} y={top + plotHeight + 24} textAnchor="end" fill="#52685a" fontSize="10">x / longitudinal</text><text x={left - 8} y={top + 10} textAnchor="end" fill="#52685a" fontSize="10">y / transversal</text>{values.flatMap((row, x) => row.map((value, y) => { const u = xCount > 1 ? (grid.xs_m[x] - mapMinX) / (mapMaxX - mapMinX) : .5; const v = yCount > 1 ? (grid.ys_m[y] - mapMinY) / (mapMaxY - mapMinY) : .5; return <g key={`measurement-${x}-${y}`}><circle cx={px(u)} cy={py(v)} r="3.2" fill="#fff" stroke="#173e36" strokeWidth="1" /><text x={px(u) + 5} y={py(v) - 5} fill="#173e36" fontSize="9" fontFamily="DM Mono, monospace" paintOrder="stroke" stroke="#eef3ec" strokeWidth="3">{value.toFixed(2)}</text></g>; }))}{ldtCells}{luminairePositions.map((luminaire, index) => <g key={`luminaire-${index}`} className="map-luminaire"><line x1={xPosition(luminaire.x)} y1={yPosition(luminaire.y)} x2={xPosition(luminaire.x)} y2={yPosition(luminaire.y < 0 ? 0 : carriagewayWidth)} /><circle cx={xPosition(luminaire.x)} cy={yPosition(luminaire.y)} r="7" /><text x={xPosition(luminaire.x) + 10} y={yPosition(luminaire.y) + 4}>{luminaire.label}</text></g>)}</svg><div className="heatmap-caption"><span>puntos blancos = mediciones originales</span><span>cenital LDT completo · escala visual de orientación · disposición {arrangement}</span></div></div>;
 }
 
-function LdtDiagnostics({ title, diagnostic }: { title: string; diagnostic: LdtDiagnostic }) {
+function LdtDiagnostics({ title, diagnostic, showPlaneProfiles = false }: { title: string; diagnostic: LdtDiagnostic; showPlaneProfiles?: boolean }) {
   return <section className="ldt-diagnostic">
     <div className="card-title"><span>{title}</span><small>{diagnostic.name} · {diagnostic.c_angles_deg.length} C × {diagnostic.gamma_angles_deg.length} gamma · pico C{diagnostic.peak_c_deg?.toFixed(1) ?? '—'} / gamma {diagnostic.peak_gamma_deg?.toFixed(1) ?? '—'}°</small></div>
     <div className="ldt-diagnostic-grid">
@@ -427,7 +779,58 @@ function LdtDiagnostics({ title, diagnostic }: { title: string; diagnostic: LdtD
         <div className="ldt-pair-list">{diagnostic.pairs.map(pair => <div className={`ldt-pair ${pair.symmetric ? '' : 'mismatch'}`} key={`${pair.c_deg}-${pair.mirror_c_deg}`}><span>C {pair.c_deg.toFixed(2)}° ↔ {pair.mirror_c_deg.toFixed(2)}°</span><b>{pair.max_difference_pct.toFixed(1)} %</b><small>gamma {pair.worst_gamma_deg.toFixed(0)}° · {pair.symmetric ? 'OK' : 'NO SIMÉTRICO'}</small></div>)}</div>
       </div>
     </div>
-    <LdtGridTable diagnostic={diagnostic} />
+     {showPlaneProfiles && <LdtPlaneProfiles diagnostic={diagnostic} />}
+     <LdtGridTable diagnostic={diagnostic} />
+   </section>;
+}
+
+const LDT_PLANES = [0, 90, 180, 280];
+const LDT_PLANE_COLORS = ['#ef7348', '#173e36', '#6f8f7d', '#b07b37'];
+
+function sampleLdtPlane(diagnostic: LdtDiagnostic, c: number, gamma: number) {
+  const axis = diagnostic.c_angles_deg;
+  const normalized = ((c % 360) + 360) % 360;
+  const step = axis.length > 1 ? axis[1] - axis[0] : 360;
+  const circular = axis[axis.length - 1] - axis[0] + step >= 360 - 1e-6;
+  if (!circular && (normalized < axis[0] || normalized > axis[axis.length - 1])) return 0;
+  const query = circular && normalized < axis[0] ? normalized + 360 : normalized;
+  let left = 0;
+  while (left < axis.length - 1 && axis[left + 1] <= query) left += 1;
+  const right = left === axis.length - 1 ? 0 : left + 1;
+  const upper = right === 0 ? axis[0] + 360 : axis[right];
+  const fraction = (query - axis[left]) / Math.max(upper - axis[left], 1e-9);
+  const leftValue = pchipValue(diagnostic.gamma_angles_deg, diagnostic.intensities_cd_per_klm[left], gamma);
+  const rightValue = pchipValue(diagnostic.gamma_angles_deg, diagnostic.intensities_cd_per_klm[right], gamma);
+  return Math.max(0, (1 - fraction) * leftValue + fraction * rightValue);
+}
+
+function LdtPlaneProfiles({ diagnostic }: { diagnostic: LdtDiagnostic }) {
+  const gammaMax = diagnostic.gamma_angles_deg[diagnostic.gamma_angles_deg.length - 1] || 90;
+  const gammaStep = Math.max(1, Math.min(5, diagnostic.gamma_angles_deg[1] - diagnostic.gamma_angles_deg[0] || 5));
+  const gammas = Array.from({ length: Math.round(gammaMax / gammaStep) + 1 }, (_, index) => Math.min(gammaMax, index * gammaStep));
+  const profiles = LDT_PLANES.map((plane, index) => ({ plane, color: LDT_PLANE_COLORS[index], values: gammas.map(gamma => sampleLdtPlane(diagnostic, plane, gamma)) }));
+  const maximum = Math.max(...profiles.flatMap(profile => profile.values), 1);
+  const width = 720;
+  const height = 260;
+  const left = 48;
+  const top = 22;
+  const plotWidth = 625;
+  const plotHeight = 178;
+  const xPosition = (gamma: number) => left + (gamma / Math.max(gammaMax, 1)) * plotWidth;
+  const yPosition = (value: number) => top + plotHeight - (value / maximum) * plotHeight;
+  const points = (values: number[]) => values.map((value, index) => `${xPosition(gammas[index])},${yPosition(value)}`).join(' ');
+  return <section className="ldt-plane-card">
+    <div className="ldt-plane-heading"><span>PLANOS FOTOMÉTRICOS / ORIENTACIÓN</span><small>gamma 0–{gammaMax.toFixed(0)}° · cd/klm</small></div>
+    <svg className="ldt-plane-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Perfiles fotométricos C0 C90 C180 y C280">
+      <rect width={width} height={height} fill="#fbfcf9" />
+      {[0, .25, .5, .75, 1].map(level => <g key={level}><line x1={left} y1={yPosition(maximum * level)} x2={left + plotWidth} y2={yPosition(maximum * level)} stroke="#dce5dc" strokeWidth="1" /><text x={left - 8} y={yPosition(maximum * level) + 3} textAnchor="end" fill="#819087" fontSize="9">{(maximum * level).toFixed(0)}</text></g>)}
+      {[0, 30, 60, 90].filter(value => value <= gammaMax).map(gamma => <g key={gamma}><line x1={xPosition(gamma)} y1={top} x2={xPosition(gamma)} y2={top + plotHeight} stroke="#eef2ec" strokeWidth="1" /><text x={xPosition(gamma)} y={top + plotHeight + 18} textAnchor="middle" fill="#819087" fontSize="9">{gamma}°</text></g>)}
+      <line x1={left} y1={top + plotHeight} x2={left + plotWidth} y2={top + plotHeight} stroke="#173e36" strokeWidth="1" />
+      {profiles.map(profile => <polyline key={profile.plane} points={points(profile.values)} fill="none" stroke={profile.color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />)}
+      <text x={left + plotWidth} y={top + plotHeight + 38} textAnchor="end" fill="#52685a" fontSize="10">gamma / grados</text>
+      <text x="12" y="14" fill="#52685a" fontSize="9">cd/klm</text>
+    </svg>
+    <div className="ldt-plane-legend">{profiles.map(profile => <span key={profile.plane}><i style={{ background: profile.color }} />C{profile.plane} · {Math.max(...profile.values).toFixed(0)} cd/klm</span>)}</div>
   </section>;
 }
 

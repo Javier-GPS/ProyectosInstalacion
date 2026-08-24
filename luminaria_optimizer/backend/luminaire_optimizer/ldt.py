@@ -7,6 +7,7 @@ the existing SALVI calculation engines.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -257,6 +258,11 @@ def parse_ldt_text(text: str) -> LdtPhotometry:
         dc = c_angles_file[1] - c_angles_file[0]
     if dg <= 0:
         dg = gamma_angles[1] - gamma_angles[0]
+    source_report = _line(lines, 7, "report")
+    metadata = {"source_report": source_report, "source_date": _line(lines, 11, "date")}
+    rotation_match = re.search(r"SALVI_GROUP_C_ROTATION\s*=\s*([-+]?\d+(?:\.\d+)?)", source_report)
+    if rotation_match:
+        metadata["group_c_rotation_deg"] = rotation_match.group(1)
     result = LdtPhotometry(
         company=company,
         name=_line(lines, 8, "luminaire name"),
@@ -268,7 +274,7 @@ def parse_ldt_text(text: str) -> LdtPhotometry:
         conversion=conversion,
         lorl_percent=lorl,
         dimensions_mm=dimensions,
-        metadata={"source_report": _line(lines, 7, "report"), "source_date": _line(lines, 11, "date")},
+        metadata=metadata,
     )
     result.validate()
     return result

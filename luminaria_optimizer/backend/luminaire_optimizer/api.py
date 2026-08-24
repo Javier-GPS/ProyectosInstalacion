@@ -2,17 +2,23 @@
 from __future__ import annotations
 
 import base64
+import os
 import tempfile
 from pathlib import Path
 
+import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .composition import DEFAULT_GROUP_ANGLES_DEG, compose_luminaire
+from .geometry import GeometryError, load_step_geometry
 from .hl2x import HL2X_MAX_INPUT_POWER_W, Hl2xModel, calculate_luminaire_operating_point
 from .ldt import ldt_diagnostic, ldt_text, parse_ldt_text
 from .optimizer import optimize_currents_and_tilt
+from .optical import MAX_PREVIEW_RAY_COUNT, trace_tm25
+from .ray_photometry import rays_to_ldt
+from .rayset import Tm25Error, parse_tm25
 from .road import RoadScenario, calculate_reference_road, calculate_road, photometric_azimuth_profile
 from .r_tables import load_rtable
 
@@ -46,6 +52,19 @@ class LdtInspectRequest(BaseModel):
     group_ldt_base64: str
 
 
+class GeometryTraceRequest(BaseModel):
+    step_base64: str
+    rayset_base64: str | None = None
+    step_filename: str = "lens.step"
+    rayset_filename: str = "source.tm25ray"
+    sample_count: int = Field(default=10_000, gt=0, le=5_000_000)
+    chunk_size: int = Field(default=10_000, gt=0, le=100_000)
+    lens_index: float = Field(default=1.49, gt=1.0, le=3.0)
+    preview_ray_count: int = Field(default=5_000, gt=0, le=MAX_PREVIEW_RAY_COUNT)
+    c_mirror: bool = True
+    c_offset_deg: float = 0.0
+
+
 class RoadRequest(GroupRequest):
     rtable_base64: str
     rtable_name: str = "C2"
@@ -69,6 +88,25 @@ def _decode_text(value: str, label: str) -> str:
         return base64.b64decode(value).decode("latin-1")
     except Exception as exc:
         raise HTTPException(status_code=422, detail=f"invalid base64 for {label}") from exc
+
+
+def _decode_binary(value: str, label: str) -> bytes:
+    try:
+        return base64.b64decode(value, validate=True)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"invalid base64 for {label}") from exc
+
+
+def _default_rayset_path() -> Path:
+    configured = os.environ.get("SALVI_DEFAULT_RAYSET_PATH")
+    candidates = [
+        Path(configured) if configured else None,
+        Path(__file__).resolve().parents[2] / "LUXEON HL2Z_5000000Rays_IESTM25.tm25ray",
+    ]
+    for candidate in candidates:
+        if candidate is not None and candidate.is_file():
+            return candidate
+    raise GeometryError("default HL2Z TM-25 ray file was not found")
 
 
 def _reference_ldt(request: GroupRequest):
@@ -127,6 +165,66 @@ def inspect_ldt(request: LdtInspectRequest):
     try:
         return ldt_diagnostic(parse_ldt_text(_decode_text(request.group_ldt_base64, "group_ldt")))
     except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/geometry/trace")
+def geometry_trace(request: GeometryTraceRequest):
+    """Trace a STEP lens and return a generated group LDT plus preview rays."""
+    try:
+        step_data = _decode_binary(request.step_base64, "step")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            step_path = root / Path(request.step_filename).name
+            step_path.write_bytes(step_data)
+            if request.rayset_base64:
+                rayset_path = root / Path(request.rayset_filename).name
+                rayset_path.write_bytes(_decode_binary(request.rayset_base64, "rayset"))
+            else:
+                rayset_path = _default_rayset_path()
+            geometry = load_step_geometry(step_path)
+            ray_set = parse_tm25(rayset_path)
+            try:
+                trace = trace_tm25(
+                    ray_set,
+                    geometry,
+                    sample_count=request.sample_count,
+                    chunk_size=request.chunk_size,
+                    lens_index=request.lens_index,
+                    preview_ray_count=request.preview_ray_count,
+                    c_mirror=request.c_mirror,
+                    c_offset_deg=request.c_offset_deg,
+                )
+                photometry = rays_to_ldt(
+                    trace,
+                    c_step_deg=5.0,
+                    gamma_step_deg=1.0,
+                    c_offset_deg=request.c_offset_deg,
+                    c_mirror=request.c_mirror,
+                )
+                preview = trace.transmitted_rays
+                if len(preview) > request.preview_ray_count:
+                    indices = np.linspace(0, len(preview) - 1, request.preview_ray_count, dtype=int)
+                    preview = preview[indices]
+                return {
+                    "geometry": geometry.diagnostic(),
+                    "trace": trace.diagnostic(),
+                    "ldt": ldt_diagnostic(photometry),
+                    "ldt_base64": base64.b64encode(ldt_text(photometry).encode("latin-1")).decode("ascii"),
+                    "preview_rays": preview.tolist(),
+                    "preview_rays_detail": list(trace.preview_rays_detail),
+                    "preview_geometry_mesh": geometry.mesh_payload(),
+                    "ray_angle_config": {
+                        "c_mirror": request.c_mirror,
+                        "c_offset_deg": request.c_offset_deg,
+                        "gamma_flip": False,
+                        "c_convention": "atan2(y, x), then c_mirror and c_offset_deg",
+                        "gamma_convention": "acos(z)",
+                    },
+                }
+            finally:
+                ray_set.close()
+    except (GeometryError, Tm25Error, ValueError, KeyError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 

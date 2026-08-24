@@ -12,6 +12,17 @@ DEFAULT_GROUP_ANGLES_DEG = (11.25, 33.75, 56.25, 78.75, 101.25, 123.75, 146.25, 
 GROUP_C_ROTATION_DEG = 90.0
 
 
+def group_c_rotation_deg(group_ldt: LdtPhotometry) -> float:
+    """Return the source-specific C rotation, preserving the legacy default."""
+    raw = group_ldt.metadata.get("group_c_rotation_deg")
+    if raw is None:
+        return GROUP_C_ROTATION_DEG
+    try:
+        return float(raw)
+    except ValueError:
+        return GROUP_C_ROTATION_DEG
+
+
 def compose_luminaire(group_ldt: LdtPhotometry, operating_point: LuminaireOperatingPoint, *, angles_deg: tuple[float, ...] = DEFAULT_GROUP_ANGLES_DEG, c_step_deg: float = 1.0, gamma_step_deg: float = 1.0, cct_k: int | None = None, cri: int | None = None, symmetric: bool = False) -> LdtPhotometry:
     if len(angles_deg) != len(operating_point.groups):
         raise ValueError("group angle count does not match operating point")
@@ -20,12 +31,13 @@ def compose_luminaire(group_ldt: LdtPhotometry, operating_point: LuminaireOperat
     c_angles = [index * c_step_deg for index in range(c_count)]
     gamma_angles = [index * gamma_step_deg for index in range(g_count)]
     total_flux = operating_point.total_flux_lm
+    c_rotation = group_c_rotation_deg(group_ldt)
     matrix: list[list[float]] = []
     def total_at(c: float, gamma: float) -> float:
         if not 0.0 <= c % 360.0 <= 180.0:
             return 0.0
         return sum(
-            group_ldt.intensity_cd_per_klm(c - angle - GROUP_C_ROTATION_DEG, gamma) * point.group_flux_lm / 1000.0
+            group_ldt.intensity_cd_per_klm(c - angle - c_rotation, gamma) * point.group_flux_lm / 1000.0
             for angle, point in zip(angles_deg, operating_point.groups)
         )
 

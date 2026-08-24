@@ -15,6 +15,7 @@ from .normative import M_CLASS_REQUIREMENTS, MClassRequirements, requirements_fo
 from .road import RoadCalculation, RoadMetrics, RoadScenario, calculate_reference_road, calculate_road
 from .optimizer import OptimizationResult, optimize_currents, optimize_currents_and_tilt, optimize_currents_symmetric
 from .config import DEFAULT_GROUP_FLUX_LM
+from .rayset import Tm25Error, Tm25Header, Tm25RaySet, parse_tm25
 
 __all__ = [
     "DEFAULT_GROUP_ANGLES_DEG",
@@ -43,4 +44,8 @@ __all__ = [
     "parse_ldt",
     "write_ldt",
     "requirements_for",
+    "Tm25Error",
+    "Tm25Header",
+    "Tm25RaySet",
+    "parse_tm25",
 ]

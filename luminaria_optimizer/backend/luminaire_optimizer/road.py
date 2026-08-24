@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
-from .composition import DEFAULT_GROUP_ANGLES_DEG, GROUP_C_ROTATION_DEG
+from .composition import DEFAULT_GROUP_ANGLES_DEG, group_c_rotation_deg
 from .hl2x import Hl2xModel, LuminaireOperatingPoint, calculate_luminaire_operating_point
 from .ldt import LdtPhotometry
 from .normative import MClassRequirements, passes_maximum, passes_minimum, requirements_for
@@ -123,6 +123,7 @@ def precompute_luminance_influence(
     matrices = np.zeros((len(lane_ys), len(xs), len(lane_ys[0]), len(angles_deg)), dtype=float)
     positions = _positions(scenario)
     geometry_factor = scenario.maintenance_factor / scenario.height_m**2
+    c_rotation = group_c_rotation_deg(group_ldt)
     for lane_index, observer_y in enumerate(lane_centres):
         for x_index, x in enumerate(xs):
             for y_index, y in enumerate(lane_ys[lane_index]):
@@ -146,13 +147,13 @@ def precompute_luminance_influence(
                     for group_index, angle in enumerate(angles_deg):
                         symmetric = scenario.photometry_symmetry == "symmetric"
                         contribution = _base_group_intensity(
-                            group_ldt, c - angle - GROUP_C_ROTATION_DEG, gamma, symmetric=symmetric,
+                            group_ldt, c - angle - c_rotation, gamma, symmetric=symmetric,
                         )
                         if symmetric:
                             contribution = 0.5 * (
                                 contribution
                                 + _base_group_intensity(
-                                    group_ldt, 180.0 - c - angle - GROUP_C_ROTATION_DEG, gamma, symmetric=True,
+                                    group_ldt, 180.0 - c - angle - c_rotation, gamma, symmetric=True,
                                 )
                             )
                         matrices[lane_index, x_index, y_index, group_index] += contribution * factor
@@ -231,12 +232,14 @@ def _group_intensity_cd(
     Each group samples the unchanged base LDT at the azimuth relative to its
     own optical axis. No composed LDT is generated during road optimization.
     """
+    c_rotation = group_c_rotation_deg(group_ldt)
+
     def total_at(c_deg: float) -> float:
         if any(source.directional_c0_c180 for source in sources) and not 0.0 <= c_deg % 360.0 <= 180.0:
             return 0.0
         return sum(
             _base_group_intensity(
-                group_ldt, c_deg - source.azimuth_deg - GROUP_C_ROTATION_DEG, gamma_deg,
+                group_ldt, c_deg - source.azimuth_deg - c_rotation, gamma_deg,
                 symmetric=symmetric,
             )
             * source.flux_lm / 1000.0
@@ -283,6 +286,7 @@ def photometric_azimuth_profile(
     if samples < 8:
         raise ValueError("samples must be at least 8")
     sources = _virtual_sources(operating)
+    c_rotation = group_c_rotation_deg(group_ldt)
     c_angles = [360.0 * index / samples for index in range(samples)]
     values_cd = [
         _group_intensity_cd(group_ldt, sources, c, gamma_deg, symmetric=symmetric)
@@ -294,7 +298,7 @@ def photometric_azimuth_profile(
         group_values = [
             (
                 _base_group_intensity(
-                    group_ldt, c - source.azimuth_deg - GROUP_C_ROTATION_DEG, gamma_deg, symmetric=symmetric,
+                    group_ldt, c - source.azimuth_deg - c_rotation, gamma_deg, symmetric=symmetric,
                 )
                 * source.flux_lm / 1000.0
                 if 0.0 <= c <= 180.0 else 0.0

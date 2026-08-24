@@ -79,6 +79,35 @@ procedimiento físico aplicable.
 
 El paquete no depende de `luxStudio` ni de la aplicación de túneles.
 
+## Ray file TM-25
+
+El backend expone `parse_tm25()` para leer ray files binarios IES TM-25-13.
+Los registros se abren como `numpy.memmap`, por lo que el procesamiento puede
+hacerse por bloques sin cargar el fichero completo en memoria. El ray file
+`LUXEON HL2Z_5000000Rays_IESTM25.tm25ray` corresponde a un LED HL2Z 4070
+individual; no sustituye al LDT del grupo de tres LED y lente.
+
+Para habilitar la geometría STEP en otra instalación:
+
+```text
+python -m pip install -e ".[geometry]"
+```
+
+La secuencia `load_step_geometry()` → `trace_tm25()` → `rays_to_ldt()`
+importa el ensamblaje, traza una muestra de los rayos por los tres LED y
+genera una matriz LDT fina. El trazador conserva en los metadatos el flujo que
+queda fuera de `gamma=0–90°`, ya que esa es la cobertura del LDT de referencia.
+La geometría se tessela una vez y las intersecciones se resuelven con Embree;
+la prueba de `1.000.000` de rayos por LED produjo `3.000.000` trayectorias en
+`149 s` en el entorno de desarrollo.
+
+La pantalla Modelo ofrece el endpoint `/api/geometry/trace` mediante el modo
+`Calcular desde STEP`: recibe el ensamblaje y el TM-25, calcula el LDT y carga
+el resultado como LDT de grupo para la fase vial. La respuesta devuelve una
+muestra visual de rayos transmitidos, no el millón completo. El cálculo es
+síncrono en esta primera versión; el siguiente paso natural es convertirlo en
+un trabajo con progreso y cancelación.
+
 La optimización vial usa por defecto corrientes independientes y conserva la
 direccionalidad del LDT. El modo simétrico (`G1=G8`, `G2=G7`, `G3=G6`,
 `G4=G5`) sigue disponible explícitamente para luminarias cuya fotometría real

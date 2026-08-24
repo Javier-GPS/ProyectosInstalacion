@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from luminaire_optimizer.composition import DEFAULT_GROUP_ANGLES_DEG, GROUP_C_ROTATION_DEG, compose_luminaire
+from luminaire_optimizer.composition import DEFAULT_GROUP_ANGLES_DEG, GROUP_C_ROTATION_DEG, compose_luminaire, group_c_rotation_deg
 from luminaire_optimizer.hl2x import Hl2xModel, calculate_luminaire_operating_point
 from luminaire_optimizer.ldt import LdtPhotometry, LampSet, ldt_diagnostic, ldt_text, parse_ldt_text
 from luminaire_optimizer.r_tables import ReducedLuminanceTable, load_rtable
@@ -23,6 +23,10 @@ from luminaire_optimizer.road import (
 )
 from luminaire_optimizer.road import _base_group_intensity, photometric_azimuth_profile
 from luminaire_optimizer.optimizer import _symmetric_vector, _uniformity_quality, optimize_currents_and_tilt
+from luminaire_optimizer.rayset import parse_tm25
+from luminaire_optimizer.optical import _refract
+from luminaire_optimizer.ray_photometry import rays_to_ldt
+from luminaire_optimizer.calibration import calibrate_orientation
 
 
 def group_ldt() -> LdtPhotometry:
@@ -69,6 +73,13 @@ def test_composition_scales_flux_and_rotates_groups():
     assert len(result.c_angles_deg) == 24
     assert result.c_angles_deg[1] == 15.0
     assert max(max(row) for row in result.intensities_cd_per_klm) > 0
+
+
+def test_tagged_generated_group_ldt_does_not_receive_legacy_c_rotation():
+    generated = group_ldt()
+    generated.metadata["group_c_rotation_deg"] = "0"
+    assert group_c_rotation_deg(generated) == pytest.approx(0.0)
+    assert group_c_rotation_deg(group_ldt()) == pytest.approx(90.0)
 
 
 def test_road_uses_virtual_groups_without_composed_ldt():
@@ -381,3 +392,81 @@ def test_batch_uniformity_matches_single_candidate_evaluation():
         assert averages[index] == pytest.approx(luminance_uniformity(grid)[0])
         assert uos[index] == pytest.approx(luminance_uniformity(grid)[1])
         assert uls[index] == pytest.approx(luminance_uniformity(grid)[2])
+
+
+def test_tm25_reader_maps_standard_luminous_ray_set(tmp_path: Path):
+    import struct
+
+    path = tmp_path / "source.tm25ray"
+    header = bytearray(36_288)
+    header[:4] = b"TM25"
+    struct.pack_into("<ii", header, 4, 2013, 0)
+    struct.pack_into("<ffQ", header, 12, 123.5, 1.0, 2)
+    header[28:44] = b"2026-01-01T00:00"
+    struct.pack_into("<ii", header, 56, 0, 0)
+    struct.pack_into("<fffiii", header, 64, 0.0, 0.0, 0.0, 0, 0, 0)
+    struct.pack_into("<8i", header, 256, 1, 1, 0, 0, 1, 0, 1, 0)
+    rays = np.array(
+        [
+            [1, 2, 3, 0, 0, 1, 10, 20, 30],
+            [4, 5, 6, 0, 1, 0, 40, 50, 60],
+        ],
+        dtype="<f4",
+    )
+    path.write_bytes(header + rays.tobytes())
+
+    ray_set = parse_tm25(path)
+
+    assert ray_set.header.luminous_flux_lm == pytest.approx(123.5)
+    assert ray_set.item_names == ("x", "y", "z", "kx", "ky", "kz", "Tri_Y", "Tri_X", "Tri_Z")
+    assert ray_set.flux_column == 6
+    np.testing.assert_array_equal(ray_set.sample(1, seed=4), ray_set.rays[[1]])
+    np.testing.assert_array_equal(np.vstack(list(ray_set.iter_chunks(1))), rays)
+
+
+def test_refract_preserves_unit_direction_and_reports_transmission():
+    result = _refract(np.array([0.0, 0.0, -1.0]), np.array([0.0, 0.0, 1.0]), 1.0, 1.49)
+
+    assert result is not None
+    direction, transmission = result
+    assert np.linalg.norm(direction) == pytest.approx(1.0)
+    assert direction[2] < 0
+    assert 0 < transmission < 1
+
+
+def test_transmitted_rays_are_binned_as_cd_per_klm():
+    result = type("Trace", (), {
+        "input_flux_lm": 10.0,
+        "transmitted_flux_lm": 8.0,
+        "led_count": 3,
+        "traced_ray_count": 1,
+        "transmitted_rays": np.array([[0, 0, 1, 0, 0, 1, 8.0]], dtype=float),
+    })()
+
+    photometry = rays_to_ldt(result, c_step_deg=90.0, gamma_step_deg=45.0)
+
+    assert photometry.flux_lm == pytest.approx(10.0)
+    assert photometry.lorl_percent == pytest.approx(80.0)
+    assert photometry.intensities_cd_per_klm[0][0] > 0
+
+
+def test_orientation_calibration_finds_azimuth_offset():
+    result = type("Trace", (), {
+        "input_flux_lm": 10.0,
+        "transmitted_flux_lm": 10.0,
+        "led_count": 3,
+            "traced_ray_count": 4,
+            "transmitted_rays": np.array([
+            [0, 0, 1, 1, 0, 0, 5.0],
+            [0, 0, 1, 0, 1, 0, 3.0],
+            [0, 0, 1, -1, 0, 0, 1.0],
+            [0, 0, 1, 0, -1, 0, 1.0],
+        ], dtype=float),
+    })()
+    reference = rays_to_ldt(result, c_step_deg=90.0, gamma_step_deg=45.0, c_offset_deg=90.0)
+
+    calibration = calibrate_orientation(result, reference, c_search_step_deg=90.0)
+
+    assert calibration.c_offset_deg == pytest.approx(90.0)
+    assert calibration.c_mirror is False
+    assert calibration.gamma_flip is False

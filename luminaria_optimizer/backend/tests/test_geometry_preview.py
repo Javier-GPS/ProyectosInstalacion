@@ -68,9 +68,11 @@ def test_step_geometry_serializes_global_meshes_as_json_lists():
 
 
 def test_visual_trace_is_bounded_and_keeps_distinct_statuses():
+    lens_mesh = trimesh.creation.box(extents=(2.0, 2.0, 2.0))
+    lens_mesh.triangle_surface_ids = np.arange(len(lens_mesh.faces), dtype=np.int64) + 100
     geometry = SimpleNamespace(
         lens=object(),
-        lens_mesh=trimesh.creation.box(extents=(2.0, 2.0, 2.0)),
+        lens_mesh=lens_mesh,
         emission_origins=(_Origin(0.0, 0.0, 0.0),) * 3,
     )
 
@@ -97,9 +99,22 @@ def test_visual_trace_is_bounded_and_keeps_distinct_statuses():
     assert all("entry_surface_index" in detail for detail in details)
     assert all("exit_surface_index" in detail for detail in details)
     assert all(isinstance(detail["reflection_points_xyz"], list) for detail in details)
+    assert all(isinstance(detail["reflection_surface_indices"], list) for detail in details)
     assert all(
         all(len(point) == 3 for point in detail["reflection_points_xyz"])
         for detail in details
+    )
+    assert all(
+        len(detail["reflection_surface_indices"]) == len(detail["reflection_points_xyz"])
+        and all(isinstance(surface_index, int) for surface_index in detail["reflection_surface_indices"])
+        for detail in details
+    )
+    tir_details = [detail for detail in details if detail["tir_count"]]
+    assert tir_details
+    assert all(
+        all(100 <= surface_index < 100 + len(lens_mesh.faces)
+            for surface_index in detail["reflection_surface_indices"])
+        for detail in tir_details
     )
     assert result.traced_ray_count == 9
     assert result.transmitted_rays.shape[1] == 7
@@ -112,3 +127,36 @@ def test_preview_angles_use_the_same_mirror_and_offset_order_as_photometry():
 
     assert float(c_deg) == 285.0
     assert float(gamma_deg) == 90.0
+
+
+def test_non_accelerated_preview_keeps_empty_reflection_surface_indices(monkeypatch):
+    def fake_trace_single_lens_ray(*args, **kwargs):
+        return (
+            "untransmitted",
+            np.zeros(3),
+            None,
+            np.array([0.0, 0.0, 1.0]),
+            0.0,
+            0,
+        )
+
+    monkeypatch.setattr(
+        "luminaire_optimizer.optical._trace_single_lens_ray",
+        fake_trace_single_lens_ray,
+    )
+    geometry = SimpleNamespace(
+        lens=object(),
+        emission_origins=(_Origin(0.0, 0.0, 0.0),),
+    )
+
+    result = trace_tm25(
+        _RaySet(),
+        geometry,
+        sample_count=3,
+        chunk_size=3,
+        preview_ray_count=3,
+    )
+
+    assert result.preview_rays_detail
+    assert all(detail["reflection_points_xyz"] == [] for detail in result.preview_rays_detail)
+    assert all(detail["reflection_surface_indices"] == [] for detail in result.preview_rays_detail)

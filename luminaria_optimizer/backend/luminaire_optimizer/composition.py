@@ -61,5 +61,11 @@ def compose_luminaire(group_ldt: LdtPhotometry, operating_point: LuminaireOperat
         conversion=1.0,
         lorl_percent=group_ldt.lorl_percent,
         dimensions_mm=group_ldt.dimensions_mm,
-        metadata={"source_report": "Calculated sum of eight azimuthal group LDTs", "source_date": "", "group_angles_deg": ",".join(map(str, angles_deg))},
+        metadata={
+            "source_report": "Calculated sum of eight azimuthal group LDTs",
+            "source_date": "",
+            "group_angles_deg": ",".join(map(str, angles_deg)),
+            "directional_c0_c180": "true",
+            "group_c_rotation_deg": str(c_rotation),
+        },
     )

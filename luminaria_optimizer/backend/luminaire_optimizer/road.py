@@ -145,15 +145,16 @@ def precompute_luminance_influence(
                         continue
                     factor = reflection * geometry_factor / 1000.0
                     for group_index, angle in enumerate(angles_deg):
-                        symmetric = scenario.photometry_symmetry == "symmetric"
                         contribution = _base_group_intensity(
-                            group_ldt, c - angle - c_rotation, gamma, symmetric=symmetric,
+                            group_ldt, c - angle - c_rotation, gamma, symmetric=False,
                         )
-                        if symmetric:
+                        if scenario.photometry_symmetry == "symmetric":
+                            # Reflect the complete luminaire frame once. The
+                            # group angle remains fixed in the mirrored sample.
                             contribution = 0.5 * (
                                 contribution
                                 + _base_group_intensity(
-                                    group_ldt, 180.0 - c - angle - c_rotation, gamma, symmetric=True,
+                                    group_ldt, 180.0 - c - angle - c_rotation, gamma, symmetric=False,
                                 )
                             )
                         matrices[lane_index, x_index, y_index, group_index] += contribution * factor
@@ -240,7 +241,7 @@ def _group_intensity_cd(
         return sum(
             _base_group_intensity(
                 group_ldt, c_deg - source.azimuth_deg - c_rotation, gamma_deg,
-                symmetric=symmetric,
+                symmetric=False,
             )
             * source.flux_lm / 1000.0
             for source in sources

@@ -22,7 +22,7 @@ type ReferenceRoad = { metrics: Metrics; visual_grid?: VisualGrid };
 type MapMetric = 'luminance' | 'illuminance' | 'reference-luminance' | 'reference-illuminance';
 type OptimizationMode = 'independent' | 'symmetric';
 type LdtPair = { c_deg: number; mirror_c_deg: number; max_difference_pct: number; worst_gamma_deg: number; symmetric: boolean };
-type LdtDiagnostic = { name: string; company: string; flux_lm: number; power_w: number; c_angles_deg: number[]; gamma_angles_deg: number[]; intensities_cd_per_klm: number[][]; max_intensity_cd_per_klm: number; peak_c_deg?: number; peak_gamma_deg?: number; symmetry_tolerance_pct: number; pairs: LdtPair[]; symmetric: boolean };
+type LdtDiagnostic = { name: string; company: string; flux_lm: number; power_w: number; c_angles_deg: number[]; gamma_angles_deg: number[]; intensities_cd_per_klm: number[][]; max_intensity_cd_per_klm: number; peak_c_deg?: number; peak_gamma_deg?: number; symmetry_tolerance_pct: number; pairs: LdtPair[]; symmetric: boolean; directional_c0_c180?: boolean; group_c_rotation_deg?: number };
 type PreviewRayStatus = 'transmitted' | 'missed' | 'untransmitted';
 type LedSelection = 'all' | 0 | 1 | 2;
 type PreviewRay = { led_index: number; status: PreviewRayStatus; origin_xyz: number[]; entry_xyz: number[] | null; exit_xyz: number[] | null; direction_xyz: number[] | null; power_lm: number; transmitted_power_lm: number; c_deg: number | null; gamma_deg: number | null; tir: boolean; tir_count: number; reflection_points_xyz: number[][]; reflection_surface_indices: number[]; entry_surface_index: number | null; exit_surface_index: number | null };
@@ -790,17 +790,21 @@ function LuminanceMapSvg({ grid, groupLdt, luminaireLdt, luminaireHeight, carria
         { x: arrangement === 'bilateral_staggered' ? interdistance * 1.5 : interdistance, y: carriagewayWidth + edgeOffset, label: 'L4', orientation: 180 },
      ]),
    ];
-   const ldtShape = (luminaire: typeof luminairePositions[number]) => {
-     if (!luminaireLdt) return '';
-     const maxIntensity = Math.max(luminaireLdt.max_intensity_cd_per_klm, 1);
-     const downwardGammaIndexes = luminaireLdt.gamma_angles_deg
-       .map((gamma, index) => gamma <= 90 ? index : -1)
-       .filter(index => index >= 0);
-     return luminaireLdt.c_angles_deg.map((angle, cIndex) => {
-       const intensity = Math.max(...downwardGammaIndexes.map(gammaIndex => luminaireLdt.intensities_cd_per_klm[cIndex][gammaIndex]), 0);
-        const radius = Math.sqrt(intensity / maxIntensity) * ldtRadiusScale;
-        const radians = (angle + luminaire.orientation) * Math.PI / 180;
-        return `${xPosition(luminaire.x + Math.cos(radians) * radius)},${yPosition(luminaire.y + Math.sin(radians) * radius)}`;
+    const groupRotation = groupLdt?.group_c_rotation_deg ?? GROUP_C_ROTATION_DEG;
+    const ldtShape = (luminaire: typeof luminairePositions[number]) => {
+      if (!luminaireLdt) return '';
+      const maxIntensity = Math.max(luminaireLdt.max_intensity_cd_per_klm, 1);
+      const downwardGammaIndexes = luminaireLdt.gamma_angles_deg
+        .map((gamma, index) => gamma <= 90 ? index : -1)
+        .filter(index => index >= 0);
+      const cPlanes = luminaireLdt.c_angles_deg
+        .map((angle, cIndex) => ({ angle, cIndex }))
+        .filter(item => !luminaireLdt.directional_c0_c180 || item.angle <= 180);
+      return cPlanes.map(({ angle, cIndex }) => {
+        const intensity = Math.max(...downwardGammaIndexes.map(gammaIndex => luminaireLdt.intensities_cd_per_klm[cIndex][gammaIndex]), 0);
+         const radius = Math.sqrt(intensity / maxIntensity) * ldtRadiusScale;
+         const radians = (angle + luminaire.orientation) * Math.PI / 180;
+         return `${xPosition(luminaire.x + Math.cos(radians) * radius)},${yPosition(luminaire.y + Math.sin(radians) * radius)}`;
      }).join(' ');
     };
    const maxGamma = groupLdt?.peak_gamma_deg ?? 0;
@@ -813,14 +817,14 @@ function LuminanceMapSvg({ grid, groupLdt, luminaireLdt, luminaireHeight, carria
      return Math.min(...distances, Math.hypot(mapRangeX, mapRangeY));
    };
    const maxIntensityLines = showGroupMaxima && groupLdt ? luminairePositions.flatMap((luminaire, luminaireIndex) => GROUP_ANGLES.map((groupAngle, groupIndex) => {
-     const direction = (maxLocalC + GROUP_C_ROTATION_DEG + groupAngle + luminaire.orientation) * Math.PI / 180;
+      const direction = (maxLocalC + groupRotation + groupAngle + luminaire.orientation) * Math.PI / 180;
      const dx = Math.cos(direction);
      const dy = Math.sin(direction);
      const physicalReach = maxGamma >= 89.5 ? Infinity : luminaireHeight * Math.tan(maxGamma * Math.PI / 180);
      const reach = Math.min(physicalReach, rayToMapEdge(luminaire.x, luminaire.y, dx, dy));
      const endX = luminaire.x + dx * reach;
      const endY = luminaire.y + dy * reach;
-     const displayC = ((maxLocalC + GROUP_C_ROTATION_DEG + groupAngle + luminaire.orientation) % 360 + 360) % 360;
+      const displayC = ((maxLocalC + groupRotation + groupAngle + luminaire.orientation) % 360 + 360) % 360;
      return <g key={`group-max-${luminaireIndex}-${groupIndex}`} className="map-group-max"><title>{`${luminaire.label} · G${groupIndex + 1} · C${displayC.toFixed(1)}° · gamma ${maxGamma.toFixed(1)}°`}</title><line x1={xPosition(luminaire.x)} y1={yPosition(luminaire.y)} x2={xPosition(endX)} y2={yPosition(endY)} /><circle cx={xPosition(endX)} cy={yPosition(endY)} r="2" /></g>;
     })) : [];
     const ldtCells = [...maxIntensityLines, ...(showLdt && luminaireLdt ? luminairePositions.map((luminaire, index) => <polygon key={`ldt-azimuth-${index}`} className="map-ldt-shape" points={ldtShape(luminaire)} />) : [])];
@@ -834,7 +838,7 @@ function LdtDiagnostics({ title, diagnostic, showPlaneProfiles = false }: { titl
     <div className="ldt-diagnostic-grid">
       <LdtSurface diagnostic={diagnostic} />
       <div className="ldt-pair-panel">
-        <div className={`symmetry-banner ${diagnostic.symmetric ? 'good' : 'bad'}`}><b>{diagnostic.symmetric ? 'SIMÉTRICO' : 'ASIMÉTRICO'}</b><span>tolerancia ±{diagnostic.symmetry_tolerance_pct.toFixed(1)} %</span></div>
+        <div className={`symmetry-banner ${diagnostic.directional_c0_c180 ? 'directional' : diagnostic.symmetric ? 'good' : 'bad'}`}><b>{diagnostic.directional_c0_c180 ? 'DIRECCIONAL C0–C180' : diagnostic.symmetric ? 'SIMÉTRICO' : 'ASIMÉTRICO'}</b><span>{diagnostic.group_c_rotation_deg == null ? '' : `giro grupo ${diagnostic.group_c_rotation_deg.toFixed(1)}° · `}tolerancia ±{diagnostic.symmetry_tolerance_pct.toFixed(1)} %</span></div>
         <div className="ldt-pair-list">{diagnostic.pairs.map(pair => <div className={`ldt-pair ${pair.symmetric ? '' : 'mismatch'}`} key={`${pair.c_deg}-${pair.mirror_c_deg}`}><span>C {pair.c_deg.toFixed(2)}° ↔ {pair.mirror_c_deg.toFixed(2)}°</span><b>{pair.max_difference_pct.toFixed(1)} %</b><small>gamma {pair.worst_gamma_deg.toFixed(0)}° · {pair.symmetric ? 'OK' : 'NO SIMÉTRICO'}</small></div>)}</div>
       </div>
     </div>
@@ -849,8 +853,10 @@ const LDT_PLANE_COLORS = ['#ef7348', '#173e36', '#6f8f7d', '#b07b37'];
 function sampleLdtPlane(diagnostic: LdtDiagnostic, c: number, gamma: number) {
   const axis = diagnostic.c_angles_deg;
   const normalized = ((c % 360) + 360) % 360;
+  const directional = diagnostic.directional_c0_c180 === true;
   const step = axis.length > 1 ? axis[1] - axis[0] : 360;
-  const circular = axis[axis.length - 1] - axis[0] + step >= 360 - 1e-6;
+  const circular = !directional && axis[axis.length - 1] - axis[0] + step >= 360 - 1e-6;
+  if (directional && normalized > 180) return 0;
   if (!circular && (normalized < axis[0] || normalized > axis[axis.length - 1])) return 0;
   const query = circular && normalized < axis[0] ? normalized + 360 : normalized;
   let left = 0;
@@ -917,7 +923,9 @@ function pchipValue(xs: number[], ys: number[], target: number) {
 function smoothLdtDiagnostic(diagnostic: LdtDiagnostic): LdtDiagnostic {
   const cStep = 2.5;
   const gammaStep = Math.max(2.5, Math.min(5, diagnostic.gamma_angles_deg[1] - diagnostic.gamma_angles_deg[0] || 2.5));
-  const cAngles = Array.from({ length: Math.round(360 / cStep) }, (_, index) => index * cStep);
+  const directional = diagnostic.directional_c0_c180 === true;
+  const cMax = directional ? Math.min(180, diagnostic.c_angles_deg[diagnostic.c_angles_deg.length - 1]) : 360;
+  const cAngles = Array.from({ length: Math.round(cMax / cStep) + 1 }, (_, index) => index * cStep);
   const gammaMax = diagnostic.gamma_angles_deg[diagnostic.gamma_angles_deg.length - 1];
   const gammaCount = Math.round(gammaMax / gammaStep) + 1;
   const gammaAngles = Array.from({ length: gammaCount }, (_, index) => Math.min(gammaMax, index * gammaStep));
@@ -925,7 +933,8 @@ function smoothLdtDiagnostic(diagnostic: LdtDiagnostic): LdtDiagnostic {
     const axis = diagnostic.c_angles_deg;
     const normalized = ((c % 360) + 360) % 360;
     const step = axis.length > 1 ? axis[1] - axis[0] : 360;
-    const circular = axis[axis.length - 1] - axis[0] + step >= 360 - 1e-6;
+    const circular = !directional && axis[axis.length - 1] - axis[0] + step >= 360 - 1e-6;
+    if (directional && normalized > 180) return 0;
     if (!circular && (normalized < axis[0] || normalized > axis[axis.length - 1])) return 0;
     let left = 0;
     const query = circular && normalized < axis[0] ? normalized + 360 : normalized;
@@ -975,9 +984,10 @@ function LdtSurface({ diagnostic }: { diagnostic: LdtDiagnostic }) {
     ] as const;
   };
   const cells: { key: string; points: string; fill: string; opacity: number; depth: number }[] = [];
-  for (let c = 0; c < cAngles.length; c += 1) for (let g = 0; g < gammas.length - 1; g += 1) {
-    const nextC = (c + 1) % cAngles.length;
-    const nextAngle = nextC === 0 ? cAngles[0] + 360 : cAngles[nextC];
+  const cCellCount = surfaceDiagnostic.directional_c0_c180 ? cAngles.length - 1 : cAngles.length;
+  for (let c = 0; c < cCellCount; c += 1) for (let g = 0; g < gammas.length - 1; g += 1) {
+    const nextC = surfaceDiagnostic.directional_c0_c180 ? c + 1 : (c + 1) % cAngles.length;
+    const nextAngle = !surfaceDiagnostic.directional_c0_c180 && nextC === 0 ? cAngles[0] + 360 : cAngles[nextC];
     const values = [surfaceDiagnostic.intensities_cd_per_klm[c][g], surfaceDiagnostic.intensities_cd_per_klm[nextC][g], surfaceDiagnostic.intensities_cd_per_klm[nextC][g + 1], surfaceDiagnostic.intensities_cd_per_klm[c][g + 1]];
     const average = values.reduce((sum, value) => sum + value, 0) / values.length;
     const vertices = [

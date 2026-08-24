@@ -88,6 +88,7 @@ def rays_to_ldt(
         lorl_percent=lorl,
         metadata={
             "source_report": "TM-25 ray set traced through STEP lens with CadQuery/OCP [SALVI_GROUP_C_ROTATION=0]",
+            "group_c_rotation_deg": "0",
             "ray_count": str(result.traced_ray_count),
             "c_offset_deg": str(c_offset_deg),
             "c_mirror": str(c_mirror),

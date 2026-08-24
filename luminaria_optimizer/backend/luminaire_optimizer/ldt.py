@@ -97,14 +97,20 @@ class LdtPhotometry:
         """Bilinearly interpolate the full expanded matrix."""
         self.validate()
         gamma = max(0.0, min(180.0, float(gamma_deg)))
+        directional = self.metadata.get("directional_c0_c180", "").strip().lower() == "true"
         # An LDT with no upper-hemisphere samples cannot provide a physical
         # value for gamma > 90. Returning zero is safer than duplicating the
         # nadir hemisphere and it keeps TI non-certifiable through diagnostics.
-        if gamma > self.gamma_angles_deg[-1]:
+        if gamma > self.gamma_angles_deg[-1] or (directional and gamma > 90.0):
             return 0.0
         c = float(c_deg) % 360.0
         c_axis = self.c_angles_deg
-        circular_c = self._c_axis_is_circular()
+        # Generated complete-luminaire LDTs contain a 0..359 grid, but only
+        # their C0..C180 half-plane is physical. Do not let C359 interpolate
+        # across the artificial seam at C0.
+        circular_c = self._c_axis_is_circular() and not directional
+        if directional and c > 180.0:
+            return 0.0
         if not circular_c and (c < c_axis[0] or c > c_axis[-1]):
             # A half-plane LDT is directional. Do not close C=180 to C=0.
             return 0.0
@@ -182,7 +188,7 @@ def ldt_diagnostic(photometry: LdtPhotometry, *, tolerance_pct: float = 1.0) -> 
             "worst_gamma_deg": worst_gamma,
             "symmetric": maximum <= tolerance_pct,
         })
-    return {
+    diagnostic = {
         "name": photometry.name,
         "company": photometry.company,
         "flux_lm": photometry.flux_lm,
@@ -196,7 +202,15 @@ def ldt_diagnostic(photometry: LdtPhotometry, *, tolerance_pct: float = 1.0) -> 
         "symmetry_tolerance_pct": tolerance_pct,
         "pairs": pairs,
         "symmetric": all(bool(pair["symmetric"]) for pair in pairs),
+        "directional_c0_c180": photometry.metadata.get("directional_c0_c180", "").strip().lower() == "true",
     }
+    raw_rotation = photometry.metadata.get("group_c_rotation_deg")
+    if raw_rotation is not None:
+        try:
+            diagnostic["group_c_rotation_deg"] = float(raw_rotation)
+        except ValueError:
+            diagnostic["group_c_rotation_deg"] = raw_rotation
+    return diagnostic
 
 
 def parse_ldt(path: str | Path) -> LdtPhotometry:
@@ -263,6 +277,9 @@ def parse_ldt_text(text: str) -> LdtPhotometry:
     rotation_match = re.search(r"SALVI_GROUP_C_ROTATION\s*=\s*([-+]?\d+(?:\.\d+)?)", source_report)
     if rotation_match:
         metadata["group_c_rotation_deg"] = rotation_match.group(1)
+    directional_match = re.search(r"SALVI_DIRECTIONAL_C0_C180\s*=\s*(true|false)", source_report, re.IGNORECASE)
+    if directional_match:
+        metadata["directional_c0_c180"] = directional_match.group(1).lower()
     result = LdtPhotometry(
         company=company,
         name=_line(lines, 8, "luminaire name"),
@@ -316,9 +333,17 @@ def ldt_text(photometry: LdtPhotometry) -> str:
     # dimensions and the downward flux fraction. Keep all 26 header fields so
     # the result can be consumed by standard LDT readers.
     length, width, height = photometry.dimensions_mm
+    source_report = photometry.metadata.get("source_report", "SALVI calculated")
+    if photometry.metadata.get("directional_c0_c180", "").strip().lower() == "true" and not re.search(
+        r"SALVI_DIRECTIONAL_C0_C180\s*=", source_report, re.IGNORECASE,
+    ):
+        source_report += " [SALVI_DIRECTIONAL_C0_C180=true]"
+    raw_rotation = photometry.metadata.get("group_c_rotation_deg")
+    if raw_rotation is not None and not re.search(r"SALVI_GROUP_C_ROTATION\s*=", source_report, re.IGNORECASE):
+        source_report += f" [SALVI_GROUP_C_ROTATION={raw_rotation}]"
     lines = [
         photometry.company, "1", "0", str(len(c_angles)), f"{dc:.6g}",
-        str(len(gamma_angles)), f"{dg:.6g}", photometry.metadata.get("source_report", "SALVI calculated"),
+        str(len(gamma_angles)), f"{dg:.6g}", source_report,
         photometry.name, "", "", photometry.metadata.get("source_date", ""),
         f"{length:.6g}", f"{width:.6g}", f"{height:.6g}",
         f"{length:.6g}", f"{width:.6g}", f"{height:.6g}",

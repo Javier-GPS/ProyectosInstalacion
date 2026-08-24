@@ -73,6 +73,23 @@ def test_composition_scales_flux_and_rotates_groups():
     assert len(result.c_angles_deg) == 24
     assert result.c_angles_deg[1] == 15.0
     assert max(max(row) for row in result.intensities_cd_per_klm) > 0
+    assert result.metadata["directional_c0_c180"] == "true"
+    assert result.metadata["group_c_rotation_deg"] == "90.0"
+    diagnostic = ldt_diagnostic(result)
+    assert diagnostic["directional_c0_c180"] is True
+    assert diagnostic["group_c_rotation_deg"] == pytest.approx(90.0)
+    parsed = parse_ldt_text(ldt_text(result))
+    assert parsed.metadata["directional_c0_c180"] == "true"
+    assert parsed.metadata["group_c_rotation_deg"] == "90.0"
+
+
+def test_composed_directional_ldt_does_not_wrap_c359_to_c0():
+    operating = calculate_luminaire_operating_point([700] * 8, Hl2xModel(897.81), 4000, 70)
+    composed = compose_luminaire(group_ldt(), operating, c_step_deg=1.0, gamma_step_deg=45.0)
+    assert composed.intensity_cd_per_klm(0.0, 45.0) > 0
+    assert composed.intensity_cd_per_klm(359.0, 45.0) == pytest.approx(0.0)
+    assert composed.intensity_cd_per_klm(-1.0, 45.0) == pytest.approx(0.0)
+    assert composed.intensity_cd_per_klm(181.0, 45.0) == pytest.approx(0.0)
 
 
 def test_tagged_generated_group_ldt_does_not_receive_legacy_c_rotation():
@@ -277,6 +294,19 @@ def test_symmetric_composed_photometry_mirrors_the_complete_luminaire():
         )
 
 
+def test_symmetric_composition_matches_group_intensity_with_unequal_currents():
+    currents = [500, 550, 600, 650, 700, 750, 800, 850]
+    operating = calculate_luminaire_operating_point(currents, Hl2xModel(897.81), 4000, 70)
+    composed = compose_luminaire(
+        group_ldt(), operating, c_step_deg=15.0, gamma_step_deg=45.0, symmetric=True,
+    )
+    sources = _virtual_sources(operating)
+    for c_angle in composed.c_angles_deg:
+        assert _group_intensity_cd(
+            group_ldt(), sources, c_angle, 45.0, symmetric=True,
+        ) == pytest.approx(composed.intensity_cd_per_klm(c_angle, 45.0) * composed.flux_lm / 1000.0)
+
+
 def test_c90_and_c270_are_not_a_mirror_pair():
     photometry = LdtPhotometry(
         "TEST", "Planes", [0.0, 90.0, 180.0, 270.0], [0.0, 45.0],
@@ -448,6 +478,8 @@ def test_transmitted_rays_are_binned_as_cd_per_klm():
     assert photometry.flux_lm == pytest.approx(10.0)
     assert photometry.lorl_percent == pytest.approx(80.0)
     assert photometry.intensities_cd_per_klm[0][0] > 0
+    assert photometry.metadata["group_c_rotation_deg"] == "0"
+    assert ldt_diagnostic(photometry)["group_c_rotation_deg"] == pytest.approx(0.0)
 
 
 def test_orientation_calibration_finds_azimuth_offset():

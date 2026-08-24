@@ -102,6 +102,7 @@ class _PreviewCollector:
         input_power: float,
         output_power: float,
         tir_count: int,
+        reflection_points: list[np.ndarray],
         entry_surface_index: int | None = None,
         exit_surface_index: int | None = None,
     ) -> None:
@@ -137,6 +138,9 @@ class _PreviewCollector:
             "gamma_deg": gamma_deg,
             "tir": bool(tir_count),
             "tir_count": int(tir_count),
+            "reflection_points_xyz": [
+                self._vector(point) for point in reflection_points
+            ],
             "entry_surface_index": entry_surface_index,
             "exit_surface_index": exit_surface_index,
         }
@@ -156,6 +160,7 @@ class _PreviewCollector:
         input_power: np.ndarray,
         output_power: np.ndarray,
         tir_counts: np.ndarray,
+        reflection_points: dict[int, list[np.ndarray]],
         entry_surface_indices: np.ndarray,
         exit_surface_indices: np.ndarray,
     ) -> None:
@@ -181,6 +186,7 @@ class _PreviewCollector:
                     input_power=float(input_power[index]),
                     output_power=float(output_power[index]),
                     tir_count=int(tir_counts[index]),
+                    reflection_points=reflection_points.get(int(index), []),
                     entry_surface_index=(
                         int(entry_surface_indices[index])
                         if entry_hit[index] and entry_surface_indices[index] >= 0 else None
@@ -214,6 +220,7 @@ class _PreviewCollector:
             input_power=input_power,
             output_power=output_power,
             tir_count=tir_count,
+            reflection_points=[],
         )
 
     def records(self) -> tuple[dict[str, object], ...]:
@@ -437,6 +444,7 @@ def _trace_mesh_batch(
     exit_points = np.zeros_like(entry_points)
     exit_surfaces = np.full(len(origins), -1, dtype=np.int64)
     tir_counts = np.zeros(len(origins), dtype=np.int64)
+    reflection_points: dict[int, list[np.ndarray]] = {}
     current_points = entry_points.copy()
     current_directions, entry_transmission, entry_valid = _refract_batch(
         directions, entry_normals, 1.0, lens_index,
@@ -491,6 +499,10 @@ def _trace_mesh_batch(
             current_directions[reflecting_indices] = reflected
             final_directions[reflecting_indices] = reflected
             tir_counts[reflecting_indices] += 1
+            for ray_index, point in zip(
+                reflecting_indices, next_points[next_hit][~can_exit], strict=True,
+            ):
+                reflection_points.setdefault(int(ray_index), []).append(point.copy())
     if transmitted_rows:
         transmitted = np.vstack(transmitted_rows)
     else:
@@ -513,6 +525,7 @@ def _trace_mesh_batch(
         "final_directions": final_directions,
         "output_power": output_power,
         "tir_counts": tir_counts,
+        "reflection_points": reflection_points,
     }
 
 
@@ -605,6 +618,7 @@ def trace_tm25(
                     input_power=source_flux,
                     output_power=batch["output_power"],
                     tir_counts=batch["tir_counts"],
+                    reflection_points=batch["reflection_points"],
                     entry_surface_indices=batch["entry_surface_indices"],
                     exit_surface_indices=batch["exit_surface_indices"],
                 )

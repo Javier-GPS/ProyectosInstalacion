@@ -96,6 +96,11 @@ def test_visual_trace_is_bounded_and_keeps_distinct_statuses():
     assert all(detail["gamma_deg"] is not None for detail in details)
     assert all("entry_surface_index" in detail for detail in details)
     assert all("exit_surface_index" in detail for detail in details)
+    assert all(isinstance(detail["reflection_points_xyz"], list) for detail in details)
+    assert all(
+        all(len(point) == 3 for point in detail["reflection_points_xyz"])
+        for detail in details
+    )
     assert result.traced_ray_count == 9
     assert result.transmitted_rays.shape[1] == 7
 

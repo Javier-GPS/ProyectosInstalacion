@@ -25,7 +25,7 @@ type LdtPair = { c_deg: number; mirror_c_deg: number; max_difference_pct: number
 type LdtDiagnostic = { name: string; company: string; flux_lm: number; power_w: number; c_angles_deg: number[]; gamma_angles_deg: number[]; intensities_cd_per_klm: number[][]; max_intensity_cd_per_klm: number; peak_c_deg?: number; peak_gamma_deg?: number; symmetry_tolerance_pct: number; pairs: LdtPair[]; symmetric: boolean };
 type PreviewRayStatus = 'transmitted' | 'missed' | 'untransmitted';
 type LedSelection = 'all' | 0 | 1 | 2;
-type PreviewRay = { led_index: number; status: PreviewRayStatus; origin_xyz: number[]; entry_xyz: number[] | null; exit_xyz: number[] | null; direction_xyz: number[] | null; power_lm: number; transmitted_power_lm: number; c_deg: number | null; gamma_deg: number | null; tir: boolean; tir_count: number; entry_surface_index: number | null; exit_surface_index: number | null };
+type PreviewRay = { led_index: number; status: PreviewRayStatus; origin_xyz: number[]; entry_xyz: number[] | null; exit_xyz: number[] | null; direction_xyz: number[] | null; power_lm: number; transmitted_power_lm: number; c_deg: number | null; gamma_deg: number | null; tir: boolean; tir_count: number; reflection_points_xyz: number[][]; entry_surface_index: number | null; exit_surface_index: number | null };
 type GeometryMeshPart = { vertices: number[][]; faces: number[][]; surface_ids?: number[]; surface_labels?: string[] };
 type GeometryMesh = { units: string; coordinate_system: string; coordinate_frame: string; lens: GeometryMeshPart; leds: Array<GeometryMeshPart & { led_index: number }> };
 type RayAngleConfig = { c_mirror: boolean; c_offset_deg: number; gamma_flip: boolean; c_convention: string; gamma_convention: string };
@@ -463,6 +463,7 @@ function GeometryTraceView({ data }: { data: GeometryTraceData }) {
         const direction = new THREE.Vector3(...(ray.direction_xyz || [0, 0, 1])).normalize();
         const entry = ray.entry_xyz ? new THREE.Vector3(...ray.entry_xyz) : null;
         const exit = ray.exit_xyz ? new THREE.Vector3(...ray.exit_xyz) : null;
+        const reflections = (ray.reflection_points_xyz || []).map(point => new THREE.Vector3(...point));
         const activeColorMode = settingsRef.current.colorMode;
         const base = highlight ? new THREE.Color('#ffffff') : new THREE.Color(activeColorMode === 'led' ? LED_COLORS[ray.led_index % LED_COLORS.length] : (RAY_STATUS_COLORS[ray.status] || '#879a91'));
         const incoming = highlight ? base : new THREE.Color(activeColorMode === 'led' ? LED_COLORS[ray.led_index % LED_COLORS.length] : '#68d8ff');
@@ -472,12 +473,11 @@ function GeometryTraceView({ data }: { data: GeometryTraceData }) {
           return;
         }
         addSegment(origin, entry, incoming, index);
-        if (exit) {
-          addSegment(entry, exit, internal, index);
-          addSegment(exit, exit.clone().add(direction.clone().multiplyScalar(rayLength)), base, index);
-        } else {
-          addSegment(entry, entry.clone().add(direction.clone().multiplyScalar(rayLength)), internal, index);
-        }
+        const insidePoints = [entry, ...reflections];
+        if (exit) insidePoints.push(exit);
+        for (let pointIndex = 0; pointIndex < insidePoints.length - 1; pointIndex += 1) addSegment(insidePoints[pointIndex], insidePoints[pointIndex + 1], internal, index);
+        const finalPoint = insidePoints[insidePoints.length - 1];
+        addSegment(finalPoint, finalPoint.clone().add(direction.clone().multiplyScalar(rayLength)), exit ? base : internal, index);
       });
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));

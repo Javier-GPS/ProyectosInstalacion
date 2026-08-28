@@ -216,7 +216,7 @@ const StepZona: React.FC<{ status: StatusGranular; error: string; onRetry: () =>
           disabled={!selectedZone || status !== 'loaded'}
           className="w-full rounded-md bg-salvi-black py-2 text-xs text-white disabled:opacity-40"
         >
-          Revisar calles
+              Revisar vías
         </button>
       </div>
     </div>

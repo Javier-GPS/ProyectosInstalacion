@@ -8,6 +8,8 @@ const MainLayout: React.FC = () => {
   const isAdmin = location.pathname === '/admin';
   const { language, setLanguage, t } = useI18n();
   const { user, logout } = useAuth();
+  // Dentro del portal la sesión la gestiona la cabecera del portal: sin usuario ni logout propios.
+  const embedded = window.self !== window.top;
 
   return (
     <div className="min-h-screen flex flex-col bg-[#FCF9F5]">
@@ -56,17 +58,21 @@ const MainLayout: React.FC = () => {
                 <option value="de">{t('language.de')}</option>
                 <option value="it">{t('language.it')}</option>
               </select>
-              <div className="h-6 w-px bg-[#E8E2D8]"/>
-              <span className="hidden lg:inline text-xs text-[#6A6A6A]">
-                {user?.name}{user?.role === 'ADMIN' ? ' · ADMIN' : ''}
-              </span>
-              <button
-                type="button"
-                onClick={logout}
-                className="text-xs font-medium text-[#A09A91] hover:text-[#B42318]"
-              >
-                {t('actions.logout')}
-              </button>
+              {!embedded && (
+                <>
+                  <div className="h-6 w-px bg-[#E8E2D8]"/>
+                  <span className="hidden lg:inline text-xs text-[#6A6A6A]">
+                    {user?.name}{user?.role === 'ADMIN' ? ' · ADMIN' : ''}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={logout}
+                    className="text-xs font-medium text-[#A09A91] hover:text-[#B42318]"
+                  >
+                    {t('actions.logout')}
+                  </button>
+                </>
+              )}
               <div className="h-6 w-px bg-[#E8E2D8]"/>
               <span className="text-xs text-[#6a6a6a]">v0.1.0</span>
             </nav>

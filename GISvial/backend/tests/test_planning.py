@@ -14,6 +14,7 @@ from app.services.planning import (
     normalize_inventory,
 )
 from app.services.road_scope import calculate_route, normalize_scope_boundary
+from app.services.street_merge import merge_streets
 
 
 class PlanningInventoryTests(unittest.TestCase):
@@ -70,6 +71,30 @@ class PlanningInventoryTests(unittest.TestCase):
             "group_defaults": {"g:1": {"lighting_class": None}},
             "target_overrides": {},
         })
+
+    def test_separates_osm_name_from_reference_and_tracks_absence_state(self):
+        result = normalize_inventory("z1", [
+            {"id": 1, "type": "primary", "highway": "primary", "name": None, "ref": "N-1", "nameState": "ref_only", "roadRole": "main", "len": 0.1, "geom": [{"lat": 40, "lon": -3}, {"lat": 40.001, "lon": -3.001}]},
+            {"id": 2, "type": "service", "highway": "service", "name": None, "noname": "yes", "nameState": "explicit_noname", "roadRole": "auxiliary", "len": 0.1, "geom": [{"lat": 40, "lon": -3}, {"lat": 40.001, "lon": -3.001}]},
+        ])
+
+        self.assertIsNone(result["targets"][0]["osmName"])
+        self.assertEqual(result["targets"][0]["osmRef"], "N-1")
+        self.assertEqual(result["targets"][0]["nameState"], "ref_only")
+        self.assertEqual(result["targets"][1]["nameState"], "explicit_noname")
+        self.assertEqual(result["counts"]["without_osm_name_count"], 2)
+        self.assertEqual(result["counts"]["ref_only_count"], 1)
+        self.assertEqual(result["counts"]["explicit_noname_count"], 1)
+        self.assertEqual(result["road_role_counts"], {"main": 1, "auxiliary": 1})
+        self.assertFalse(result["source_needs_refresh"])
+
+    def test_merged_streets_do_not_invent_names_for_unnamed_targets(self):
+        result = merge_streets([
+            {"target_ref": "named", "group_ref": "g", "name": "Calle", "geometry": [[0, 0], [1, 0]], "length_m": 10},
+            {"target_ref": "unnamed", "group_ref": "g", "name": None, "geometry": [[0, 1], [1, 1]], "length_m": 10},
+        ], [{"group_ref": "g", "road_type": "residential"}])
+
+        self.assertEqual([street["street"] for street in result], ["Calle"])
 
 
 class PlanningSchemaTests(unittest.TestCase):
@@ -182,8 +207,21 @@ class OverpassNormalizationTests(unittest.TestCase):
         })
         self.assertEqual(way["type"], "residential")
         self.assertEqual(way["name"], "Calle")
+        self.assertIsNone(way["ref"])
+        self.assertEqual(way["nameState"], "named")
+        self.assertEqual(way["roadRole"], "main")
         self.assertEqual(way["estWidth"], 6.0)  # 2 lanes × 3.0m (urban standard, no cycleway)
         self.assertGreater(way["len"], 0)
+
+    def test_reference_is_not_promoted_to_name(self):
+        way = normalize_element({
+            "id": 8,
+            "tags": {"highway": "primary", "ref": "N-1"},
+            "geometry": [{"lat": 40.0, "lon": -3.0}, {"lat": 40.001, "lon": -3.001}],
+        })
+        self.assertIsNone(way["name"])
+        self.assertEqual(way["ref"], "N-1")
+        self.assertEqual(way["nameState"], "ref_only")
 
     def test_rejects_invalid_or_excessive_bbox(self):
         for bbox in ("", "41,40,-3,-4", "-90,90,-180,180"):

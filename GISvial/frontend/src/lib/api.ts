@@ -1,6 +1,6 @@
 /** API helpers for GIS backend requests with AbortSignal support. */
 import { errorMessage, requestJson, requestJsonWithSignal } from './http';
-import type { Etagged, GisPlanningDraft, GisPlanningInventory, GisPlanningPayload, GisRoadScopeAnchor, GisRoadWorkScope } from '../types';
+import type { Etagged, GisLuxJob, GisPlanningDraft, GisPlanningInventory, GisPlanningPayload, GisRoadScopeAnchor, GisRoadWorkScope } from '../types';
 
 let _authFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> = fetch;
 
@@ -46,6 +46,7 @@ export class ApiStatusError extends Error {
 const etagged = async <T>(url: string, init?: RequestInit, signal?: AbortSignal): Promise<Etagged<T>> => {
   const response = await _authFetch(url, { ...init, signal });
   if (response.status === 204) return { data: null as T, etag: response.headers.get('ETag') || '' };
+  if (response.status === 304) return { data: null as T, etag: response.headers.get('ETag') || '' };
   const text = await response.text();
   let body: unknown = null;
   if (text.trim()) {
@@ -64,13 +65,16 @@ export const getPlanningInventory = (
   const headers: Record<string, string> = {};
   if (ifNoneMatch) headers['If-None-Match'] = ifNoneMatch;
   const params = refresh ? '?refresh=true' : '';
-  return etagged<GisPlanningInventory | null>(
-    `/api/zones/${zoneId}/planning-inventory${params}`, { headers }, signal,
+  const url = `/api/zones/${zoneId}/planning-inventory${params}`;
+  return etagged<GisPlanningInventory | null>(url, { headers }, signal).then(result =>
+    result.data === null && ifNoneMatch
+      ? etagged<GisPlanningInventory | null>(url, undefined, signal)
+      : result,
   );
 };
 
-export const loadPlanningOsm = (zoneId: string, signal?: AbortSignal) =>
-  etagged<GisPlanningInventory>(`/api/zones/${zoneId}/osm/load`, { method: 'POST' }, signal).then(result => result.data);
+export const loadPlanningOsm = (zoneId: string, signal?: AbortSignal, force = false) =>
+  etagged<GisPlanningInventory>(`/api/zones/${zoneId}/osm/load${force ? '?force=true' : ''}`, { method: 'POST' }, signal).then(result => result.data);
 
 export const getBuildingWidths = (zoneId: string, signal?: AbortSignal) =>
   api<{ zone_id: string; status: string; buildings: any[] | null; enriched_ways: any[] | null; computed_at: string | null }>(
@@ -157,6 +161,49 @@ export const getInventory = (zoneId: string, signal?: AbortSignal) => api<any[]>
 
 // ── Photometric ───────────────────────────────────────────────────────────
 export const getPhotometric = (zoneId: string, signal?: AbortSignal) => api<any[]>(`/api/zones/${zoneId}/photometric`, undefined, undefined, signal);
+
+// ── Durable Lux jobs ───────────────────────────────────────────────────────
+export const createLuxJob = (
+  projectId: string,
+  zoneId: string,
+  targetRefs: string[],
+  baseInventoryHash: string,
+  intentId: string,
+  mode: 'calculate' | 'optimize' = 'optimize',
+  signal?: AbortSignal,
+) => api<GisLuxJob>(`/api/projects/${projectId}/lux/jobs`, {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', 'Idempotency-Key': intentId },
+  body: JSON.stringify({
+    zone_id: zoneId,
+    target_refs: targetRefs,
+    base_inventory_hash: baseInventoryHash,
+    materialize_valid: true,
+    mode,
+  }),
+}, 'No se pudo iniciar el cálculo Lux', signal);
+
+export const getLuxJob = async (
+  projectId: string,
+  jobId: string,
+  etag?: string,
+  signal?: AbortSignal,
+): Promise<Etagged<GisLuxJob | null>> => {
+  const headers: Record<string, string> = {};
+  if (etag) headers['If-None-Match'] = etag;
+  const response = await _authFetch(`/api/projects/${projectId}/lux/jobs/${jobId}`, { headers, signal });
+  if (response.status === 304) return { data: null, etag: response.headers.get('ETag') || etag || '' };
+  const text = await response.text();
+  let body: unknown = null;
+  if (text.trim()) {
+    try { body = JSON.parse(text); } catch { body = text; }
+  }
+  if (!response.ok) throw new ApiStatusError(response.status, errorMessage(body, 'No se pudo consultar el cálculo Lux'));
+  return { data: body as GisLuxJob, etag: response.headers.get('ETag') || '' };
+};
+
+export const cancelLuxJob = (projectId: string, jobId: string, signal?: AbortSignal) =>
+  api<GisLuxJob>(`/api/projects/${projectId}/lux/jobs/${jobId}/cancel`, { method: 'POST' }, 'No se pudo cancelar el cálculo', signal);
 
 // ── Exports ───────────────────────────────────────────────────────────────
 export const exportDxf = (zoneId: string, signal?: AbortSignal) => apiBlob(`/api/export/dxf?zone_id=${zoneId}`, undefined, undefined, signal);

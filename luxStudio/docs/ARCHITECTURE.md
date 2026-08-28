@@ -67,14 +67,13 @@ The same flow applies to optimize (simple/advanced) and batch-excel — see
 
 ## 4. Auth flow
 
-- HS256 JWT in `Authorization: Bearer <token>`. 12 h TTL. `AUTH_SECRET_KEY` env.
-- Token payload: `{ sub, email, role, iat, exp }`.
-- Dependencies in `routers/auth.py`:
-  - `current_user` — requires valid token → User (401 if missing/invalid/inactive)
-  - `require_admin` — current_user + role == "ADMIN" (403 otherwise)
-- `ensure_initial_admin` runs on app startup; if `users` is empty, seeds from
-  `ADMIN_EMAIL` / `ADMIN_PASSWORD` / `ADMIN_NAME` env vars.
-- Bypassed routes: `/api/health`, `/api/auth/login`, `/docs`, `/openapi.json`.
+- Keycloak OIDC access token in `Authorization: Bearer <token>`.
+- Dependencies in `routers/deps.py`:
+  - `current_user` — validates the Keycloak token and links it to `User`.
+  - `require_admin` — current_user + role == "ADMIN" (403 otherwise).
+- `POST /api/admin/users` provisions a Keycloak account and its local identity
+  link; passwords are never stored by LuxStudio.
+- Bypassed routes: `/api/health`, `/docs`, `/openapi.json`.
 
 ## 5. Luminaire selection flow
 

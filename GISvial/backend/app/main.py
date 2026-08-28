@@ -13,12 +13,15 @@ from .core.config import settings
 from .core.database import engine
 from .core.redis import close_redis, init_redis
 from .models import ensure_gis_tables
-from .routers import auth, zones, luminaires, photometric, exports, admin
+from .routers import auth, zones, luminaires, photometric, exports, admin, lux_jobs
+from .routers.deps import ensure_users_table
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan: init Redis on start, close on shutdown."""
+    ensure_users_table()
+    ensure_gis_tables()
     await init_redis()
     yield
     await close_redis()
@@ -51,11 +54,7 @@ app.include_router(luminaires.router, tags=["Luminaires & Inventory"])
 app.include_router(photometric.router, tags=["Photometric"])
 app.include_router(exports.router, tags=["Exports"])
 app.include_router(admin.router, tags=["Admin, AI, DB"])
-
-
-@app.on_event("startup")
-async def startup():
-    ensure_gis_tables()
+app.include_router(lux_jobs.router, tags=["Lux jobs"])
 
 
 @app.get("/api/health")

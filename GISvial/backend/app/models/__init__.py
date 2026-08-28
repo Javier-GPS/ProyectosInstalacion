@@ -1,6 +1,10 @@
 """Models — exports."""
 from .user import User
 from .project import Project
+from .lux_jobs import (
+    GisProjectMembership, GisLuxJob, GisLuxJobItem, GisLuxOutbox,
+    GisLuxMaterialization,
+)
 from .gis import (
     GisZone, GisZoneConfig, GisZoneOsmData, GisZoneTrees,
     GisLuminaire, GisInventoryLuminaire, GisPhotometricResult,
@@ -12,4 +16,6 @@ __all__ = [
     "GisZone", "GisZoneConfig", "GisZoneOsmData", "GisZoneTrees",
     "GisLuminaire", "GisInventoryLuminaire", "GisPhotometricResult",
     "GisProjectUiConfig", "GisPlanningDraft", "GisRoadWorkScope", "ensure_gis_tables",
+    "GisProjectMembership", "GisLuxJob", "GisLuxJobItem", "GisLuxOutbox",
+    "GisLuxMaterialization",
 ]

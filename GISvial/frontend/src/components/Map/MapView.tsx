@@ -4,6 +4,7 @@ import { useGisStore, ROAD_CFG } from '../../store/useGisStore';
 import { useMapLayer } from '../../hooks/useMapLayer';
 import type { GisPhotometricResult, GisPlanningInventoryTarget, GisPlanningPatch } from '../../types';
 import { nearestInventoryHit, pointInsideBoundary } from '../../lib/roadSelection';
+import { targetName, targetRef } from '../../lib/roadNaming';
 import SegmentContextPopup from './SegmentContextPopup';
 
 const COMPONENT = 'MapView';
@@ -114,7 +115,8 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
             const anchor = nearestInventoryHit(map, targetsWithGeometry, e.point, 30);
             console.log('[MapView click] anchor:', anchor);
             if (anchor) {
-              store.setSelectedSegment(anchor.target_ref, inv.targets.find(t => t.target_ref === anchor.target_ref)?.name || null);
+              const selectedTarget = inv.targets.find(t => t.target_ref === anchor.target_ref);
+              store.setSelectedSegment(anchor.target_ref, selectedTarget ? targetName(selectedTarget) : null);
               store.toggleTargetSelection(inv.zone_id, anchor.target_ref);
             } else {
               store.setSelectedSegment(null, null);
@@ -242,7 +244,10 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
           roadType: group?.road_type || '',
           zoneId: planningInventory.zone_id,
           color: group?.road_type ? ROAD_CFG[group.road_type]?.color || '#999' : '#999',
-          name: target.name || '',
+          name: targetName(target) || '',
+          ref: targetRef(target) || '',
+          nameState: target.nameState || '',
+          roadRole: target.roadRole || '',
         },
         geometry: { type: 'LineString' as const, coordinates: target.geometry },
       }];
@@ -406,7 +411,7 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
       if (target?.geometry) features.push({ type: 'Feature', properties: { kind: 'segment' }, geometry: { type: 'LineString', coordinates: target.geometry } });
       if (selectedStreetName) {
         planningInventory.targets.forEach(t => {
-          if ((t.name || '') !== selectedStreetName || t.target_ref === selectedTargetRef || !t.geometry) return;
+          if ((targetName(t) || '') !== selectedStreetName || t.target_ref === selectedTargetRef || !t.geometry) return;
           features.push({ type: 'Feature', properties: { kind: 'street' }, geometry: { type: 'LineString', coordinates: t.geometry } });
         });
       }
@@ -483,7 +488,7 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
             const store = useGisStore.getState();
             const inv = store.activePlanningInventory;
             if (!inv || !store.selectedZoneId) return;
-            const refs = inv.targets.filter(t => t.name === streetName).map(t => t.target_ref);
+            const refs = inv.targets.filter(t => targetName(t) === streetName).map(t => t.target_ref);
             const zoneSel = store.accumulatedSelection[store.selectedZoneId] || {};
             let anyChanged = false;
             for (const r of refs) {

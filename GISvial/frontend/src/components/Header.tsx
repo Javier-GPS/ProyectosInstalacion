@@ -19,6 +19,8 @@ interface HeaderProps {
 const Header: React.FC<HeaderProps> = ({ children }) => {
   const { user, logout } = useAuth();
   const { language, setLanguage, t } = useI18n();
+  // Dentro del portal la sesión la gestiona la cabecera del portal: sin usuario ni logout propios.
+  const embedded = window.self !== window.top;
   const activeProjectId = useGisStore(s => s.activeProjectId);
   const projects = useGisStore(s => s.projects);
   const setActiveProject = useGisStore(s => s.setActiveProject);
@@ -93,15 +95,19 @@ const Header: React.FC<HeaderProps> = ({ children }) => {
           ))}
         </select>
 
-        <div className="h-5 w-px bg-salvi-line" />
+        {!embedded && (
+          <>
+            <div className="h-5 w-px bg-salvi-line" />
 
-        <span className="text-xs text-salvi-grey font-medium truncate max-w-[120px]">{user?.name || ''}</span>
-        <button
-          onClick={handleLogout}
-          className="text-xs font-medium text-salvi-grey hover:text-state-danger transition-colors"
-        >
-          {t('nav.logout')}
-        </button>
+            <span className="text-xs text-salvi-grey font-medium truncate max-w-[120px]">{user?.name || ''}</span>
+            <button
+              onClick={handleLogout}
+              className="text-xs font-medium text-salvi-grey hover:text-state-danger transition-colors"
+            >
+              {t('nav.logout')}
+            </button>
+          </>
+        )}
       </div>
     </header>
   );

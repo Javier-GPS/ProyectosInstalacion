@@ -15,7 +15,8 @@ from sqlalchemy.orm import Session
 from ..core.database import get_db, SessionLocal
 from ..core.helpers import fval
 from ..models import (
-    GisPlanningDraft, GisRoadWorkScope, GisZone, GisZoneConfig, GisZoneOsmData, GisZoneTrees, User,
+    GisPlanningDraft, GisProjectMembership, GisRoadWorkScope, GisZone, GisZoneConfig,
+    GisZoneOsmData, GisZoneTrees, Project,
 )
 from ..schemas.zones import GisCreateZoneBody, GisPlanningDraftPut, GisRoadScopePut, GisRoutePreview
 from ..services.planning import compact_payload, normalize_inventory
@@ -24,7 +25,8 @@ from ..services.building_width import enrich_widths, fetch_buildings
 from ..services.nominatim import search as _nom_search, reverse as _nom_reverse
 from ..services.zone_geometry import normalize_zone_geometry
 from ..services.road_scope import calculate_route, geometry_hash, normalize_scope_boundary
-from .deps import current_user, require_admin
+from .deps import Principal, current_principal
+from ..services.access import project_for, zone_for
 
 router = APIRouter()
 
@@ -78,20 +80,33 @@ async def gis_nominatim_reverse(lat: float = Query(...), lon: float = Query(...)
 @router.get("/api/zones")
 async def gis_zones_list(
     project_id: Optional[int] = None,
-    user: User = Depends(current_user),
+    principal: Principal = Depends(current_principal),
     db: Session = Depends(get_db),
 ):
     query = db.query(GisZone, GisZoneConfig.spacing).outerjoin(
         GisZoneConfig, GisZone.id == GisZoneConfig.zone_id
     )
     if project_id is not None:
+        project_for(principal, db, project_id)
         query = query.filter(GisZone.project_id == project_id)
+    elif principal.user.role != "ADMIN":
+        owned = db.query(Project.id).filter(Project.owner_user_id == principal.user.id)
+        member = db.query(GisProjectMembership.project_id).filter(
+            GisProjectMembership.issuer == principal.issuer,
+            GisProjectMembership.subject == principal.subject,
+            GisProjectMembership.active.is_(True),
+        )
+        query = query.filter(GisZone.project_id.in_(owned.union(member)))
     query = query.order_by(GisZone.created_at.desc())
     return [_zone_to_dict(z, sp or 30) for z, sp in query.all()]
 
 
 @router.post("/api/zones", status_code=201)
-async def gis_zones_create(body: GisCreateZoneBody, user: User = Depends(current_user), db: Session = Depends(get_db)):
+async def gis_zones_create(body: GisCreateZoneBody, principal: Principal = Depends(current_principal), db: Session = Depends(get_db)):
+    if body.project_id is not None:
+        project_for(principal, db, body.project_id, write=True)
+    elif principal.user.role != "ADMIN":
+        raise HTTPException(status_code=403, detail="project_id is required")
     zid = body.id or uuid.uuid4().hex[:12]
     clat = body.center_lat or (body.center[0] if len(body.center) > 0 else None)
     clon = body.center_lon or (body.center[1] if len(body.center) > 1 else None)
@@ -113,16 +128,20 @@ async def gis_zones_create(body: GisCreateZoneBody, user: User = Depends(current
 
 
 @router.put("/api/zones/{zone_id}")
-async def gis_zones_update(zone_id: str, body: dict, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    zone = db.get(GisZone, zone_id)
-    if not zone:
-        raise HTTPException(status_code=404, detail="Zone not found")
+async def gis_zones_update(zone_id: str, body: dict, principal: Principal = Depends(current_principal), db: Session = Depends(get_db)):
+    zone = zone_for(principal, db, zone_id, write=True)
     field_map = {
         "name": "name", "type": "type", "color": "color", "priority": "priority",
         "center_lat": "center_lat", "center_lon": "center_lon", "zoom": "zoom",
         "bbox": "bbox", "description": "description", "source": "source",
         "project_id": "project_id", "osm_relation": "osm_relation",
     }
+    if "project_id" in body and body["project_id"] != zone.project_id:
+        if body["project_id"] is None:
+            if principal.user.role != "ADMIN":
+                raise HTTPException(status_code=403, detail="project_id is required")
+        else:
+            project_for(principal, db, int(body["project_id"]), write=True)
     for gk, ok_ in field_map.items():
         if gk in body:
             setattr(zone, ok_, body[gk])
@@ -139,10 +158,8 @@ async def gis_zones_update(zone_id: str, body: dict, user: User = Depends(curren
 
 
 @router.delete("/api/zones/{zone_id}")
-async def gis_zones_delete(zone_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    zone = db.get(GisZone, zone_id)
-    if not zone:
-        raise HTTPException(status_code=404, detail="Zone not found")
+async def gis_zones_delete(zone_id: str, principal: Principal = Depends(current_principal), db: Session = Depends(get_db)):
+    zone = zone_for(principal, db, zone_id, write=True)
     db.delete(zone)
     db.commit()
     return {"ok": True}
@@ -150,10 +167,19 @@ async def gis_zones_delete(zone_id: str, user: User = Depends(current_user), db:
 
 # ── OSM data ────────────────────────────────────────────────────────────
 @router.get("/api/zones/osm/all")
-async def gis_zones_osm_all(project_id: Optional[int] = None, user: User = Depends(current_user), db: Session = Depends(get_db)):
+async def gis_zones_osm_all(project_id: Optional[int] = None, principal: Principal = Depends(current_principal), db: Session = Depends(get_db)):
     query = db.query(GisZoneOsmData).join(GisZone)
     if project_id is not None:
+        project_for(principal, db, project_id)
         query = query.filter(GisZone.project_id == project_id)
+    elif principal.user.role != "ADMIN":
+        owned = db.query(Project.id).filter(Project.owner_user_id == principal.user.id)
+        member = db.query(GisProjectMembership.project_id).filter(
+            GisProjectMembership.issuer == principal.issuer,
+            GisProjectMembership.subject == principal.subject,
+            GisProjectMembership.active.is_(True),
+        )
+        query = query.filter(GisZone.project_id.in_(owned.union(member)))
     return {
         r.zone_id: {
             "zone_id": r.zone_id, "km_by_type": r.km_by_type or {},
@@ -165,7 +191,8 @@ async def gis_zones_osm_all(project_id: Optional[int] = None, user: User = Depen
 
 
 @router.get("/api/zones/{zone_id}/osm")
-async def gis_zone_osm(zone_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+async def gis_zone_osm(zone_id: str, principal: Principal = Depends(current_principal), db: Session = Depends(get_db)):
+    zone_for(principal, db, zone_id)
     row = db.get(GisZoneOsmData, zone_id)
     if not row:
         return {}
@@ -177,7 +204,8 @@ async def gis_zone_osm(zone_id: str, user: User = Depends(current_user), db: Ses
 
 
 @router.put("/api/zones/{zone_id}/osm")
-async def gis_zone_osm_save(zone_id: str, body: dict, user: User = Depends(current_user), db: Session = Depends(get_db)):
+async def gis_zone_osm_save(zone_id: str, body: dict, principal: Principal = Depends(current_principal), db: Session = Depends(get_db)):
+    zone_for(principal, db, zone_id, write=True)
     existing = db.get(GisZoneOsmData, zone_id)
     data = {
         "km_by_type": body.get("kmByType", body.get("km_by_type", {})),
@@ -199,12 +227,10 @@ async def gis_zone_osm_save(zone_id: str, body: dict, user: User = Depends(curre
 async def gis_zone_osm_load(
     zone_id: str,
     force: bool = Query(default=False, description="Ignore cached data and force re-fetch from OSM"),
-    user: User = Depends(current_user),
+    principal: Principal = Depends(current_principal),
     db: Session = Depends(get_db),
 ):
-    zone = db.get(GisZone, zone_id)
-    if not zone:
-        raise HTTPException(status_code=404, detail="Zone not found")
+    zone = zone_for(principal, db, zone_id, write=True)
     bbox = zone.bbox or ""
     polygon = zone.bounds_polygon or []
 
@@ -221,9 +247,8 @@ async def gis_zone_osm_load(
                 )
         return normalize_inventory(zone_id, cached_row.ways)
 
-    db.close()
     try:
-        ways, source = await fetch_roads(bbox)
+        ways, source = await fetch_roads(bbox, force=force)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except RuntimeError as exc:
@@ -312,10 +337,11 @@ async def _enrich_buildings_background(zone_id: str, bbox: str, ways: list) -> N
 @router.get("/api/zones/{zone_id}/building-widths")
 async def gis_building_widths_status(
     zone_id: str,
-    user: User = Depends(current_user),
+    principal: Principal = Depends(current_principal),
     db: Session = Depends(get_db),
 ):
     """Check the status of building width enrichment for a zone."""
+    zone_for(principal, db, zone_id)
     row = db.get(GisZoneOsmData, zone_id)
     if not row:
         raise HTTPException(status_code=404, detail="ZONE_NOT_FOUND")
@@ -405,9 +431,10 @@ async def gis_planning_inventory(
     zone_id: str,
     refresh: bool = Query(default=False, description="Force recalculate inventory from DB (no Overpass call)"),
     if_none_match: Optional[str] = Header(default=None, alias="If-None-Match"),
-    user: User = Depends(current_user),
+    principal: Principal = Depends(current_principal),
     db: Session = Depends(get_db),
 ):
+    zone_for(principal, db, zone_id)
     inventory = _planning_inventory(zone_id, db, allow_missing=True)
     if inventory is None:
         return Response(status_code=204)
@@ -421,11 +448,10 @@ async def gis_planning_inventory(
 @router.get("/api/zones/{zone_id}/planning-draft")
 async def gis_planning_draft_get(
     zone_id: str,
-    user: User = Depends(current_user),
+    principal: Principal = Depends(current_principal),
     db: Session = Depends(get_db),
 ):
-    if not db.get(GisZone, zone_id):
-        raise HTTPException(status_code=404, detail="Zone not found")
+    zone_for(principal, db, zone_id)
     row = db.get(GisPlanningDraft, zone_id)
     if not row:
         return Response(status_code=204)
@@ -438,9 +464,10 @@ async def gis_planning_draft_put(
     body: GisPlanningDraftPut,
     if_match: Optional[str] = Header(default=None, alias="If-Match"),
     if_none_match: Optional[str] = Header(default=None, alias="If-None-Match"),
-    user: User = Depends(current_user),
+    principal: Principal = Depends(current_principal),
     db: Session = Depends(get_db),
 ):
+    zone_for(principal, db, zone_id, write=True)
     inventory = _planning_inventory(zone_id, db)
     current_hash = inventory["base_inventory_hash"]
     if body.base_inventory_hash != current_hash:
@@ -467,7 +494,7 @@ async def gis_planning_draft_put(
             base_inventory_hash=current_hash,
             payload=payload,
             updated_at=now,
-            updated_by=user.id,
+            updated_by=principal.user.id,
         )
         db.add(row)
         try:
@@ -496,7 +523,7 @@ async def gis_planning_draft_put(
         GisPlanningDraft.base_inventory_hash: current_hash,
         GisPlanningDraft.payload: payload,
         GisPlanningDraft.updated_at: now,
-        GisPlanningDraft.updated_by: user.id,
+        GisPlanningDraft.updated_by: principal.user.id,
     }, synchronize_session=False)
     if updated != 1:
         db.rollback()
@@ -507,10 +534,8 @@ async def gis_planning_draft_put(
 
 
 @router.get("/api/zones/{zone_id}/road-scope")
-async def gis_road_scope_get(zone_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    zone = db.get(GisZone, zone_id)
-    if not zone:
-        raise HTTPException(status_code=404, detail="ZONE_NOT_FOUND")
+async def gis_road_scope_get(zone_id: str, principal: Principal = Depends(current_principal), db: Session = Depends(get_db)):
+    zone = zone_for(principal, db, zone_id)
     row = db.get(GisRoadWorkScope, zone_id)
     if not row:
         return Response(status_code=204)
@@ -529,9 +554,10 @@ async def gis_road_scope_put(
     body: GisRoadScopePut,
     if_match: Optional[str] = Header(default=None, alias="If-Match"),
     if_none_match: Optional[str] = Header(default=None, alias="If-None-Match"),
-    user: User = Depends(require_admin),
+    principal: Principal = Depends(current_principal),
     db: Session = Depends(get_db),
 ):
+    zone_for(principal, db, zone_id, write=True)
     zone = db.query(GisZone).filter(GisZone.id == zone_id).with_for_update().one_or_none()
     if not zone:
         raise HTTPException(status_code=404, detail="ZONE_NOT_FOUND")
@@ -581,7 +607,7 @@ async def gis_road_scope_put(
             zone_boundary_hash=boundary_hash,
             payload=payload,
             updated_at=now,
-            updated_by=user.id,
+            updated_by=principal.user.id,
         )
         db.add(row)
         status_code = 201
@@ -592,7 +618,7 @@ async def gis_road_scope_put(
         row.zone_boundary_hash = boundary_hash
         row.payload = payload
         row.updated_at = now
-        row.updated_by = user.id
+        row.updated_by = principal.user.id
         status_code = 200
     try:
         db.commit()
@@ -607,11 +633,10 @@ async def gis_road_scope_put(
 async def gis_road_scope_delete(
     zone_id: str,
     if_match: Optional[str] = Header(default=None, alias="If-Match"),
-    user: User = Depends(require_admin),
+    principal: Principal = Depends(current_principal),
     db: Session = Depends(get_db),
 ):
-    if not db.get(GisZone, zone_id):
-        raise HTTPException(status_code=404, detail="ZONE_NOT_FOUND")
+    zone_for(principal, db, zone_id, write=True)
     row = db.query(GisRoadWorkScope).filter(GisRoadWorkScope.zone_id == zone_id).with_for_update().one_or_none()
     if not row:
         return Response(status_code=204)
@@ -626,12 +651,10 @@ async def gis_road_scope_delete(
 async def gis_route_preview(
     zone_id: str,
     body: GisRoutePreview,
-    user: User = Depends(current_user),
+    principal: Principal = Depends(current_principal),
     db: Session = Depends(get_db),
 ):
-    zone = db.get(GisZone, zone_id)
-    if not zone:
-        raise HTTPException(status_code=404, detail="ZONE_NOT_FOUND")
+    zone = zone_for(principal, db, zone_id)
     osm = db.get(GisZoneOsmData, zone_id)
     if not osm or not isinstance(osm.ways, list):
         raise HTTPException(status_code=422, detail="INVENTORY_UNAVAILABLE")
@@ -655,7 +678,8 @@ async def gis_route_preview(
 
 # ── Zone config ─────────────────────────────────────────────────────────
 @router.get("/api/zones/{zone_id}/config")
-async def gis_zone_config_get(zone_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+async def gis_zone_config_get(zone_id: str, principal: Principal = Depends(current_principal), db: Session = Depends(get_db)):
+    zone_for(principal, db, zone_id)
     cfg = db.get(GisZoneConfig, zone_id)
     if not cfg:
         return {"zone_id": zone_id, "spacing": 30, "watt_hps": 150, "watt_led": 60, "efficacy": 130, "hours_night": 11.5, "updated_at": None}
@@ -667,7 +691,8 @@ async def gis_zone_config_get(zone_id: str, user: User = Depends(current_user), 
 
 
 @router.put("/api/zones/{zone_id}/config")
-async def gis_zone_config(zone_id: str, body: dict, user: User = Depends(current_user), db: Session = Depends(get_db)):
+async def gis_zone_config(zone_id: str, body: dict, principal: Principal = Depends(current_principal), db: Session = Depends(get_db)):
+    zone_for(principal, db, zone_id, write=True)
     cfg = db.get(GisZoneConfig, zone_id)
     if not cfg:
         cfg = GisZoneConfig(zone_id=zone_id)
@@ -682,7 +707,8 @@ async def gis_zone_config(zone_id: str, body: dict, user: User = Depends(current
 
 # ── Trees ───────────────────────────────────────────────────────────────
 @router.get("/api/zones/{zone_id}/trees")
-async def gis_zone_trees_get(zone_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+async def gis_zone_trees_get(zone_id: str, principal: Principal = Depends(current_principal), db: Session = Depends(get_db)):
+    zone_for(principal, db, zone_id)
     row = db.get(GisZoneTrees, zone_id)
     return {
         "trees": row.trees if row else [],
@@ -691,7 +717,8 @@ async def gis_zone_trees_get(zone_id: str, user: User = Depends(current_user), d
 
 
 @router.put("/api/zones/{zone_id}/trees")
-async def gis_zone_trees_put(zone_id: str, body: dict, user: User = Depends(current_user), db: Session = Depends(get_db)):
+async def gis_zone_trees_put(zone_id: str, body: dict, principal: Principal = Depends(current_principal), db: Session = Depends(get_db)):
+    zone_for(principal, db, zone_id, write=True)
     existing = db.get(GisZoneTrees, zone_id)
     trees = body.get("trees", [])
     if existing:

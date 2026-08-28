@@ -11,6 +11,8 @@ class User(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     company_name: Mapped[str] = mapped_column(String(100), nullable=False, default="SALVI LIGHTING")
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    oidc_issuer: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    oidc_sub: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="USER")

@@ -1,0 +1,113 @@
+openapi: 3.1.0
+info:
+  title: GISvial–LuxStudio durable paint jobs
+  version: 1.0.0
+  description: >-
+    Contract for per-target asynchronous calculation and automatic materialization.
+    A conforming target is painted only after GIS-owned readback confirms it.
+servers:
+  - url: /
+paths:
+  /api/projects/{project_id}/lux/jobs:
+    post:
+      summary: Start a per-target calculation and automatic paint job
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateJob'
+      responses:
+        '202':
+          description: Job persisted; calculation is not complete.
+          headers:
+            Location:
+              schema: {type: string}
+            ETag:
+              schema: {type: string}
+        '409': {description: Stale input or idempotency conflict}
+        '403': {description: Project membership denied}
+  /api/projects/{project_id}/lux/jobs/{job_id}:
+    get:
+      summary: Read durable job state and per-target results
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/JobId'
+        - $ref: '#/components/parameters/IfNoneMatch'
+      responses:
+        '200':
+          description: Current persisted projection.
+          headers:
+            ETag:
+              schema: {type: string}
+        '304': {description: No durable state change}
+  /api/projects/{project_id}/lux/jobs/{job_id}/cancel:
+    post:
+      summary: Request cooperative cancellation
+      parameters:
+        - $ref: '#/components/parameters/ProjectId'
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200': {description: Cancellation persisted}
+        '409': {description: External effect requires reconciliation}
+  /api/internal/lux/items/{item_id}/materialize:
+    post:
+      summary: GIS-owned internal materialization command
+      security:
+        - workerBearer: []
+      parameters:
+        - $ref: '#/components/parameters/ItemId'
+      responses:
+        '200': {description: Upsert and readback verified}
+        '409': {description: Stale, conflict, or readback mismatch}
+        '403': {description: Invalid worker client}
+components:
+  parameters:
+    ProjectId:
+      name: project_id
+      in: path
+      required: true
+      schema: {type: integer}
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      schema: {type: string}
+    ItemId:
+      name: item_id
+      in: path
+      required: true
+      schema: {type: string}
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: {type: string, minLength: 1}
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      schema: {type: string}
+  securitySchemes:
+    workerBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    CreateJob:
+      type: object
+      required: [zone_id, target_refs, base_inventory_hash, materialize_valid]
+      properties:
+        zone_id: {type: string}
+        target_refs:
+          type: array
+          minItems: 1
+          items: {type: string}
+        base_inventory_hash: {type: string}
+        materialize_valid: {const: true}
+        mode:
+          type: string
+          enum: [calculate, optimize]

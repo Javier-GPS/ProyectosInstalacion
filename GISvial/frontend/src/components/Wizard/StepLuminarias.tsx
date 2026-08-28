@@ -3,6 +3,7 @@ import { useI18n } from '../../i18n';
 import { useGisStore, ROAD_CFG, type DetailSelectionMode } from '../../store/useGisStore';
 import { exportDxf } from '../../lib/api';
 import { useApi } from '../../hooks/useApi';
+import { targetDisplayLabel, targetSelectionKey } from '../../lib/roadNaming';
 
 const StepLuminarias: React.FC = () => {
   const { t } = useI18n();
@@ -33,17 +34,17 @@ const StepLuminarias: React.FC = () => {
   // Group selected targets by street name
   const streets = useMemo(() => {
     if (!inventory || !selEntries.length) return [];
-    const byStreet: Record<string, { targets: typeof inventory.targets; selected: typeof inventory.targets; roadType: string | null }> = {};
+    const byStreet: Record<string, { label: string; targets: typeof inventory.targets; selected: typeof inventory.targets; roadType: string | null }> = {};
     for (const t of inventory.targets) {
-      const key = t.name || '(sin nombre)';
+      const key = targetSelectionKey(t);
       if (!byStreet[key]) {
         const grp = inventory.groups.find(g => g.group_ref === t.group_ref);
-        byStreet[key] = { targets: [], selected: [], roadType: grp?.road_type || null };
+        byStreet[key] = { label: targetDisplayLabel(t), targets: [], selected: [], roadType: grp?.road_type || null };
       }
       byStreet[key].targets.push(t);
       if (zoneSelection[t.target_ref]) byStreet[key].selected.push(t);
     }
-    return Object.entries(byStreet).filter(([, v]) => v.selected.length).map(([street, v]) => ({ street, ...v }));
+    return Object.entries(byStreet).filter(([, v]) => v.selected.length).map(([key, v]) => ({ key, street: v.label, ...v }));
   }, [inventory, zoneSelection, selEntries.length]);
 
   const handleExportDxf = async () => {
@@ -67,18 +68,20 @@ const StepLuminarias: React.FC = () => {
       {streets.length > 0 && (
         <div className="border-b border-salvi-line/50 max-h-32 overflow-y-auto gis-scroll bg-salvi-surface/30">
           <div className="px-3 py-1.5 text-[9px] font-semibold uppercase tracking-wide text-salvi-muted">Tramos seleccionados</div>
-          {streets.map(({ street, targets, selected, roadType }) => {
-            const all = selected.length === targets.length;
-            const open = selExpandedStreet === street;
+          {streets.map(({ key, street, targets, selected, roadType }) => {
+            const selectableTargets = targets.filter(target => target.geometry);
+            const all = selectableTargets.length > 0 && selected.filter(target => target.geometry).length === selectableTargets.length;
+            const open = selExpandedStreet === key;
             const scfg = roadType ? ROAD_CFG[roadType] : undefined;
             return (
-              <div key={street}>
+              <div key={key}>
                 <div className="flex items-center gap-1.5 border-b border-salvi-line/20 px-3 py-1.5 last:border-0">
-                  <button onClick={() => setSelExpandedStreet(open ? null : street)} className="shrink-0 text-[8px] text-salvi-muted transition-transform hover:text-salvi-black">
+                  <button onClick={() => setSelExpandedStreet(open ? null : key)} className="shrink-0 text-[8px] text-salvi-muted transition-transform hover:text-salvi-black">
                     ▶
                   </button>
                   <input type="checkbox" checked={all} ref={el => { if (el) el.indeterminate = !all && selected.length > 0; }}
-                    onChange={() => { if (zoneId) { const refs = targets.map(t => t.target_ref); if (all) refs.forEach(r => toggleTargetSelection(zoneId, r)); else refs.forEach(r => { if (!zoneSelection[r]) toggleTargetSelection(zoneId, r); }); } }}
+                    disabled={!selectableTargets.length}
+                    onChange={() => { if (zoneId) { const refs = selectableTargets.map(t => t.target_ref); if (all) refs.forEach(r => toggleTargetSelection(zoneId, r)); else refs.forEach(r => { if (!zoneSelection[r]) toggleTargetSelection(zoneId, r); }); } }}
                     className="shrink-0 cursor-pointer"
                   />
                   <span className="flex-1 truncate text-[10px] font-medium text-salvi-black">{street}</span>

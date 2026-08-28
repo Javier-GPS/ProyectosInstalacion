@@ -7,27 +7,52 @@ from sqlalchemy.orm import Session
 from ..core.database import get_db
 from ..models import (
     GisProjectUiConfig, GisZone, GisZoneConfig, GisZoneOsmData,
-    GisLuminaire, Project, User,
+    GisLuminaire, GisProjectMembership, Project,
 )
 from ..services.anthropic import ask_claude
-from .deps import current_user
+from .deps import current_principal, Principal
+from ..services.access import project_for
 
 router = APIRouter()
 
 
 # ── Projects CRUD ─────────────────────────────────────────────────────────
 @router.get("/api/projects")
-async def gis_projects_list(user: User = Depends(current_user), db: Session = Depends(get_db)):
-    rows = db.query(Project).order_by(Project.created_at.desc()).all()
-    return [{"id": str(r.id), "name": r.project_name, "created_at": r.created_at.isoformat() if r.created_at else None} for r in rows]
+async def gis_projects_list(principal: Principal = Depends(current_principal), db: Session = Depends(get_db)):
+    query = db.query(Project)
+    if principal.user.role != "ADMIN":
+        owned = db.query(Project.id).filter(Project.owner_user_id == principal.user.id)
+        member = db.query(GisProjectMembership.project_id).filter(
+            GisProjectMembership.issuer == principal.issuer,
+            GisProjectMembership.subject == principal.subject,
+            GisProjectMembership.active.is_(True),
+        )
+        query = query.filter(Project.id.in_(owned.union(member)))
+    rows = query.order_by(Project.created_at.desc()).all()
+    memberships = {
+        row.project_id: row.role
+        for row in db.query(GisProjectMembership).filter(
+            GisProjectMembership.issuer == principal.issuer,
+            GisProjectMembership.subject == principal.subject,
+            GisProjectMembership.active.is_(True),
+        ).all()
+    }
+    return [{
+        "id": str(r.id),
+        "name": r.project_name,
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+        "access_role": "admin" if principal.user.role == "ADMIN"
+        else "owner" if r.owner_user_id == principal.user.id
+        else memberships.get(r.id, "viewer"),
+    } for r in rows]
 
 
 @router.post("/api/projects", status_code=201)
-async def gis_projects_create(body: dict, user: User = Depends(current_user), db: Session = Depends(get_db)):
+async def gis_projects_create(body: dict, principal: Principal = Depends(current_principal), db: Session = Depends(get_db)):
     name = body.get("name", "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="name required")
-    proj = Project(project_name=name)
+    proj = Project(project_name=name, owner_user_id=principal.user.id)
     db.add(proj)
     db.commit()
     db.refresh(proj)
@@ -35,23 +60,23 @@ async def gis_projects_create(body: dict, user: User = Depends(current_user), db
 
 
 @router.delete("/api/projects/{project_id}", status_code=204)
-async def gis_projects_delete(project_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
-    proj = db.get(Project, project_id)
-    if not proj:
-        raise HTTPException(status_code=404, detail="Project not found")
+async def gis_projects_delete(project_id: int, principal: Principal = Depends(current_principal), db: Session = Depends(get_db)):
+    proj = project_for(principal, db, project_id, write=True)
     db.delete(proj)
     db.commit()
 
 
 # ── UI Config ─────────────────────────────────────────────────────────────
 @router.get("/api/projects/{project_id}/ui-config")
-async def gis_ui_config_get(project_id: int, user: User = Depends(current_user), db: Session = Depends(get_db)):
+async def gis_ui_config_get(project_id: int, principal: Principal = Depends(current_principal), db: Session = Depends(get_db)):
+    project_for(principal, db, project_id)
     rows = db.query(GisProjectUiConfig).filter(GisProjectUiConfig.project_id == project_id).all()
     return {r.config_key: r.config_value for r in rows}
 
 
 @router.put("/api/projects/{project_id}/ui-config")
-async def gis_ui_config_put(project_id: int, body: dict, user: User = Depends(current_user), db: Session = Depends(get_db)):
+async def gis_ui_config_put(project_id: int, body: dict, principal: Principal = Depends(current_principal), db: Session = Depends(get_db)):
+    project_for(principal, db, project_id, write=True)
     for key, value in body.items():
         existing = db.query(GisProjectUiConfig).filter(
             GisProjectUiConfig.project_id == project_id,
@@ -64,7 +89,50 @@ async def gis_ui_config_put(project_id: int, body: dict, user: User = Depends(cu
         else:
             db.add(GisProjectUiConfig(project_id=project_id, config_key=key, config_value=data))
     db.commit()
-    return {"ok": True}
+
+
+@router.get("/api/projects/{project_id}/members")
+async def gis_project_members(
+    project_id: int,
+    principal: Principal = Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    project = project_for(principal, db, project_id)
+    if principal.user.role != "ADMIN" and project.owner_user_id != principal.user.id:
+        raise HTTPException(status_code=403, detail="Project owner required")
+    rows = db.query(GisProjectMembership).filter(GisProjectMembership.project_id == project_id).all()
+    return [{"id": row.id, "issuer": row.issuer, "subject": row.subject, "role": row.role, "active": row.active} for row in rows]
+
+
+@router.post("/api/projects/{project_id}/members", status_code=201)
+async def gis_project_member_upsert(
+    project_id: int,
+    body: dict,
+    principal: Principal = Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    project = project_for(principal, db, project_id)
+    if principal.user.role != "ADMIN" and project.owner_user_id != principal.user.id:
+        raise HTTPException(status_code=403, detail="Project owner required")
+    issuer = str(body.get("issuer") or "").strip()
+    subject = str(body.get("subject") or "").strip()
+    role = str(body.get("role") or "editor").strip().lower()
+    if not issuer or not subject or role not in {"viewer", "editor"}:
+        raise HTTPException(status_code=422, detail="issuer, subject and role are required")
+    row = db.query(GisProjectMembership).filter(
+        GisProjectMembership.project_id == project_id,
+        GisProjectMembership.issuer == issuer,
+        GisProjectMembership.subject == subject,
+    ).first()
+    if row is None:
+        row = GisProjectMembership(project_id=project_id, issuer=issuer, subject=subject, role=role, active=True)
+        db.add(row)
+    else:
+        row.role = role
+        row.active = True
+    db.commit()
+    db.refresh(row)
+    return {"id": row.id, "issuer": row.issuer, "subject": row.subject, "role": row.role, "active": row.active}
 
 
 # ── AI — Anthropic ────────────────────────────────────────────────────────
@@ -81,11 +149,13 @@ ESQUEMA DE LA BASE DE DATOS (PostgreSQL):
 
 
 @router.post("/api/ai/ask")
-async def gis_ai_ask(body: dict, user: User = Depends(current_user), db: Session = Depends(get_db)):
+async def gis_ai_ask(body: dict, principal: Principal = Depends(current_principal), db: Session = Depends(get_db)):
     project_id = body.get("project_id")
     question = body.get("question", "")
     if not question:
         raise HTTPException(status_code=400, detail="question required")
+    if project_id:
+        project_for(principal, db, int(project_id))
 
     context_parts = [_DB_SCHEMA_SUMMARY.strip(), ""]
     if project_id:

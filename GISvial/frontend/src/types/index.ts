@@ -16,6 +16,7 @@ export interface GisProject {
   id: string;
   name: string;
   created_at: string;
+  access_role?: 'admin' | 'owner' | 'editor' | 'viewer';
 }
 
 export interface GisZoneGeometry {
@@ -133,6 +134,7 @@ export interface GisPlanningPayload {
 export interface GisPlanningInventoryGroup {
   group_ref: string;
   road_type: string | null;
+  road_role?: string;
   street_count: number;
   target_count: number;
   length_m: number;
@@ -144,6 +146,19 @@ export interface GisPlanningInventoryTarget {
   group_ref: string;
   source_index: number;
   name: string | null;
+  highway?: string | null;
+  osmName?: string | null;
+  ref?: string | null;
+  osmRef?: string | null;
+  noname?: string | null;
+  officialName?: string | null;
+  altName?: string | null;
+  locName?: string | null;
+  nameState?: 'named' | 'ref_only' | 'explicit_noname' | 'variant_only' | 'unnamed' | 'legacy' | string;
+  roadRole?: 'main' | 'auxiliary' | 'link' | 'other' | 'unknown' | string;
+  osmWayId?: number | null;
+  displayLabel?: string | null;
+  lit?: string | null;
   length_m: number | null;
   geometry: [number, number][] | null;
   diagnostics: string[];
@@ -172,17 +187,27 @@ export interface GisMergedStreet {
 
 export interface GisPlanningInventory {
   schema_version: 1;
-  adapter_version: 1;
+  adapter_version: number;
   zone_id: string;
   base_inventory_hash: string;
   counts: {
     segment_count: number;
     named_street_count: number;
+    distinct_name_count?: number;
+    named_way_count?: number;
     unnamed_segment_count: number;
+    without_osm_name_count?: number;
+    explicit_noname_count?: number;
+    ref_only_count?: number;
+    variant_only_count?: number;
+    legacy_name_count?: number;
     geometry_available: number;
     geometry_unavailable: number;
     invalid_length_count: number;
   };
+  name_state_counts?: Record<string, number>;
+  road_role_counts?: Record<string, number>;
+  source_needs_refresh?: boolean;
   groups: GisPlanningInventoryGroup[];
   targets: GisPlanningInventoryTarget[];
   streets?: GisMergedStreet[];  // merged street geometries for efficient rendering
@@ -235,6 +260,37 @@ export interface GisRoadWorkScope {
 export interface Etagged<T> {
   data: T;
   etag: string;
+}
+
+export interface GisLuxJobItem {
+  id: string;
+  target_ref: string;
+  state: string;
+  calculation_status: string;
+  materialization_status: string;
+  error_code: string | null;
+  error_message: string | null;
+  result_hash: string | null;
+}
+
+export interface GisLuxJob {
+  id: string;
+  project_id: number;
+  zone_id: string;
+  intent_id: string;
+  state: string;
+  state_version: number;
+  total: number;
+  succeeded: number;
+  failed: number;
+  blocked: number;
+  unknown: number;
+  materialize_valid: boolean;
+  partial_policy: string;
+  mode: 'calculate' | 'optimize';
+  created_at: string;
+  updated_at: string;
+  items: GisLuxJobItem[];
 }
 
 export interface GisLuminaire {

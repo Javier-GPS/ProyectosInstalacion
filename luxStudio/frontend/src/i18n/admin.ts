@@ -19,7 +19,7 @@ export const admin: TranslationMap = {
     'admin.users.subtitle': 'Gestiona usuarios de SALVI LIGHTING.',
     'admin.users.namePlaceholder': 'Nombre',
     'admin.users.emailPlaceholder': 'Email',
-    'admin.users.passwordPlaceholder': 'Contraseña temporal',
+    'admin.users.passwordPlaceholder': 'Contraseña inicial',
     'admin.users.newPasswordPlaceholder': 'Nueva temporal',
     'admin.users.resetAtLogin': 'Reset al entrar',
     'admin.users.create': 'Crear usuario',
@@ -31,7 +31,7 @@ export const admin: TranslationMap = {
     'admin.users.activate': 'Activar',
     'admin.users.loading': 'Cargando usuarios...',
     'admin.users.created': ({ email, password }) =>
-      `Usuario creado. Email: ${email}. Contraseña temporal: ${password}.`,
+      `Usuario creado. Email: ${email}. Contraseña inicial: ${password}.`,
     'admin.users.passwordResetMsg': ({ password }) =>
       `Contraseña temporal actualizada: ${password}.`,
     'admin.users.updateFailed': 'No se pudo actualizar el usuario',
@@ -84,7 +84,7 @@ export const admin: TranslationMap = {
     'admin.users.subtitle': 'Manage SALVI LIGHTING users.',
     'admin.users.namePlaceholder': 'Name',
     'admin.users.emailPlaceholder': 'Email',
-    'admin.users.passwordPlaceholder': 'Temporary password',
+    'admin.users.passwordPlaceholder': 'Initial password',
     'admin.users.newPasswordPlaceholder': 'New temporary',
     'admin.users.resetAtLogin': 'Reset on login',
     'admin.users.create': 'Create user',
@@ -96,7 +96,7 @@ export const admin: TranslationMap = {
     'admin.users.activate': 'Activate',
     'admin.users.loading': 'Loading users...',
     'admin.users.created': ({ email, password }) =>
-      `User created. Email: ${email}. Temporary password: ${password}.`,
+      `User created. Email: ${email}. Initial password: ${password}.`,
     'admin.users.passwordResetMsg': ({ password }) =>
       `Temporary password updated: ${password}.`,
     'admin.users.updateFailed': 'Could not update user',
@@ -149,7 +149,7 @@ export const admin: TranslationMap = {
     'admin.users.subtitle': 'Gérer les utilisateurs SALVI LIGHTING.',
     'admin.users.namePlaceholder': 'Nom',
     'admin.users.emailPlaceholder': 'Email',
-    'admin.users.passwordPlaceholder': 'Mot de passe temporaire',
+    'admin.users.passwordPlaceholder': 'Mot de passe initial',
     'admin.users.newPasswordPlaceholder': 'Nouveau temporaire',
     'admin.users.resetAtLogin': 'Réinitialiser à la connexion',
     'admin.users.create': 'Créer un utilisateur',
@@ -161,7 +161,7 @@ export const admin: TranslationMap = {
     'admin.users.activate': 'Activer',
     'admin.users.loading': 'Chargement des utilisateurs...',
     'admin.users.created': ({ email, password }) =>
-      `Utilisateur créé. Email : ${email}. Mot de passe temporaire : ${password}.`,
+      `Utilisateur créé. Email : ${email}. Mot de passe initial : ${password}.`,
     'admin.users.passwordResetMsg': ({ password }) =>
       `Mot de passe temporaire mis à jour : ${password}.`,
     'admin.users.updateFailed': 'Impossible de mettre à jour l\'utilisateur',
@@ -214,7 +214,7 @@ export const admin: TranslationMap = {
     'admin.users.subtitle': 'Gerir utilizadores da SALVI LIGHTING.',
     'admin.users.namePlaceholder': 'Nome',
     'admin.users.emailPlaceholder': 'Email',
-    'admin.users.passwordPlaceholder': 'Palavra-passe temporária',
+    'admin.users.passwordPlaceholder': 'Palavra-passe inicial',
     'admin.users.newPasswordPlaceholder': 'Nova temporária',
     'admin.users.resetAtLogin': 'Repor ao entrar',
     'admin.users.create': 'Criar utilizador',
@@ -226,7 +226,7 @@ export const admin: TranslationMap = {
     'admin.users.activate': 'Ativar',
     'admin.users.loading': 'A carregar utilizadores...',
     'admin.users.created': ({ email, password }) =>
-      `Utilizador criado. Email: ${email}. Palavra-passe temporária: ${password}.`,
+      `Utilizador criado. Email: ${email}. Palavra-passe inicial: ${password}.`,
     'admin.users.passwordResetMsg': ({ password }) =>
       `Palavra-passe temporária atualizada: ${password}.`,
     'admin.users.updateFailed': 'Não foi possível atualizar o utilizador',
@@ -279,7 +279,7 @@ export const admin: TranslationMap = {
     'admin.users.subtitle': 'SALVI LIGHTING-Benutzer verwalten.',
     'admin.users.namePlaceholder': 'Name',
     'admin.users.emailPlaceholder': 'E-Mail',
-    'admin.users.passwordPlaceholder': 'Temporäres Passwort',
+    'admin.users.passwordPlaceholder': 'Startpasswort',
     'admin.users.newPasswordPlaceholder': 'Neues temporäres',
     'admin.users.resetAtLogin': 'Zurücksetzen beim Anmelden',
     'admin.users.create': 'Benutzer erstellen',
@@ -291,7 +291,7 @@ export const admin: TranslationMap = {
     'admin.users.activate': 'Aktivieren',
     'admin.users.loading': 'Benutzer werden geladen...',
     'admin.users.created': ({ email, password }) =>
-      `Benutzer erstellt. E-Mail: ${email}. Temporäres Passwort: ${password}.`,
+      `Benutzer erstellt. E-Mail: ${email}. Startpasswort: ${password}.`,
     'admin.users.passwordResetMsg': ({ password }) =>
       `Temporäres Passwort aktualisiert: ${password}.`,
     'admin.users.updateFailed': 'Benutzer konnte nicht aktualisiert werden',
@@ -344,7 +344,7 @@ export const admin: TranslationMap = {
     'admin.users.subtitle': 'Gestisci utenti SALVI LIGHTING.',
     'admin.users.namePlaceholder': 'Nome',
     'admin.users.emailPlaceholder': 'Email',
-    'admin.users.passwordPlaceholder': 'Password temporanea',
+    'admin.users.passwordPlaceholder': 'Password iniziale',
     'admin.users.newPasswordPlaceholder': 'Nuova temporanea',
     'admin.users.resetAtLogin': 'Reimposta all\'accesso',
     'admin.users.create': 'Crea utente',
@@ -356,7 +356,7 @@ export const admin: TranslationMap = {
     'admin.users.activate': 'Attiva',
     'admin.users.loading': 'Caricamento utenti...',
     'admin.users.created': ({ email, password }) =>
-      `Utente creato. Email: ${email}. Password temporanea: ${password}.`,
+      `Utente creato. Email: ${email}. Password iniziale: ${password}.`,
     'admin.users.passwordResetMsg': ({ password }) =>
       `Password temporanea aggiornata: ${password}.`,
     'admin.users.updateFailed': 'Impossibile aggiornare l\'utente',

@@ -14,7 +14,7 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-luxstudio}
       POSTGRES_USER: ${POSTGRES_USER:-luxstudio}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-luxstudio-local-only}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-test-pg-password-2024}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./infra/init-db.sql:/docker-entrypoint-initdb.d/01-init-db.sql:ro
@@ -79,8 +79,14 @@ services:
     ports:
       - "8750:8750"
     environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-luxstudio}:${POSTGRES_PASSWORD:-luxstudio-local-only}@db:5432/${POSTGRES_DB:-luxstudio}?options=-csearch_path%3Dluxstudio,public
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-luxstudio}:${POSTGRES_PASSWORD:-local-test-pg-password-2024}@db:5432/${POSTGRES_DB:-luxstudio}?options=-csearch_path%3Dluxstudio,public
       OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-http://keycloak:8080/realms/salvi}
+      LUX_WORKER_CLIENT_ID: ${LUX_WORKER_CLIENT_ID:-gisvial-worker}
+      KEYCLOAK_ADMIN_URL: ${KEYCLOAK_ADMIN_URL:-http://keycloak:8080}
+      KEYCLOAK_ADMIN_REALM: ${KEYCLOAK_ADMIN_REALM:-master}
+      KEYCLOAK_USER_REALM: ${KEYCLOAK_USER_REALM:-salvi}
+      KEYCLOAK_ADMIN_USERNAME: ${KEYCLOAK_ADMIN_USERNAME:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin123}
     depends_on:
       db:
         condition: service_healthy
@@ -101,28 +107,63 @@ services:
 
   # GISVial backend
   gisvial-backend:
-    build: ./gisvial/backend
+    build: ./GISvial/backend
     ports:
       - "8733:8733"
     environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-luxstudio}:${POSTGRES_PASSWORD:-luxstudio-local-only}@db:5432/${POSTGRES_DB:-luxstudio}?options=-csearch_path%3Dgis,public
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-luxstudio}:${POSTGRES_PASSWORD:-local-test-pg-password-2024}@db:5432/${POSTGRES_DB:-luxstudio}?options=-csearch_path%3Dgis%2Cluxstudio%2Cpublic
       OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-http://keycloak:8080/realms/salvi}
+      OIDC_TOKEN_URL: ${OIDC_TOKEN_URL:-http://keycloak:8080/realms/salvi/protocol/openid-connect/token}
+      LUXSTUDIO_API_URL: ${LUXSTUDIO_API_URL:-http://luxstudio-backend:8750}
+      GIS_INTERNAL_API_URL: ${GIS_INTERNAL_API_URL:-http://gisvial-backend:8733}
+      LUX_WORKER_CLIENT_ID: ${LUX_WORKER_CLIENT_ID:-gisvial-worker}
+      LUX_WORKER_CLIENT_SECRET: ${LUX_WORKER_CLIENT_SECRET:-gisvial-worker-secret}
+      LUX_JOB_ENABLED: ${LUX_JOB_ENABLED:-true}
     depends_on:
       db:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8733/api/health')"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
     restart: unless-stopped
 
   # GISVial frontend
   gisvial-frontend:
     build:
-      context: ./gisvial/frontend
+      context: ./GISvial/frontend
       args:
         VITE_PORTAL_ORIGINS: ${PUBLIC_PORTAL_ORIGINS:-http://localhost:3000,http://localhost,http://127.0.0.1:3000,http://127.0.0.1}
     ports:
       - "5174:80"
     depends_on:
       gisvial-backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # GIS worker — same image/code as the API; PostgreSQL remains authoritative.
+  gisvial-worker:
+    build: ./GISvial/backend
+    command: ["python", "-m", "app.worker"]
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-luxstudio}:${POSTGRES_PASSWORD:-local-test-pg-password-2024}@db:5432/${POSTGRES_DB:-luxstudio}?options=-csearch_path%3Dgis%2Cluxstudio%2Cpublic
+      OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-http://keycloak:8080/realms/salvi}
+      OIDC_TOKEN_URL: ${OIDC_TOKEN_URL:-http://keycloak:8080/realms/salvi/protocol/openid-connect/token}
+      LUXSTUDIO_API_URL: ${LUXSTUDIO_API_URL:-http://luxstudio-backend:8750}
+      GIS_INTERNAL_API_URL: ${GIS_INTERNAL_API_URL:-http://gisvial-backend:8733}
+      LUX_WORKER_CLIENT_ID: ${LUX_WORKER_CLIENT_ID:-gisvial-worker}
+      LUX_WORKER_CLIENT_SECRET: ${LUX_WORKER_CLIENT_SECRET:-gisvial-worker-secret}
+      LUX_WORKER_ID: ${LUX_WORKER_ID:-gisvial-worker-1}
+    depends_on:
+      db:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      luxstudio-backend:
         condition: service_started
+      gisvial-backend:
+        condition: service_healthy
     restart: unless-stopped
 
   # Portal común: login único y acceso embebido a los dos servicios
@@ -145,3 +186,5 @@ services:
 
 volumes:
   postgres_data:
+    name: luxstudio_postgres_data
+    external: true

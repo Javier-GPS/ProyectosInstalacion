@@ -28,6 +28,7 @@ from ..services.optimizer import (
     run_advanced_optimization_batch,
 )
 from ..services.led_calculator import LedModelError
+from .deps import require_service_account
 
 router = APIRouter()
 
@@ -50,6 +51,25 @@ async def calculate(config: CalculationConfig, db: Session = Depends(get_db), sk
                 config = optimization.config
             result = calculate_config(db, config)
         return result
+    except (LedModelError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.post("/internal/calculate", response_model=CalculationResult)
+async def calculate_internal(
+    config: CalculationConfig,
+    db: Session = Depends(get_db),
+    skip_optimization: bool = True,
+    _service: dict = Depends(require_service_account),
+):
+    """Service-to-service calculation endpoint used by the GIS worker."""
+    try:
+        if skip_optimization:
+            return calculate_config(db, config)
+        optimization = run_flux_optimization(db, config)
+        if optimization.config is not None:
+            config = optimization.config
+        return calculate_config(db, config)
     except (LedModelError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -104,6 +124,16 @@ async def optimize_flux(config: CalculationConfig, db: Session = Depends(get_db)
 @router.post("/optimize/advanced", response_model=OptimizationResponse)
 async def optimize_advanced(request: AdvancedOptimizationRequest, db: Session = Depends(get_db)):
     """Optimize selected installation variables against installed W/m."""
+    return run_advanced_optimization(db, request)
+
+
+@router.post("/internal/optimize", response_model=OptimizationResponse)
+async def optimize_internal(
+    request: AdvancedOptimizationRequest,
+    db: Session = Depends(get_db),
+    _service: dict = Depends(require_service_account),
+):
+    """Service-to-service optimization endpoint used by the GIS worker."""
     return run_advanced_optimization(db, request)
 
 

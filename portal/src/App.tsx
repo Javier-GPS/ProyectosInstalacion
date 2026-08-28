@@ -143,7 +143,15 @@ function Workspace({ user, token, onLogout }: { user: User; token: string; onLog
   return (
     <main className="workspace-shell">
       <header className="topbar">
-        <PortalMark />
+        <div className="topbar-left">
+          <PortalMark />
+          {activeService && (
+            <>
+              <button className="back-button" onClick={() => setActiveService(null)}>← Volver al portal</button>
+              <span className="service-title">{activeService.name}</span>
+            </>
+          )}
+        </div>
         <div className="topbar-right">
           <div className="user-chip"><span className="avatar">{(user.name || user.email).charAt(0).toUpperCase()}</span><span>{user.name || user.email}</span></div>
           <button className="logout-button" onClick={onLogout}>Salir</button>
@@ -166,11 +174,6 @@ function Workspace({ user, token, onLogout }: { user: User; token: string; onLog
         </section>
       ) : (
         <section className="service-view">
-          <div className="service-toolbar">
-            <button className="back-button" onClick={() => setActiveService(null)}>← Volver al portal</button>
-            <span className="service-toolbar-title">{activeService.name}</span>
-            <button className="logout-button" onClick={onLogout}>Cerrar sesión</button>
-          </div>
           <iframe
             ref={frameRef}
             title={activeService.name}

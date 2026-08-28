@@ -27,6 +27,46 @@ DEFAULT_WIDTHS = {
     "service": 3.5, "pedestrian": 3.0, "footway": 2.0, "path": 2.0,
     "cycleway": 2.0,
 }
+MAIN_HIGHWAYS = {
+    "motorway", "trunk", "primary", "secondary", "tertiary",
+    "unclassified", "residential", "living_street", "road",
+}
+AUXILIARY_HIGHWAYS = {
+    "service", "pedestrian", "track", "path", "footway", "cycleway",
+    "steps", "bridleway", "corridor", "construction", "proposed",
+}
+
+
+def _tag(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    return value or None
+
+
+def road_role(highway: str | None) -> str:
+    if not highway:
+        return "unknown"
+    if highway.endswith("_link"):
+        return "link"
+    if highway in MAIN_HIGHWAYS:
+        return "main"
+    if highway in AUXILIARY_HIGHWAYS:
+        return "auxiliary"
+    return "other"
+
+
+def name_state(tags: Mapping) -> str:
+    if _tag(tags.get("name")):
+        return "named"
+    if _tag(tags.get("ref")):
+        return "ref_only"
+    noname = _tag(tags.get("noname"))
+    if noname and noname.lower() in {"yes", "true", "1"}:
+        return "explicit_noname"
+    if any(_tag(value) for key, value in tags.items() if str(key).startswith("name:")):
+        return "variant_only"
+    return "unnamed"
 
 
 def parse_bbox(value: str) -> tuple[float, float, float, float]:
@@ -120,7 +160,7 @@ def normalize_element(element: Mapping) -> dict | None:
             return None
         points.append({"lat": float(lat), "lon": float(lon)})
 
-    highway = str(tags.get("highway") or "unclassified")
+    highway = _tag(tags.get("highway")) or "unclassified"
     is_tunnel = str(tags.get("tunnel") or "").lower() in {"yes", "true", "1", "culvert"}
     road_type = "tunnel" if is_tunnel else highway
     width = _number(tags.get("width"))
@@ -155,7 +195,17 @@ def normalize_element(element: Mapping) -> dict | None:
     return {
         "id": element.get("id"),
         "type": road_type,
-        "name": tags.get("name") or tags.get("ref"),
+        "highway": highway,
+        "name": _tag(tags.get("name")),
+        "ref": _tag(tags.get("ref")),
+        "noname": _tag(tags.get("noname")),
+        "officialName": _tag(tags.get("official_name")),
+        "altName": _tag(tags.get("alt_name")),
+        "locName": _tag(tags.get("loc_name")),
+        "nameState": name_state(tags),
+        "roadRole": road_role(highway),
+        "lit": _tag(tags.get("lit")),
+        "tags": dict(tags),
         "len": round(_haversine_km(points), 6),
         "geom": points,
         "estWidth": estimated_width,
@@ -272,13 +322,13 @@ async def _try_mirror(
     return ways, url
 
 
-async def fetch_roads(bbox: str) -> tuple[list[dict], str]:
+async def fetch_roads(bbox: str, force: bool = False) -> tuple[list[dict], str]:
     bounds = parse_bbox(bbox)
     query = _build_query(bounds)
     cache_key = _cache_key(bounds)
 
     # ── Try Redis cache first ──────────────────────────────────────────
-    cached = await cache_get(cache_key)
+    cached = None if force else await cache_get(cache_key)
     if cached is not None and isinstance(cached, list) and len(cached) == 2:
         return cached[0], cached[1]
 

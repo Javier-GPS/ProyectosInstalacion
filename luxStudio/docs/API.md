@@ -4,24 +4,21 @@
 > endpoints (binary). Base URL: `http://<host>:8750`.
 
 ## Conventions
-- Authenticated endpoints require `Authorization: Bearer <jwt>`.
+- Authenticated endpoints require `Authorization: Bearer <OIDC access token>` from Keycloak.
 - Errors: `{ "detail": "..." }` with 4xx/5xx.
-- Token: `POST /api/auth/login` (12 h TTL, HS256).
+- Tokens are issued by the `salvi` Keycloak realm through the Portal.
 - Roles: `"ADMIN"` / `"USER"`.
 
 ## Auth & users
 
 | Method | Path | Auth | Body | Response |
 |---|---|---|---|---|
-| POST | `/api/auth/login` | none | `{ email, password }` | `{ access_token, token_type, user: UserInfo }` |
 | GET | `/api/auth/me` | bearer | – | `UserInfo` |
-| POST | `/api/auth/change-password` | bearer | `{ current_password, new_password }` | `UserInfo` |
-| GET | `/api/admin/users` | admin | – | `UserInfo[]` |
-| POST | `/api/admin/users` | admin | `CreateUserBody` | `UserInfo` |
-| PATCH | `/api/admin/users/{id}` | admin | `UpdateUserBody` | `UserInfo` |
-| POST | `/api/admin/users/{id}/reset-password` | admin | `{ password, must_reset_password }` | `UserInfo` |
-| POST | `/api/admin/users/{id}/activate` | admin | – | `UserInfo` |
-| POST | `/api/admin/users/{id}/deactivate` | admin | – | `UserInfo` (cannot deactivate self) |
+| POST | `/api/admin/users` | admin | `{ name, email, password }` | `UserInfo` |
+
+`POST /api/admin/users` creates the account in Keycloak and links the local
+`users` row to its OIDC identity. The password is managed by Keycloak; the
+endpoint never stores it in LuxStudio.
 
 ## Luminaire catalog (admin)
 

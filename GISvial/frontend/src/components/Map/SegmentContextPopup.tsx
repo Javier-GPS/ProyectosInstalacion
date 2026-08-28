@@ -2,6 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useGisStore, ROAD_CFG } from '../../store/useGisStore';
 import type { GisPlanningInventoryTarget, GisPlanningPatch, GisLightingClass, GisDistribution } from '../../types';
+import { targetDisplayLabel, targetName, targetRef } from '../../lib/roadNaming';
 
 const UNE_CLASSES: GisLightingClass[] = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7'];
 const DISTRIBUTIONS: { value: GisDistribution; label: string }[] = [
@@ -49,8 +50,9 @@ const SegmentContextPopup: React.FC<SegmentContextPopupProps> = ({ x, y, target,
   const segSidewalk = target.sidewalk ?? null;
 
   // Count how many targets share this street name
-  const streetTargets = inventory?.targets.filter(t => t.name === target.name && t.name != null) || [];
-  const hasStreetSelection = target.name != null && streetTargets.length > 1;
+  const osmName = targetName(target);
+  const streetTargets = inventory?.targets.filter(t => targetName(t) === osmName && osmName != null) || [];
+  const hasStreetSelection = osmName != null && streetTargets.length > 1;
 
   // "Apply to entire street" toggle for spacing/distribution
   const [applyToStreet, setApplyToStreet] = useState(false);
@@ -102,7 +104,7 @@ const SegmentContextPopup: React.FC<SegmentContextPopupProps> = ({ x, y, target,
   };
 
   const selectStreet = () => {
-    if (target.name) onSelectStreet?.(target.name);
+    if (osmName) onSelectStreet?.(osmName);
     onClose();
   };
 
@@ -128,7 +130,7 @@ const SegmentContextPopup: React.FC<SegmentContextPopupProps> = ({ x, y, target,
     >
       {/* Header */}
       <div className="flex items-center justify-between border-b border-salvi-line px-3 py-2">
-        <h3 className="truncate text-xs font-semibold text-salvi-black">{target.name || 'Sin nombre'}</h3>
+        <h3 className="truncate text-xs font-semibold text-salvi-black">{targetDisplayLabel(target)}</h3>
         <button onClick={onClose} className="text-[11px] text-salvi-muted hover:text-salvi-grey">✕</button>
       </div>
 
@@ -136,6 +138,8 @@ const SegmentContextPopup: React.FC<SegmentContextPopupProps> = ({ x, y, target,
       <div className="border-b border-salvi-line/50 px-3 py-2 text-[10px] text-salvi-muted">
         <div className="flex flex-wrap gap-x-3 gap-y-1">
           <span>Tramo {target.source_index + 1}</span>
+          {target.nameState && <span>{target.nameState === 'explicit_noname' ? 'Sin nombre declarado' : target.nameState}</span>}
+          {targetRef(target) && <span>Ref. {targetRef(target)}</span>}
           <span>{target.length_m == null ? '—' : `${Math.round(target.length_m)} m`}</span>
           {roadType && <span>{cfg ? cfg.labelKey.replace('road.', '') : roadType}</span>}
         </div>

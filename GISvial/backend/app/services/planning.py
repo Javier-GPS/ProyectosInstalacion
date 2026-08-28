@@ -8,12 +8,14 @@ import unicodedata
 from collections.abc import Mapping
 from typing import Any
 
+from .overpass import road_role
 from .street_merge import merge_streets
 
 
-ADAPTER_VERSION = 1
+ADAPTER_VERSION = 2
 PROJECTION_FIELDS = (
-    "id", "type", "name", "len", "geom", "startPt", "endPt",
+    "id", "type", "highway", "name", "ref", "noname", "officialName",
+    "altName", "locName", "nameState", "roadRole", "lit", "len", "geom", "startPt", "endPt",
     "estWidth", "width", "widthSrc", "lanes", "dual", "surface",
     "sidewalk", "tunnel", "sidewalkWidthLeft", "sidewalkWidthRight",
     "median", "medianWidth",
@@ -84,6 +86,29 @@ def _label(value: object) -> str | None:
     return normalized or None
 
 
+def _record_name_fields(record: Mapping) -> tuple[str | None, str | None, str, str]:
+    """Read current OSM fields while tolerating legacy cached records."""
+    osm_name = _label(record.get("osmName")) or _label(record.get("name"))
+    osm_ref = _label(record.get("osmRef")) or _label(record.get("ref"))
+    state = _label(record.get("nameState"))
+    legacy = "nameState" not in record and "osmName" not in record and "osmRef" not in record
+    if not state:
+        if legacy and osm_name:
+            state = "legacy"
+        elif osm_name:
+            state = "named"
+        elif osm_ref:
+            state = "ref_only"
+        elif _label(record.get("noname")) in {"yes", "true", "1"}:
+            state = "explicit_noname"
+        elif any(_label(record.get(key)) for key in ("officialName", "altName", "locName")):
+            state = "variant_only"
+        else:
+            state = "unnamed"
+    highway = _label(record.get("highway")) or (_label(record.get("type")) if record.get("type") != "tunnel" else None)
+    return osm_name, osm_ref, state, _label(record.get("roadRole")) or road_role(highway)
+
+
 def normalize_inventory(zone_id: str, records: list[object]) -> dict[str, Any]:
     """Return one authoritative planning projection without mutating ``records``."""
     inventory_digest = hashlib.md5()
@@ -93,12 +118,17 @@ def normalize_inventory(zone_id: str, records: list[object]) -> dict[str, Any]:
     global_streets: set[str] = set()
     targets: list[dict[str, Any]] = []
     geometry_available = invalid_length_count = unnamed_segment_count = 0
+    explicit_noname_count = ref_only_count = variant_only_count = legacy_name_count = 0
+    name_state_counts: dict[str, int] = {}
+    road_role_counts: dict[str, int] = {}
+    source_needs_refresh = False
 
     for source_index, raw in enumerate(records):
         record = raw if isinstance(raw, Mapping) else {}
         diagnostics: list[str] = []
         road_type = _label(record.get("type"))
-        name = _label(record.get("name"))
+        name, ref, state, role = _record_name_fields(record)
+        source_needs_refresh = source_needs_refresh or "nameState" not in record
         geometry = _geometry(record.get("geom"))
         segment_length = length_m(record.get("len"))
         projection = record_projection(raw)
@@ -118,10 +148,21 @@ def normalize_inventory(zone_id: str, records: list[object]) -> dict[str, Any]:
             invalid_length_count += 1
         if name is None:
             unnamed_segment_count += 1
+        if state == "explicit_noname":
+            explicit_noname_count += 1
+        elif state == "ref_only":
+            ref_only_count += 1
+        elif state == "variant_only":
+            variant_only_count += 1
+        elif state == "legacy":
+            legacy_name_count += 1
+        name_state_counts[state] = name_state_counts.get(state, 0) + 1
+        road_role_counts[role] = road_role_counts.get(role, 0) + 1
 
         group = groups_by_ref.setdefault(gref, {
             "group_ref": gref,
             "road_type": road_type,
+            "road_role": role,
             "street_count": 0,
             "target_count": 0,
             "length_m": 0.0,
@@ -153,6 +194,18 @@ def normalize_inventory(zone_id: str, records: list[object]) -> dict[str, Any]:
             "group_ref": gref,
             "source_index": source_index,
             "name": name,
+            "highway": _label(record.get("highway")),
+            "osmName": name,
+            "osmRef": ref,
+            "noname": _label(record.get("noname")),
+            "officialName": _label(record.get("officialName")),
+            "altName": _label(record.get("altName")),
+            "locName": _label(record.get("locName")),
+            "nameState": state,
+            "roadRole": role,
+            "osmWayId": record.get("id"),
+            "displayLabel": name or (f"Ref. {ref}" if ref else None),
+            "lit": _label(record.get("lit")),
             "length_m": segment_length,
             "geometry": geometry,
             "diagnostics": diagnostics,
@@ -185,11 +238,21 @@ def normalize_inventory(zone_id: str, records: list[object]) -> dict[str, Any]:
         "counts": {
             "segment_count": len(targets),
             "named_street_count": len(global_streets),
+            "distinct_name_count": len(global_streets),
+            "named_way_count": sum(1 for target in targets if target["osmName"]),
             "unnamed_segment_count": unnamed_segment_count,
+            "without_osm_name_count": unnamed_segment_count,
+            "explicit_noname_count": explicit_noname_count,
+            "ref_only_count": ref_only_count,
+            "variant_only_count": variant_only_count,
+            "legacy_name_count": legacy_name_count,
             "geometry_available": geometry_available,
             "geometry_unavailable": len(targets) - geometry_available,
             "invalid_length_count": invalid_length_count,
         },
+        "name_state_counts": name_state_counts,
+        "road_role_counts": road_role_counts,
+        "source_needs_refresh": source_needs_refresh,
         "groups": groups,
         "targets": targets,
         "streets": streets,

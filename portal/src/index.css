@@ -38,6 +38,8 @@ input:focus { border-color: #1E1E1E; }
 .security-note span { color: #1F7A4D; margin-right: 7px; }
 .workspace-shell { min-height: 100vh; background: #FCF9F5; }
 .topbar { height: 78px; display: flex; align-items: center; justify-content: space-between; padding: 0 clamp(22px, 5vw, 72px); border-bottom: 1px solid rgba(0,0,0,.08); }
+.topbar-left { display: flex; align-items: center; gap: 22px; min-width: 0; }
+.service-title { color: #1E1E1E; font-size: 12px; font-weight: 700; padding-left: 22px; border-left: 1px solid rgba(0,0,0,.08); white-space: nowrap; }
 .topbar-right { display: flex; align-items: center; gap: 22px; }
 .user-chip { display: flex; align-items: center; gap: 9px; color: #6A6A6A; font-size: 12px; }
 .avatar { display: grid; place-items: center; width: 27px; height: 27px; border-radius: 50%; color: #FFFFFF; background: #1E1E1E; font-size: 11px; font-weight: 800; }
@@ -65,8 +67,6 @@ input:focus { border-color: #1E1E1E; }
 .service-open strong { font-size: 18px; font-weight: 400; line-height: 10px; }
 .launcher-footer { margin: 35px 0 0; color: #A09A91; text-align: center; font: 10px 'Exposure UI','DM Mono', monospace; }
 .service-view { height: calc(100vh - 78px); display: flex; flex-direction: column; }
-.service-toolbar { height: 48px; display: flex; align-items: center; gap: 20px; padding: 0 22px; border-bottom: 1px solid rgba(0,0,0,.08); }
-.service-toolbar-title { flex: 1; color: #1E1E1E; font-size: 12px; font-weight: 700; }
 .service-frame { width: 100%; flex: 1; border: 0; background: #fff; }
 @media (max-width: 760px) {
   .login-shell { display: block; }

@@ -6,6 +6,7 @@ import DimensionTable from '../components/admin/DimensionTable';
 import CatalogTable from '../components/admin/CatalogTable';
 import PcbTable from '../components/admin/PcbTable';
 import LuminaireLedTable from '../components/admin/LuminaireLedTable';
+import UserCreatePanel from '../components/admin/UserCreatePanel';
 import { useI18n } from '../i18n';
 import type { LDTInfo } from '../types';
 
@@ -141,6 +142,10 @@ const AdminPage: React.FC = () => {
             </button>
           )}
         </div>
+      </div>
+
+      <div className="mb-6">
+        <UserCreatePanel />
       </div>
 
       {/* Catalog sub-tabs */}

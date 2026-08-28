@@ -5,7 +5,7 @@ All tables are prefixed ``gis_`` to coexist with LuxStudio tables in the same DB
 from datetime import datetime, timezone
 from sqlalchemy import (
     BigInteger, Boolean, DateTime, Float, ForeignKey, Integer, PrimaryKeyConstraint,
-    String, Text, UniqueConstraint,
+    String, Text, UniqueConstraint, text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -188,7 +188,7 @@ class GisRoadWorkScope(Base):
 def _ensure_gis_columns() -> None:
     """Add columns that may be missing after a CREATE TABLE IF NOT EXISTS."""
     import sqlalchemy as sa
-    from sqlalchemy import inspect
+    from sqlalchemy import inspect, text
     inspector = inspect(engine)
     cols = {c["name"] for c in inspector.get_columns("gis_zone_osm_data")}
     if "buildings" not in cols:
@@ -200,6 +200,44 @@ def _ensure_gis_columns() -> None:
 
 # ── Helper ─────────────────────────────────────────────────────────────────
 def ensure_gis_tables() -> None:
+    """Create GIS tables additively.
+
+    This project currently bootstraps its GIS schema from SQLAlchemy rather than
+    Alembic.  Keep the operation additive and serialize it so API/worker startup
+    cannot race while creating the same tables.
+    """
+    from .lux_jobs import (
+        GisProjectMembership, GisLuxJob, GisLuxJobItem,
+        GisLuxOutbox, GisLuxMaterialization,
+    )
+    lock_id = 73100421
+    with engine.begin() as conn:
+        conn.execute(text("SELECT pg_advisory_lock(:lock_id)"), {"lock_id": lock_id})
+        try:
+            for table in (
+                GisProjectMembership.__table__, GisLuxJob.__table__,
+                GisLuxJobItem.__table__, GisLuxOutbox.__table__,
+                GisLuxMaterialization.__table__,
+            ):
+                table.create(bind=conn, checkfirst=True)
+            # OIDC identity is additive; old local users remain usable through
+            # their existing role/owner relationship until explicitly mapped.
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS oidc_issuer VARCHAR(255)"))
+            conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS oidc_sub VARCHAR(255)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_users_oidc_issuer ON users (oidc_issuer)"))
+            conn.execute(text("CREATE INDEX IF NOT EXISTS ix_users_oidc_sub ON users (oidc_sub)"))
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_users_oidc_identity "
+                "ON users (oidc_issuer, oidc_sub) "
+                "WHERE oidc_issuer IS NOT NULL AND oidc_sub IS NOT NULL"
+            ))
+            conn.execute(text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_gis_lux_current_target "
+                "ON gis_lux_materializations (project_id, zone_id, target_ref) "
+                "WHERE state = 'current'"
+            ))
+        finally:
+            conn.execute(text("SELECT pg_advisory_unlock(:lock_id)"), {"lock_id": lock_id})
     GisZone.__table__.create(bind=engine, checkfirst=True)
     GisZoneConfig.__table__.create(bind=engine, checkfirst=True)
     GisZoneOsmData.__table__.create(bind=engine, checkfirst=True)

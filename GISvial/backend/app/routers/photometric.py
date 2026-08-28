@@ -7,8 +7,9 @@ from sqlalchemy.orm import Session
 
 from ..core.database import get_db
 from ..core.helpers import fval, sval
-from ..models import GisPhotometricResult, User
-from .deps import current_user
+from ..models import GisPhotometricResult
+from ..services.access import zone_for
+from .deps import Principal, current_principal
 
 router = APIRouter()
 
@@ -19,7 +20,8 @@ def sval(v):
 
 
 @router.get("/api/zones/{zone_id}/photometric")
-async def gis_zone_photometric(zone_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)):
+async def gis_zone_photometric(zone_id: str, principal: Principal = Depends(current_principal), db: Session = Depends(get_db)):
+    zone_for(principal, db, zone_id)
     rows = db.query(GisPhotometricResult).filter(
         GisPhotometricResult.zone_id == zone_id
     ).order_by(GisPhotometricResult.id).all()
@@ -36,12 +38,13 @@ async def gis_zone_photometric(zone_id: str, user: User = Depends(current_user),
 
 
 @router.post("/api/import/photometric")
-async def gis_import_photometric(request: Request, db: Session = Depends(get_db)):
+async def gis_import_photometric(request: Request, principal: Principal = Depends(current_principal), db: Session = Depends(get_db)):
     import openpyxl
     raw = await request.body()
     zone_id = request.query_params.get("zone_id", "")
     if not zone_id:
         raise HTTPException(status_code=400, detail="zone_id query parameter required")
+    zone_for(principal, db, zone_id, write=True)
 
     wb = openpyxl.load_workbook(io.BytesIO(raw), data_only=True)
     ws = wb.active

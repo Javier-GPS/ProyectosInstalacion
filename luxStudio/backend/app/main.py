@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from .database import SessionLocal
-from .routers import ldt, calculate, report, admin, projects, auth, tramos, catalog
+from .routers import ldt, calculate, report, admin, projects, auth, tramos, catalog, users
 from .routers.deps import ensure_users_table
 
 app = FastAPI(title="LUX Studio API", version="0.2.0")
@@ -23,6 +23,7 @@ app.include_router(projects.router, prefix="/api/projects", tags=["Projects"])
 app.include_router(tramos.router, tags=["Tramos"])
 app.include_router(auth.router, prefix="/api/auth", tags=["Auth"])
 app.include_router(catalog.router, prefix="/api/admin", tags=["Catalog"])
+app.include_router(users.router, prefix="/api/admin", tags=["Users"])
 
 
 @app.on_event("startup")

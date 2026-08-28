@@ -87,7 +87,11 @@ def merge_streets(
     streets: dict[str, dict[str, Any]] = {}
 
     for target in targets:
-        name = target.get("name") or f"unnamed_{group_type_map.get(target.get('group_ref', ''), 'unknown')}"
+        # This projection is explicitly street-level; unnamed ways remain in
+        # the authoritative target inventory instead of becoming fake streets.
+        name = target.get("name")
+        if not name:
+            continue
         geom = target.get("geometry")
         if not geom or len(geom) < 2:
             continue

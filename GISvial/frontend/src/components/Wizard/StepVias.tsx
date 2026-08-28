@@ -1,14 +1,17 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useI18n } from '../../i18n';
-import { ApiStatusError, deleteRoadScope, getBuildingWidths, getPlanningDraft, getPlanningInventory, getRoadScope, loadPlanningOsm, putPlanningDraft, putRoadScope } from '../../lib/api';
+import { useAuth } from '../../auth/AuthContext';
+import { ApiStatusError, cancelLuxJob, createLuxJob, deleteRoadScope, getBuildingWidths, getLuminaires, getLuxJob, getPlanningDraft, getPlanningInventory, getRoadScope, loadPlanningOsm, putPlanningDraft, putRoadScope } from '../../lib/api';
 import { useGisStore, ROAD_CFG, type RoadTypeCfg } from '../../store/useGisStore';
 import type {
   Etagged, GisDistribution, GisLightingClass, GisPlanningDraft,
   GisPlanningInventoryTarget, GisPlanningLuxParams, GisPlanningPatch,
   GisPlanningPayload, GisRoadWorkScope,
+  GisLuxJob,
 } from '../../types';
 import type { RoadSelectionDraft } from '../../store/types';
 import { lineInsideBoundary, roadSelectionIsCurrent } from '../../lib/roadSelection';
+import { targetDisplayLabel, targetGroupKey, targetGroupLabel, targetName, targetSelectionKey } from '../../lib/roadNaming';
 
 const EMPTY_PAYLOAD = (): GisPlanningPayload => ({ group_defaults: {}, target_overrides: {} });
 const scopeToDraft = (scope: GisRoadWorkScope, etag: string, boundarySignature: string): RoadSelectionDraft => ({
@@ -159,12 +162,16 @@ const PlanningFields: React.FC<{
 
 const StepVias: React.FC = () => {
   const { t } = useI18n();
+  const { user } = useAuth();
   const zones = useGisStore(s => s.zones);
   const selectedZoneId = useGisStore(s => s.selectedZoneId);
+  const activeProjectId = useGisStore(s => s.activeProjectId);
+  const activeProject = useGisStore(s => s.projects.find(project => project.id === s.activeProjectId));
   const inventory = useGisStore(s => s.activePlanningInventory);
   const visibility = useGisStore(s => s.roadTypeVisibility);
   const setInventory = useGisStore(s => s.setActivePlanningInventory);
   const setStorePayload = useGisStore(s => s.setPlanningPayload);
+  const storePlanningPayload = useGisStore(s => s.planningPayload);
   const setStoreBasePayload = useGisStore(s => s.setPlanningBasePayload);
   const setPlanningDirty = useGisStore(s => s.setPlanningDirty);
   const confirmPlanningLeave = useGisStore(s => s.confirmPlanningLeave);
@@ -177,6 +184,7 @@ const StepVias: React.FC = () => {
   const selectedTargetRef = useGisStore(s => s.selectedTargetRef);
   const selectedStreetName = useGisStore(s => s.selectedStreetName);
   const setSelectedSegment = useGisStore(s => s.setSelectedSegment);
+  const setZoneLuminaires = useGisStore(s => s.setZoneLuminaires);
   const accumulatedSelection = useGisStore(s => s.accumulatedSelection);
   const toggleTargetSelection = useGisStore(s => s.toggleTargetSelection);
   const toggleStreetSelection = useGisStore(s => s.toggleStreetSelection);
@@ -197,15 +205,27 @@ const StepVias: React.FC = () => {
   const [scopeBusy, setScopeBusy] = useState(false);
   const [selectionExpandedStreet, setSelectionExpandedStreet] = useState<string | null>(null);
   const [buildingStatus, setBuildingStatus] = useState<string | null>(null);
+  const [luxJob, setLuxJob] = useState<GisLuxJob | null>(null);
+  const luxJobEtagRef = useRef<string | undefined>();
+  const [luxJobError, setLuxJobError] = useState('');
+  const [luxStarting, setLuxStarting] = useState(false);
+  const [luxMode, setLuxMode] = useState<'calculate' | 'optimize'>('optimize');
+  const luxIntentIdRef = useRef<string>();
   const osmLoadRef = useRef<AbortController | null>(null);
   const inventoryEtagRef = useRef<string | null>(null);
+  const legacyRefreshAttemptedRef = useRef(new Set<string>());
 
   const zone = zones.find(z => z.id === selectedZoneId);
   const roadSelection = selectedZoneId ? roadSelectionByZone[selectedZoneId] : undefined;
   const dirty = JSON.stringify(payload) !== JSON.stringify(basePayload);
   const zoneSelection = selectedZoneId ? (accumulatedSelection[selectedZoneId] || {}) : {};
   const selectedCount = Object.keys(zoneSelection).length;
+  const calculableTargetRefs = inventory?.targets
+    .filter(target => zoneSelection[target.target_ref] && target.geometry)
+    .map(target => target.target_ref) || [];
+  const nonCalculableSelectedCount = selectedCount - calculableTargetRefs.length;
   const totalTargetCount = inventory?.targets.length ?? 0;
+  const projectEditable = activeProject?.access_role !== 'viewer' && user?.role !== 'VIEWER';
 
   useEffect(() => {
     setPlanningDirty(dirty);
@@ -219,6 +239,11 @@ const StepVias: React.FC = () => {
     setSelectedTarget(null);
   }, [discardVersion, savedStorePayload]);
 
+  // The map popup edits the shared store directly; keep the form payload in sync.
+  useEffect(() => {
+    if (JSON.stringify(storePlanningPayload) !== JSON.stringify(payload)) setPayload(storePlanningPayload);
+  }, [storePlanningPayload]);
+
   useEffect(() => {
     osmLoadRef.current?.abort();
     if (!selectedZoneId) {
@@ -229,6 +254,7 @@ const StepVias: React.FC = () => {
     }
     const controller = new AbortController();
     let live = true;
+    const previousInventory = useGisStore.getState().activePlanningInventory;
     setResource({ kind: 'loading' });
     setStaleReady(false);
     setBuildingStatus(null);
@@ -241,7 +267,7 @@ const StepVias: React.FC = () => {
       try {
         // ── Step 1: Load inventory (with ETag for 304 caching) ─────
         const inventoryResult = await getPlanningInventory(selectedZoneId, inventoryEtagRef.current || undefined, undefined, controller.signal);
-        const nextInventory = inventoryResult.data;
+        let nextInventory = inventoryResult.data;
         const newEtag = inventoryResult.etag;
         if (newEtag) inventoryEtagRef.current = newEtag;
 
@@ -249,6 +275,9 @@ const StepVias: React.FC = () => {
           if (live) setResource({ kind: 'missing' });
           return;
         }
+
+        // Cached ways from before the naming contract are refreshed in the
+        // background by a separate effect; the panel renders legacy data first.
 
         // ── Step 2: Draft + RoadScope en PARALELO ──────────────────
         let draftResult: Etagged<GisPlanningDraft | null> | null = null;
@@ -285,7 +314,7 @@ const StepVias: React.FC = () => {
                     const refreshed = await getPlanningInventory(selectedZoneId, undefined, true, controller.signal);
                     if (refreshed.data && live) {
                       setInventory(refreshed.data);
-                      setMessage('🏛 Anchos de calle actualizados con datos del Catastro');
+                       setMessage('🏛 Anchos de vía actualizados con datos del Catastro');
                     }
                     return;
                   }
@@ -302,6 +331,9 @@ const StepVias: React.FC = () => {
         }
 
         if (!live) return;
+        if (previousInventory && previousInventory.base_inventory_hash !== nextInventory.base_inventory_hash) {
+          clearAccumulatedSelection(selectedZoneId);
+        }
         setInventory(nextInventory);
 
         // ── Log data source summary ─────────────────────────────────
@@ -339,14 +371,108 @@ const StepVias: React.FC = () => {
         }
       } catch (error) {
         if (!live || (error as Error).name === 'AbortError') return;
-        setMessage((error as Error).message || 'No se pudo cargar la planificación');
+        const status = error instanceof ApiStatusError ? ` (HTTP ${error.status})` : '';
+        setMessage(`${(error as Error).message || 'No se pudo cargar la planificación'}${status}`);
         setResource({ kind: 'error' });
       }
     })();
     return () => { live = false; controller.abort(); };
-  }, [selectedZoneId, reloadKey, setInventory, setRoadSelection, setStoreBasePayload]);
+  }, [selectedZoneId, reloadKey, setInventory, setRoadSelection, setStoreBasePayload, clearAccumulatedSelection]);
 
   useEffect(() => () => osmLoadRef.current?.abort(), []);
+
+  // Cached ways from before the naming contract need one forced refresh.
+  // Runs in the background so the panel never blocks on Overpass and a
+  // failure can never take the whole planning panel to the error state.
+  useEffect(() => {
+    if (!selectedZoneId || !inventory?.source_needs_refresh) return;
+    if (legacyRefreshAttemptedRef.current.has(selectedZoneId)) return;
+    legacyRefreshAttemptedRef.current.add(selectedZoneId);
+    const previousHash = inventory.base_inventory_hash;
+    let alive = true;
+    const controller = new AbortController();
+    setMessage('Actualizando etiquetado OSM…');
+    (async () => {
+      try {
+        await loadPlanningOsm(selectedZoneId, controller.signal, true);
+        const refreshed = await getPlanningInventory(selectedZoneId, undefined, true, controller.signal);
+        if (!alive) return;
+        if (refreshed.data) {
+          if (refreshed.data.base_inventory_hash !== previousHash) clearAccumulatedSelection(selectedZoneId);
+          setInventory(refreshed.data);
+          inventoryEtagRef.current = refreshed.etag || '';
+          if (alive) setMessage('');
+        }
+      } catch (error) {
+        if ((error as Error).name === 'AbortError') legacyRefreshAttemptedRef.current.delete(selectedZoneId);
+        console.warn('Could not refresh legacy OSM naming data', error);
+        if (alive) setMessage('No se pudo actualizar el etiquetado OSM antiguo; se muestran los datos anteriores.');
+      }
+    })();
+    return () => { alive = false; controller.abort(); };
+  }, [selectedZoneId, inventory?.source_needs_refresh, setInventory, clearAccumulatedSelection]);
+
+  useEffect(() => {
+    if (!selectedZoneId) return;
+    const controller = new AbortController();
+    getLuminaires(selectedZoneId, controller.signal)
+      .then(luminaires => { if (!controller.signal.aborted) setZoneLuminaires(selectedZoneId, luminaires); })
+      .catch(() => { /* Existing map data is allowed to remain empty. */ });
+    return () => controller.abort();
+  }, [selectedZoneId, setZoneLuminaires]);
+
+  useEffect(() => {
+    setLuxJob(null);
+    luxJobEtagRef.current = undefined;
+    setLuxJobError('');
+    luxIntentIdRef.current = undefined;
+    if (!activeProjectId || !selectedZoneId) return;
+    const storageKey = `gis-lux-job:${activeProjectId}:${selectedZoneId}`;
+    const savedJobId = window.localStorage.getItem(storageKey);
+    if (!savedJobId) return;
+    let alive = true;
+    getLuxJob(String(activeProjectId), savedJobId)
+      .then(result => {
+        if (alive && result.data) {
+          luxJobEtagRef.current = result.etag;
+          setLuxJob(result.data);
+        }
+      })
+      .catch(error => {
+        if (error instanceof ApiStatusError && error.status === 404) window.localStorage.removeItem(storageKey);
+      });
+    return () => { alive = false; };
+  }, [activeProjectId, selectedZoneId]);
+
+  useEffect(() => {
+    if (!luxJob || !activeProjectId) return;
+    let alive = true;
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        const result = await getLuxJob(String(activeProjectId), luxJob.id, luxJobEtagRef.current);
+        if (!alive) return;
+        if (result.etag) {
+          luxJobEtagRef.current = result.etag;
+        }
+        if (result.data) {
+          setLuxJob(result.data);
+          if (['succeeded', 'partial', 'failed', 'cancelled', 'unknown'].includes(result.data.state)) {
+            if (selectedZoneId && result.data.succeeded > 0) {
+              const lums = await getLuminaires(selectedZoneId);
+              if (alive) setZoneLuminaires(selectedZoneId, lums);
+            }
+            return;
+          }
+        }
+      } catch (error) {
+        if (alive) setLuxJobError((error as Error).message || 'No se pudo consultar el progreso');
+      }
+      if (alive) timer = window.setTimeout(poll, 1800);
+    };
+    poll();
+    return () => { alive = false; if (timer) window.clearTimeout(timer); };
+  }, [luxJob?.id, activeProjectId, selectedZoneId, setZoneLuminaires]);
 
   useEffect(() => {
     if (!selectedZoneId || !inventory || !roadSelection || ['draw_area', 'invalid', 'stale'].includes(roadSelection.status)) return;
@@ -416,6 +542,7 @@ const StepVias: React.FC = () => {
   };
   const reload = () => {
     if (!confirmPlanningLeave()) return;
+    if (selectedZoneId) legacyRefreshAttemptedRef.current.delete(selectedZoneId);
     setReloadKey(v => v + 1);
   };
   const loadOsm = async () => {
@@ -428,7 +555,7 @@ const StepVias: React.FC = () => {
       setReloadKey(value => value + 1);
     } catch (error) {
       if ((error as Error).name === 'AbortError') return;
-      setMessage((error as Error).message || 'No se pudieron cargar las calles OSM');
+      setMessage((error as Error).message || 'No se pudieron cargar las vías OSM');
     } finally {
       if (osmLoadRef.current === controller) {
         osmLoadRef.current = null;
@@ -522,18 +649,57 @@ const StepVias: React.FC = () => {
     });
   };
 
+  const startLuxJob = async () => {
+    if (!activeProjectId || !selectedZoneId || !inventory || !calculableTargetRefs.length || luxStarting || dirty || !projectEditable) return;
+    if (!['absent', 'current'].includes(resource.kind)) return;
+    setLuxStarting(true); setLuxJobError('');
+    const intentId = luxIntentIdRef.current || (typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    luxIntentIdRef.current = intentId;
+    try {
+      const result = await createLuxJob(
+        String(activeProjectId), selectedZoneId, calculableTargetRefs,
+        inventory.base_inventory_hash, intentId, luxMode,
+      );
+      luxJobEtagRef.current = undefined;
+      setLuxJob(result);
+      window.localStorage.setItem(`gis-lux-job:${activeProjectId}:${selectedZoneId}`, result.id);
+      luxIntentIdRef.current = undefined;
+    } catch (error) {
+      setLuxJobError((error as Error).message || 'No se pudo iniciar el cálculo Lux');
+      if (error instanceof ApiStatusError) {
+        luxIntentIdRef.current = undefined;
+        if (error.status === 409 && /STALE|stale|INVENTORY/.test(error.message)) {
+          setResource({ kind: 'stale', etag: 'etag' in resource ? resource.etag : '' });
+          clearAccumulatedSelection(selectedZoneId);
+          setLuxJobError('El inventario o la configuración cambió. Recarga y vuelve a seleccionar los tramos.');
+        }
+      }
+    } finally { setLuxStarting(false); }
+  };
+
+  const cancelCurrentLuxJob = async () => {
+    if (!luxJob || !activeProjectId) return;
+    try {
+      const result = await cancelLuxJob(String(activeProjectId), luxJob.id);
+      setLuxJob(result);
+    } catch (error) { setLuxJobError((error as Error).message || 'No se pudo cancelar'); }
+  };
+
   const streetSelState = (targets: GisPlanningInventoryTarget[]): { all: boolean; some: boolean; none: boolean } => {
-    const all = targets.length > 0 && targets.every(t => zoneSelection[t.target_ref]);
-    return { all, some: targets.some(t => zoneSelection[t.target_ref]), none: !targets.some(t => zoneSelection[t.target_ref]) };
+    const selectable = targets.filter(target => target.geometry);
+    const all = selectable.length > 0 && selectable.every(t => zoneSelection[t.target_ref]);
+    return { all, some: selectable.some(t => zoneSelection[t.target_ref]), none: !selectable.some(t => zoneSelection[t.target_ref]) };
   };
 
   const streetsByGroup = useMemo(() => {
     const result = new Map<string, Map<string, GisPlanningInventoryTarget[]>>();
     inventory?.targets.forEach(target => {
       const streets = result.get(target.group_ref) || new Map<string, GisPlanningInventoryTarget[]>();
-      const name = target.name || 'Sin nombre';
-      const targets = streets.get(name);
-      if (targets) targets.push(target); else streets.set(name, [target]);
+      const key = targetGroupKey(target);
+      const targets = streets.get(key);
+      if (targets) targets.push(target); else streets.set(key, [target]);
       result.set(target.group_ref, streets);
     });
     return result;
@@ -549,13 +715,13 @@ const StepVias: React.FC = () => {
   }, []);
 
   if (!zone) return <div className="gis-panel rounded-xl p-6 text-center text-sm text-salvi-muted">Selecciona una zona primero</div>;
-  if (resource.kind === 'loading') return <div className="gis-panel rounded-xl p-6 text-center text-sm text-salvi-muted">Cargando calles y planificación…</div>;
+  if (resource.kind === 'loading') return <div className="gis-panel rounded-xl p-6 text-center text-sm text-salvi-muted">Cargando vías y planificación…</div>;
   if (resource.kind === 'missing') return (
     <div className="gis-panel rounded-xl p-5 text-center text-sm text-salvi-grey">
-      <p>Esta zona todavía no tiene calles OSM.</p>
+      <p>Esta zona todavía no tiene vías OSM.</p>
       {message && <p role="alert" className="mt-2 text-xs text-state-danger">{message}</p>}
       <button onClick={loadOsm} disabled={loadingOsm} className="mt-3 rounded bg-salvi-black px-3 py-1.5 text-xs text-white disabled:opacity-50">
-        {loadingOsm ? 'Consultando OpenStreetMap…' : 'Cargar calles OSM'}
+        {loadingOsm ? 'Consultando OpenStreetMap…' : 'Cargar vías OSM'}
       </button>
     </div>
   );
@@ -570,7 +736,9 @@ const StepVias: React.FC = () => {
   const normalizedQuery = query.trim().toLowerCase();
   const groups = inventory.groups.filter(group => {
     if (!normalizedQuery || (group.road_type || 'sin tipo').toLowerCase().includes(normalizedQuery)) return true;
-    return [...(streetsByGroup.get(group.group_ref)?.keys() || [])].some(name => name.toLowerCase().includes(normalizedQuery));
+    return [...(streetsByGroup.get(group.group_ref)?.entries() || [])].some(([key, targets]) =>
+      key.toLowerCase().includes(normalizedQuery) || targetGroupLabel(targets[0]).toLowerCase().includes(normalizedQuery),
+    );
   });
 
   return (
@@ -578,10 +746,13 @@ const StepVias: React.FC = () => {
       <div className="border-b border-salvi-line p-3">
         <h2 className="truncate text-sm font-semibold text-salvi-black">{zone.name}</h2>
         <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-salvi-muted">
-          <span>{inventory.counts.named_street_count} calles</span>
-          <span>{inventory.counts.segment_count} tramos</span>
-          <span>{inventory.counts.unnamed_segment_count} sin nombre</span>
+          <span>{inventory.counts.distinct_name_count ?? inventory.counts.named_street_count} nombres OSM</span>
+          <span>{inventory.counts.segment_count} tramos OSM</span>
+          <span>{inventory.counts.without_osm_name_count ?? inventory.counts.unnamed_segment_count} sin `name` OSM</span>
+          {!!inventory.counts.ref_only_count && <span>{inventory.counts.ref_only_count} solo referencia</span>}
+          {!!inventory.counts.explicit_noname_count && <span>{inventory.counts.explicit_noname_count} declarados sin nombre</span>}
           <span>{inventory.counts.geometry_unavailable} sin geometría</span>
+          {!!nonCalculableSelectedCount && <span className="text-state-warning">{nonCalculableSelectedCount} no calculables</span>}
           {buildingStatus === 'computing' && <span className="text-state-info">🏛 Computando anchos catastro…</span>}
           {buildingStatus === 'unavailable' && <span className="text-state-warning">🏛 Anchos no disponibles</span>}
         </div>
@@ -663,7 +834,7 @@ const StepVias: React.FC = () => {
           {selectedCount > 0 && (() => {
             const byStreet: Record<string, { targets: typeof inventory.targets; selected: typeof inventory.targets; cfg: RoadTypeCfg | undefined }> = {};
             for (const t of inventory?.targets || []) {
-              const key = t.name || '(sin nombre)';
+              const key = targetSelectionKey(t);
               if (!byStreet[key]) {
                 const grp = inventory!.groups.find(g => g.group_ref === t.group_ref);
                 const rcfg = grp?.road_type ? ROAD_CFG[grp.road_type] : undefined;
@@ -674,20 +845,22 @@ const StepVias: React.FC = () => {
             }
             return (
               <div className="border-t border-salvi-line/50 max-h-48 overflow-y-auto gis-scroll">
-                {Object.entries(byStreet).filter(([, v]) => v.selected.length).map(([street, { targets, selected, cfg: scfg }]) => {
-                  const all = selected.length === targets.length;
-                  const open = selectionExpandedStreet === street;
+                {Object.entries(byStreet).filter(([, v]) => v.selected.length).map(([key, { targets, selected, cfg: scfg }]) => {
+                  const selectableTargets = targets.filter(target => target.geometry);
+                  const all = selectableTargets.length > 0 && selected.length === selectableTargets.length;
+                  const open = selectionExpandedStreet === key;
+                  const label = targetDisplayLabel(selected[0]);
                   return (
-                    <div key={street}>
+                    <div key={key}>
                       <div className="flex items-center gap-1.5 border-b border-salvi-line/30 px-2 py-1.5 last:border-0">
-                        <button onClick={() => setSelectionExpandedStreet(open ? null : street)} className="shrink-0 text-[8px] text-salvi-muted transition-transform hover:text-salvi-black">
+                        <button onClick={() => setSelectionExpandedStreet(open ? null : key)} className="shrink-0 text-[8px] text-salvi-muted transition-transform hover:text-salvi-black">
                           ▶
                         </button>
                         <input type="checkbox" checked={all} ref={el => { if (el) el.indeterminate = !all && selected.length > 0; }}
-                          onChange={() => { if (selectedZoneId) { const refs = targets.map(t => t.target_ref); if (all) refs.forEach(r => toggleTargetSelection(selectedZoneId, r)); else refs.forEach(r => { if (!zoneSelection[r]) toggleTargetSelection(selectedZoneId, r); }); } }}
+                          onChange={() => { if (selectedZoneId) { const refs = selectableTargets.map(t => t.target_ref); if (all) refs.forEach(r => toggleTargetSelection(selectedZoneId, r)); else refs.forEach(r => { if (!zoneSelection[r]) toggleTargetSelection(selectedZoneId, r); }); } }}
                           className="shrink-0 cursor-pointer"
                         />
-                        <span className="flex-1 truncate text-[10px] font-semibold text-salvi-black">{street}</span>
+                        <span className="flex-1 truncate text-[10px] font-semibold text-salvi-black">{label}</span>
                         <span className="text-[9px] text-salvi-muted">{selected.length}/{targets.length}</span>
                       </div>
                       {open && (() => {
@@ -735,15 +908,15 @@ const StepVias: React.FC = () => {
             <div className="mb-1">Ref: {selectedTargetRef.slice(0, 20)}…</div>
           </section>
         )}
-        <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar tipo de vía o calle…" className="w-full rounded border border-salvi-line px-2 py-1 text-xs" />
+        <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar tipo de vía o nombre…" className="w-full rounded border border-salvi-line px-2 py-1 text-xs" />
 
-        {!groups.length && <div className="rounded bg-salvi-surface p-4 text-center text-xs text-salvi-muted">No hay calles que mostrar.</div>}
+        {!groups.length && <div className="rounded bg-salvi-surface p-4 text-center text-xs text-salvi-muted">No hay vías que mostrar.</div>}
 
         {groups.map(group => {
           const cfg = group.road_type ? ROAD_CFG[group.road_type] : undefined;
           const typeMatches = !!normalizedQuery && (group.road_type || 'sin tipo').toLowerCase().includes(normalizedQuery);
           const allStreets = [...(streetsByGroup.get(group.group_ref)?.entries() || [])]
-            .filter(([name]) => !normalizedQuery || typeMatches || name.toLowerCase().includes(normalizedQuery));
+            .filter(([key, targets]) => !normalizedQuery || typeMatches || key.toLowerCase().includes(normalizedQuery) || targetGroupLabel(targets[0]).toLowerCase().includes(normalizedQuery));
           const open = expandedGroup === group.group_ref;
           return (
             <section key={group.group_ref} className="rounded-lg border border-salvi-line bg-white/80">
@@ -759,7 +932,7 @@ const StepVias: React.FC = () => {
                 <span className="min-w-0 flex-1 text-xs font-semibold text-salvi-black">
                   {cfg ? t(cfg.labelKey) : group.road_type || 'Sin tipo'}
                 </span>
-                <span className="text-[10px] text-salvi-muted">{group.street_count} calles · {group.target_count} tramos · {(group.length_m / 1000).toFixed(1)} km</span>
+                <span className="text-[10px] text-salvi-muted">{group.street_count} nombres · {group.target_count} tramos · {(group.length_m / 1000).toFixed(1)} km</span>
               </div>
               {open && (
                 <div className="space-y-3 border-t border-salvi-line p-2">
@@ -772,8 +945,10 @@ const StepVias: React.FC = () => {
                   </div>
                   {/* Streets */}
                   <div className="space-y-1">
-                    {allStreets.map(([street, targets]) => {
-                      const streetKey = `${group.group_ref}:${street}`;
+                    {allStreets.map(([streetKeyPart, targets]) => {
+                      const streetKey = `${group.group_ref}:${streetKeyPart}`;
+                      const street = targetGroupLabel(targets[0]);
+                      const selectableStreet = targets.every(target => !!targetName(target));
                       const { all, some } = streetSelState(targets);
                       const streetExpanded = expandedStreet === streetKey;
                       // Get road width from cfg or mark as unknown
@@ -782,18 +957,18 @@ const StepVias: React.FC = () => {
                         <div key={streetKey} className="rounded border border-salvi-line/60">
                           {/* Street row */}
                           <div className="flex items-center gap-1 px-2 py-1">
-                            <input
+                            {selectableStreet && <input
                               type="checkbox"
                               checked={all}
                               ref={el => { if (el) el.indeterminate = some && !all; }}
-                              onChange={e => { e.stopPropagation(); if (selectedZoneId) toggleStreetSelection(selectedZoneId, targets.map(t => t.target_ref)); }}
-                              aria-label={`Seleccionar calle ${street}`}
+                              onChange={e => { e.stopPropagation(); if (selectedZoneId) toggleStreetSelection(selectedZoneId, targets.filter(target => target.geometry).map(t => t.target_ref)); }}
+                              aria-label={`Seleccionar vía ${street}`}
                               className="shrink-0 cursor-pointer"
-                            />
+                            />}
                             <button
                               onClick={() => flyToStreet(street, targets)}
                               className="truncate text-left text-[11px] font-medium text-salvi-black hover:underline"
-                              title="Volar a esta calle en el mapa"
+                              title="Volar a esta vía en el mapa"
                             >
                               {street}
                             </button>
@@ -819,12 +994,13 @@ const StepVias: React.FC = () => {
                                       <input
                                         type="checkbox"
                                         checked={!!zoneSelection[target.target_ref]}
+                                        disabled={!target.geometry && !zoneSelection[target.target_ref]}
                                         onChange={() => { if (selectedZoneId) toggleTargetSelection(selectedZoneId, target.target_ref); }}
                                         aria-label={`Seleccionar tramo ${target.source_index + 1}`}
                                         className="shrink-0 cursor-pointer"
                                       />
                                       <button
-                                        onClick={() => { setSelectedTarget(target); setSelectedSegment(target.target_ref, target.name || null); }}
+                                        onClick={() => { setSelectedTarget(target); setSelectedSegment(target.target_ref, targetName(target)); }}
                                         className="flex flex-1 items-center gap-2 text-left"
                                       >
                                         <span className="font-medium text-salvi-grey">Tramo {target.source_index + 1}</span>
@@ -855,7 +1031,7 @@ const StepVias: React.FC = () => {
         {selectedTarget && editable && (
           <div className="rounded-lg border border-state-info/30 bg-white p-2">
             <div className="mb-2 flex justify-between text-[11px] font-semibold">
-              <span>{selectedTarget.name || 'Sin nombre'} · tramo {selectedTarget.source_index + 1}</span>
+              <span>{targetDisplayLabel(selectedTarget)} · tramo {selectedTarget.source_index + 1}</span>
               <button onClick={() => setSelectedTarget(null)}>×</button>
             </div>
             <PlanningFields
@@ -868,6 +1044,41 @@ const StepVias: React.FC = () => {
       </div>
 
       <div className="border-t border-salvi-line p-3">
+        <section className="mb-3 rounded border border-state-info/30 bg-state-info/5 p-2 text-xs">
+          <div className="font-semibold text-salvi-black">Cálculo y pintado automático</div>
+          <div className="mt-1 text-[10px] text-salvi-muted">Cada tramo conforme se pinta solo. Los no conformes, stale o no soportados quedan sin pintar.</div>
+          <div className="mt-2 flex gap-2">
+            <select value={luxMode} onChange={e => setLuxMode(e.target.value as 'calculate' | 'optimize')} disabled={luxStarting || !!luxJob && !['succeeded', 'partial', 'failed', 'cancelled', 'unknown'].includes(luxJob.state)} className="rounded border border-salvi-line bg-white px-1.5 py-1 text-[10px]">
+              <option value="optimize">Optimizar</option>
+              <option value="calculate">Calcular fijo</option>
+            </select>
+            <button
+              onClick={startLuxJob}
+              disabled={!calculableTargetRefs.length || !activeProjectId || !editable || !projectEditable || dirty || !['absent', 'current'].includes(resource.kind) || luxStarting || !!luxJob && !['succeeded', 'partial', 'failed', 'cancelled', 'unknown'].includes(luxJob.state)}
+              className="flex-1 rounded bg-state-info px-2 py-1.5 text-[10px] font-medium text-white disabled:opacity-40"
+            >
+              {luxStarting ? 'Preparando…' : `Calcular y pintar ${calculableTargetRefs.length || ''} tramos válidos`}
+            </button>
+          </div>
+          {dirty && <div className="mt-1 text-[10px] text-state-warning">Guarda la configuración antes de calcular.</div>}
+          {resource.kind === 'stale' && <div className="mt-1 text-[10px] text-state-warning">El inventario OSM cambió. Recarga y vuelve a seleccionar los tramos.</div>}
+          {!projectEditable && <div className="mt-1 text-[10px] text-state-warning">Tu membresía solo permite consultar este proyecto.</div>}
+          {luxJob && (
+            <div className="mt-2 space-y-1 border-t border-state-info/20 pt-2">
+              <div className="flex items-center justify-between">
+                <span>Estado: <strong>{luxJob.state}</strong> · {luxJob.succeeded}/{luxJob.total} pintados</span>
+                {!['succeeded', 'partial', 'failed', 'cancelled', 'unknown'].includes(luxJob.state) && <button onClick={cancelCurrentLuxJob} className="text-state-danger underline">Cancelar</button>}
+              </div>
+              {luxJob.items.map(item => (
+                <div key={item.id} className="flex items-center justify-between gap-2 text-[10px]">
+                  <span className="truncate">{item.target_ref}</span>
+                  <span className={item.state === 'succeeded' ? 'text-state-success' : item.error_message ? 'text-state-danger' : 'text-salvi-muted'}>{item.state}{item.error_message ? `: ${item.error_message}` : ''}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          {luxJobError && <div role="alert" className="mt-1 text-[10px] text-state-danger">{luxJobError}</div>}
+        </section>
         <div className="mb-2 flex gap-2">
           <button onClick={reload} disabled={saving} className="flex-1 rounded border border-salvi-line py-1 text-xs">Recargar</button>
           <button onClick={save} disabled={!editable || !dirty || saving} className="flex-1 rounded bg-salvi-black py-1 text-xs text-white disabled:opacity-40">{saving ? 'Guardando…' : t('actions.save')}</button>

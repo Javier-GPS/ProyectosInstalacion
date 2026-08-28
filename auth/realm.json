@@ -45,6 +45,17 @@
       "directAccessGrantsEnabled": true,
       "standardFlowEnabled": false,
       "protocol": "openid-connect"
+    },
+    {
+      "clientId": "gisvial-worker",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "gisvial-worker-secret",
+      "serviceAccountsEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "standardFlowEnabled": false,
+      "protocol": "openid-connect",
+      "defaultClientScopes": ["profile", "email"]
     }
   ],
   "users": [

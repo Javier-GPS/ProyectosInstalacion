@@ -3,15 +3,21 @@ from __future__ import annotations
 
 import base64
 import os
+import shutil
+import subprocess
 import tempfile
+from datetime import datetime
 from pathlib import Path
+from typing import Any, Literal
+from zipfile import BadZipFile, ZipFile
 
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from .composition import DEFAULT_GROUP_ANGLES_DEG, compose_luminaire
+from .composition import compose_luminaire, scale_ldt_runtime
+from .assistant import advise
 from .geometry import GeometryError, load_step_geometry
 from .hl2x import HL2X_MAX_INPUT_POWER_W, Hl2xModel, calculate_luminaire_operating_point
 from .ldt import ldt_diagnostic, ldt_text, parse_ldt_text
@@ -21,11 +27,13 @@ from .ray_photometry import rays_to_ldt
 from .rayset import Tm25Error, parse_tm25
 from .road import RoadScenario, calculate_reference_road, calculate_road, photometric_azimuth_profile
 from .r_tables import load_rtable
+from .solidworks_session import SolidWorksError, SolidWorksSessionManager
 
 app = FastAPI(title="SALVI Luminaria Optimizer", version="0.1.0")
+cad_sessions = SolidWorksSessionManager()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5176", "http://127.0.0.1:5176"],
+    allow_origins=["http://localhost:5176", "http://127.0.0.1:5176", "http://[::1]:5176"],
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -35,12 +43,17 @@ app.add_middleware(
 class GroupRequest(BaseModel):
     group_ldt_base64: str
     reference_luminaire_ldt_base64: str | None = None
-    reference_group_flux_lm: float = Field(default=897.81, gt=0)
+    reference_group_flux_lm: float | None = Field(default=None, gt=0)
     reference_cct_k: int = 4000
     reference_cri: int = 70
     cct_k: int = 4000
     cri: int = 70
-    currents_ma: list[float] = Field(min_length=8, max_length=8)
+    currents_ma: list[float] = Field(min_length=1, max_length=32)
+    module_count: int = Field(default=8, ge=1, le=32)
+    module_angle_step_deg: float = Field(default=22.5, gt=0, le=180)
+    luminaire_mode: Literal["modular", "fixed"] = "modular"
+    global_current_ma: float = Field(default=700.0, ge=0, le=2000)
+    leds_per_group: int = Field(default=1, ge=1, le=3)
     ambient_temperature_c: float = 25.0
     ts_coefficient_c_per_w: float = Field(default=0.3, ge=0)
     driver_efficiency: float = Field(default=0.9, gt=0, le=1)
@@ -63,6 +76,31 @@ class GeometryTraceRequest(BaseModel):
     preview_ray_count: int = Field(default=5_000, gt=0, le=MAX_PREVIEW_RAY_COUNT)
     c_mirror: bool = True
     c_offset_deg: float = 0.0
+
+
+class CadOpenRequest(BaseModel):
+    cad_base64: str
+    cad_filename: str = "lens.SLDPRT"
+
+
+class CadUpdateRequest(BaseModel):
+    session_id: str
+    parameter_values: dict[str, float] = Field(default_factory=dict)
+
+
+class CadPreviewRequest(CadUpdateRequest):
+    sample_count: int = Field(default=10_000, gt=0, le=5_000_000)
+    chunk_size: int = Field(default=10_000, gt=0, le=100_000)
+    lens_index: float = Field(default=1.49, gt=1.0, le=3.0)
+    preview_ray_count: int = Field(default=5_000, gt=0, le=MAX_PREVIEW_RAY_COUNT)
+    c_mirror: bool = True
+    c_offset_deg: float = 0.0
+
+
+class OptimizerChatRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+    history: list[dict[str, str]] = Field(default_factory=list, max_length=40)
+    context: dict[str, Any] = Field(default_factory=dict)
 
 
 class RoadRequest(GroupRequest):
@@ -109,6 +147,36 @@ def _default_rayset_path() -> Path:
     raise GeometryError("default HL2Z TM-25 ray file was not found")
 
 
+def _models_lenses_path() -> Path:
+    return Path(__file__).resolve().parents[2] / "modelos lentes"
+
+
+def _default_cad_path() -> Path:
+    path = _models_lenses_path() / "ensamblaje lente dot led.SLDASM"
+    if not path.is_file():
+        raise GeometryError("default SolidWorks assembly was not found")
+    return path
+
+
+def _default_rtable_path() -> Path:
+    path = Path(__file__).resolve().parents[2] / "C2 je_Gerli__edited.rtb"
+    if not path.is_file():
+        raise GeometryError("default C2 reflection table was not found")
+    return path
+
+
+def _history_path(root: Path, stem: str, suffix: str) -> Path:
+    """Return a unique timestamped candidate path without overwriting history."""
+    root.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    candidate = root / f"{stem}_candidate_{stamp}{suffix}"
+    counter = 2
+    while candidate.exists():
+        candidate = root / f"{stem}_candidate_{stamp}_{counter:02d}{suffix}"
+        counter += 1
+    return candidate
+
+
 def _reference_ldt(request: GroupRequest):
     if not request.reference_luminaire_ldt_base64:
         return None
@@ -118,6 +186,15 @@ def _reference_ldt(request: GroupRequest):
 
 
 def _model(request: GroupRequest, group_ldt):
+    if request.luminaire_mode == "modular" and request.leds_per_group != 3:
+        raise ValueError("La variante angular requiere una lente de grupo con 3 LED")
+    group_count = request.module_count
+    if request.luminaire_mode == "fixed":
+        currents = [request.global_current_ma] * group_count
+    else:
+        currents = request.currents_ma
+    if len(currents) != group_count:
+        raise ValueError("currents_ma length must match module_count")
     return Hl2xModel(
         reference_group_flux_lm=request.reference_group_flux_lm or group_ldt.flux_lm,
         reference_cct_k=request.reference_cct_k,
@@ -126,6 +203,24 @@ def _model(request: GroupRequest, group_ldt):
         ts_coefficient_c_per_w=request.ts_coefficient_c_per_w,
         driver_efficiency=request.driver_efficiency,
         multiplexing_mode=request.multiplexing_mode,
+        group_count=group_count,
+        leds_per_group=request.leds_per_group,
+    )
+
+
+def _currents(request: GroupRequest) -> list[float]:
+    return [request.global_current_ma] * request.module_count if request.luminaire_mode == "fixed" else request.currents_ma
+
+
+def _module_angles(request: GroupRequest) -> tuple[float, ...]:
+    if request.luminaire_mode == "fixed":
+        return (90.0,) * request.module_count
+    last_angle = (request.module_count - 0.5) * request.module_angle_step_deg
+    if last_angle > 180.0 + 1e-9:
+        raise ValueError("module_count and module_angle_step_deg must fit within C0-C180")
+    return tuple(
+        (index + 0.5) * request.module_angle_step_deg
+        for index in range(request.module_count)
     )
 
 
@@ -143,21 +238,144 @@ def _point_response(point):
     }
 
 
-def _profile_response(group_ldt, operating_point, gamma_deg, *, symmetric=False):
+def _profile_response(group_ldt, operating_point, gamma_deg, *, angles_deg, symmetric=False):
     return photometric_azimuth_profile(
         group_ldt,
         operating_point,
         gamma_deg=gamma_deg,
         symmetric=symmetric,
+        angles_deg=angles_deg,
     )
 
 
-def _result_photometry(group_ldt, operating_point, *, cct_k: int, cri: int, symmetric: bool = False) -> dict[str, object]:
+def _result_photometry(group_ldt, operating_point, *, angles_deg, cct_k: int, cri: int, symmetric: bool = False, fixed: bool = False) -> dict[str, object]:
+    if fixed:
+        return ldt_diagnostic(
+            scale_ldt_runtime(group_ldt, operating_point.total_flux_lm, operating_point.total_driver_power_w),
+        )
     composed = compose_luminaire(
-        group_ldt, operating_point, symmetric=symmetric,
+        group_ldt, operating_point, angles_deg=angles_deg, symmetric=symmetric,
         c_step_deg=5.0, gamma_step_deg=5.0, cct_k=cct_k, cri=cri,
     )
     return ldt_diagnostic(composed)
+
+
+def _trace_geometry_paths(step_path: Path, rayset_path: Path, request: GeometryTraceRequest) -> dict[str, object]:
+    return _trace_geometry(load_step_geometry(step_path), rayset_path, request)
+
+
+def _trace_geometry(geometry, rayset_path: Path, request: GeometryTraceRequest) -> dict[str, object]:
+    """Trace any geometry implementing the lens-mesh contract."""
+    ray_set = parse_tm25(rayset_path)
+    try:
+        trace = trace_tm25(
+            ray_set,
+            geometry,
+            sample_count=request.sample_count,
+            chunk_size=request.chunk_size,
+            lens_index=request.lens_index,
+            preview_ray_count=request.preview_ray_count,
+            c_mirror=request.c_mirror,
+            c_offset_deg=request.c_offset_deg,
+        )
+        photometry = rays_to_ldt(
+            trace,
+            c_step_deg=5.0,
+            gamma_step_deg=1.0,
+            c_offset_deg=request.c_offset_deg,
+            c_mirror=request.c_mirror,
+        )
+        preview = trace.transmitted_rays
+        if len(preview) > request.preview_ray_count:
+            indices = np.linspace(0, len(preview) - 1, request.preview_ray_count, dtype=int)
+            preview = preview[indices]
+        return {
+            "geometry": geometry.diagnostic(),
+            "trace": trace.diagnostic(),
+            "ldt": ldt_diagnostic(photometry),
+            "ldt_base64": base64.b64encode(ldt_text(photometry).encode("latin-1")).decode("ascii"),
+            "preview_rays": preview.tolist(),
+            "preview_rays_detail": list(trace.preview_rays_detail),
+            "preview_geometry_mesh": geometry.mesh_payload(),
+            "ray_angle_config": {
+                "c_mirror": request.c_mirror,
+                "c_offset_deg": request.c_offset_deg,
+                "gamma_flip": False,
+                "c_convention": "canonical optical frame: projected world X is C0, then c_mirror and c_offset_deg",
+                "gamma_convention": "canonical optical frame: LED emission normal is +Z, gamma=acos(z)",
+            },
+        }
+    finally:
+        ray_set.close()
+
+
+def _build_sldprt_assembly(lens_path: Path, target_path: Path) -> None:
+    """Place a native L8 part into the established three-LED STEP frame."""
+    try:
+        import cadquery as cq
+    except ImportError as exc:
+        raise SolidWorksError("La previsualización CAD requiere las dependencias de geometría.") from exc
+    assembly_path = Path(__file__).resolve().parents[2] / "ensamblaje lente dot led.STEP"
+    if not assembly_path.is_file():
+        raise SolidWorksError(f"No se encuentra el ensamblaje de referencia: {assembly_path}")
+    source = cq.importers.importStep(str(assembly_path))
+    solids = tuple(source.solids().vals())
+    old_lens = max(solids, key=lambda solid: solid.Volume())
+    leds = [solid for solid in solids if solid is not old_lens]
+    imported_lens = cq.importers.importStep(str(lens_path))
+    lens = max(tuple(imported_lens.solids().vals()), key=lambda solid: solid.Volume())
+    lens = lens.transformGeometry(cq.Matrix([[0, 0, 1, 0], [0, 1, 0, 0], [-1, 0, 0, 0]]))
+    cq.exporters.export(cq.Compound.makeCompound([lens, *leds]), str(target_path))
+
+
+def _extract_cad_archive(archive_path: Path, target_root: Path, extension: str) -> None:
+    """Extract a CAD package while rejecting archive path traversal."""
+    if extension == ".zip":
+        archive_factory = ZipFile
+    else:
+        try:
+            import rarfile
+        except ImportError as exc:
+            raise SolidWorksError("La carga RAR requiere instalar la dependencia rarfile.") from exc
+        archive_factory = rarfile.RarFile
+    try:
+        with archive_factory(archive_path) as archive:
+            members = archive.infolist()
+            for member in members:
+                name = Path(member.filename)
+                if name.is_absolute() or ".." in name.parts:
+                    raise SolidWorksError("El archivo comprimido contiene rutas no válidas.")
+            try:
+                archive.extractall(target_root)
+            except Exception:
+                if extension != ".rar":
+                    raise
+                _extract_rar_with_7zip(archive_path, target_root)
+    except SolidWorksError:
+        raise
+    except Exception as exc:
+        raise SolidWorksError(f"No se pudo extraer el paquete CAD: {exc}") from exc
+
+
+def _extract_rar_with_7zip(archive_path: Path, target_root: Path) -> None:
+    tools = [
+        shutil.which("7z"),
+        shutil.which("7z.exe"),
+        r"C:\Program Files\7-Zip\7z.exe",
+        r"C:\Program Files (x86)\7-Zip\7z.exe",
+    ]
+    tool = next((candidate for candidate in tools if candidate and Path(candidate).is_file()), None)
+    if tool is None:
+        raise SolidWorksError("No se encuentra 7-Zip/UnRAR para extraer el archivo RAR.")
+    result = subprocess.run(
+        [tool, "x", str(archive_path), f"-o{target_root}", "-y"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "error desconocido"
+        raise SolidWorksError(f"7-Zip no pudo extraer el paquete RAR: {detail}")
 
 
 @app.post("/api/ldt/inspect")
@@ -165,6 +383,15 @@ def inspect_ldt(request: LdtInspectRequest):
     try:
         return ldt_diagnostic(parse_ldt_text(_decode_text(request.group_ldt_base64, "group_ldt")))
     except (ValueError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/optimizer/chat")
+def optimizer_chat(request: OptimizerChatRequest):
+    """Discuss optical strategies without changing or saving CAD documents."""
+    try:
+        return advise(request.message, request.context)
+    except (TypeError, ValueError, KeyError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
@@ -182,50 +409,116 @@ def geometry_trace(request: GeometryTraceRequest):
                 rayset_path.write_bytes(_decode_binary(request.rayset_base64, "rayset"))
             else:
                 rayset_path = _default_rayset_path()
-            geometry = load_step_geometry(step_path)
-            ray_set = parse_tm25(rayset_path)
-            try:
-                trace = trace_tm25(
-                    ray_set,
-                    geometry,
-                    sample_count=request.sample_count,
-                    chunk_size=request.chunk_size,
-                    lens_index=request.lens_index,
-                    preview_ray_count=request.preview_ray_count,
-                    c_mirror=request.c_mirror,
-                    c_offset_deg=request.c_offset_deg,
-                )
-                photometry = rays_to_ldt(
-                    trace,
-                    c_step_deg=5.0,
-                    gamma_step_deg=1.0,
-                    c_offset_deg=request.c_offset_deg,
-                    c_mirror=request.c_mirror,
-                )
-                preview = trace.transmitted_rays
-                if len(preview) > request.preview_ray_count:
-                    indices = np.linspace(0, len(preview) - 1, request.preview_ray_count, dtype=int)
-                    preview = preview[indices]
-                return {
-                    "geometry": geometry.diagnostic(),
-                    "trace": trace.diagnostic(),
-                    "ldt": ldt_diagnostic(photometry),
-                    "ldt_base64": base64.b64encode(ldt_text(photometry).encode("latin-1")).decode("ascii"),
-                    "preview_rays": preview.tolist(),
-                    "preview_rays_detail": list(trace.preview_rays_detail),
-                    "preview_geometry_mesh": geometry.mesh_payload(),
-                    "ray_angle_config": {
-                        "c_mirror": request.c_mirror,
-                        "c_offset_deg": request.c_offset_deg,
-                        "gamma_flip": False,
-                        "c_convention": "atan2(y, x), then c_mirror and c_offset_deg",
-                        "gamma_convention": "acos(z)",
-                    },
-                }
-            finally:
-                ray_set.close()
+            return _trace_geometry_paths(step_path, rayset_path, request)
     except (GeometryError, Tm25Error, ValueError, KeyError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/cad/open")
+def cad_open(request: CadOpenRequest):
+    """Open a native SLDPRT/SLDASM package in a persistent SolidWorks session."""
+    extension = Path(request.cad_filename).suffix.lower()
+    if extension not in {".sldprt", ".sldasm", ".zip", ".rar"}:
+        raise HTTPException(status_code=422, detail="El modo CAD requiere SLDPRT, SLDASM, ZIP o RAR.")
+    source_root: Path | None = None
+    try:
+        source_root = Path(tempfile.mkdtemp(prefix="salvi-cad-upload-"))
+        upload_path = source_root / Path(request.cad_filename).name
+        upload_path.write_bytes(_decode_binary(request.cad_base64, "cad"))
+        document_root: Path = source_root
+        if extension in {".zip", ".rar"}:
+            package_root = source_root / "package"
+            package_root.mkdir()
+            _extract_cad_archive(upload_path, package_root, extension)
+            candidates = sorted(
+                (path for path in package_root.rglob("*") if path.is_file() and path.suffix.lower() == ".sldasm"),
+                key=lambda path: (len(path.parts), path.name.lower()),
+            )
+            if not candidates:
+                candidates = sorted(
+                    (path for path in package_root.rglob("*") if path.is_file() and path.suffix.lower() == ".sldprt"),
+                    key=lambda path: (len(path.parts), path.name.lower()),
+                )
+            if not candidates:
+                raise SolidWorksError("El archivo comprimido no contiene ningún SLDASM o SLDPRT.")
+            source_path = candidates[0]
+        elif extension == ".sldasm":
+            stored_assembly = _models_lenses_path() / Path(request.cad_filename).name
+            if stored_assembly.is_file():
+                source_path = stored_assembly
+                document_root = _models_lenses_path()
+            else:
+                source_path = upload_path
+        else:
+            source_path = upload_path
+        if extension in {".zip", ".rar"}:
+            document_root = source_root / "package"
+        session_id = cad_sessions.open(source_path, document_root)
+        description = cad_sessions.describe(session_id)
+        return {"session_id": session_id, **description}
+    except (SolidWorksError, OSError, ValueError, BadZipFile) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        if source_root is not None:
+            shutil.rmtree(source_root, ignore_errors=True)
+
+
+@app.post("/api/cad/update")
+def cad_update(request: CadUpdateRequest):
+    try:
+        return cad_sessions.update(request.session_id, request.parameter_values)
+    except (SolidWorksError, KeyError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/cad/close")
+def cad_close(request: CadUpdateRequest):
+    try:
+        cad_sessions.close(request.session_id)
+        return {"closed": True}
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@app.post("/api/cad/preview")
+def cad_preview(request: CadPreviewRequest):
+    try:
+        if request.parameter_values:
+            cad_sessions.update(request.session_id, request.parameter_values)
+        description = cad_sessions.describe(request.session_id)
+        models_root = _models_lenses_path()
+        source_name = Path(str(description["source_filename"]))
+        saved_files: list[str] = []
+        if description["document_type"] == "part":
+            native_lens_path = _history_path(models_root, source_name.stem, source_name.suffix.upper())
+            cad_sessions.export_native_copy(request.session_id, native_lens_path)
+            saved_files.append(str(native_lens_path))
+        geometry = cad_sessions.native_geometry(
+            request.session_id,
+            models_root / "ensamblaje lente dot led.SLDASM",
+        )
+        trace_request = GeometryTraceRequest(
+            step_base64="",
+            step_filename="solidworks-native",
+            rayset_base64=None,
+            rayset_filename=_default_rayset_path().name,
+            sample_count=request.sample_count,
+            chunk_size=request.chunk_size,
+            lens_index=request.lens_index,
+            preview_ray_count=request.preview_ray_count,
+            c_mirror=request.c_mirror,
+            c_offset_deg=request.c_offset_deg,
+        )
+        response = _trace_geometry(geometry, _default_rayset_path(), trace_request)
+        response["saved_cad_files"] = saved_files
+        return response
+    except (SolidWorksError, GeometryError, Tm25Error, ValueError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.on_event("shutdown")
+def close_cad_sessions() -> None:
+    cad_sessions.shutdown()
 
 
 @app.get("/api/health")
@@ -233,11 +526,30 @@ def health():
     return {"status": "ok", "service": "salvi-luminaria-optimizer"}
 
 
+@app.get("/api/default-resources")
+def default_resources():
+    """Expose the local road defaults without sending native CAD over HTTP."""
+    try:
+        cad_path = _default_cad_path()
+        rayset_path = _default_rayset_path()
+        rtable_path = _default_rtable_path()
+        return {
+            "cad": {"name": cad_path.name},
+            "rayset": {"name": rayset_path.name},
+            "rtable": {
+                "name": rtable_path.name,
+                "base64": base64.b64encode(rtable_path.read_bytes()).decode("ascii"),
+            },
+        }
+    except (GeometryError, OSError) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
 @app.post("/api/group/operating-point")
 def operating_point(request: GroupRequest):
     try:
         ldt = parse_ldt_text(_decode_text(request.group_ldt_base64, "group_ldt"))
-        point = calculate_luminaire_operating_point(request.currents_ma, _model(request, ldt), request.cct_k, request.cri)
+        point = calculate_luminaire_operating_point(_currents(request), _model(request, ldt), request.cct_k, request.cri)
         return _point_response(point)
     except (ValueError, KeyError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
@@ -247,8 +559,13 @@ def operating_point(request: GroupRequest):
 def compose(request: GroupRequest):
     try:
         ldt = parse_ldt_text(_decode_text(request.group_ldt_base64, "group_ldt"))
-        point = calculate_luminaire_operating_point(request.currents_ma, _model(request, ldt), request.cct_k, request.cri)
-        composed = compose_luminaire(ldt, point, cct_k=request.cct_k, cri=request.cri)
+        point = calculate_luminaire_operating_point(_currents(request), _model(request, ldt), request.cct_k, request.cri)
+        angles_deg = _module_angles(request)
+        composed = (
+            scale_ldt_runtime(ldt, point.total_flux_lm, point.total_driver_power_w)
+            if request.luminaire_mode == "fixed"
+            else compose_luminaire(ldt, point, angles_deg=angles_deg, cct_k=request.cct_k, cri=request.cri)
+        )
         encoded = base64.b64encode(ldt_text(composed).encode("latin-1")).decode("ascii")
         return {
             "operating_point": _point_response(point),
@@ -257,7 +574,7 @@ def compose(request: GroupRequest):
                 "name": composed.name,
                 "flux_lm": composed.flux_lm,
                 "power_w": composed.power_w,
-                "group_angles_deg": list(DEFAULT_GROUP_ANGLES_DEG),
+                "group_angles_deg": list(angles_deg),
             },
         }
     except (ValueError, KeyError) as exc:
@@ -277,6 +594,7 @@ def optimize(request: RoadRequest):
         finally:
             rtable_path.unlink(missing_ok=True)
         model = _model(request, ldt)
+        angles_deg = _module_angles(request)
         scenario = RoadScenario(
             height_m=request.height_m,
             spacing_m=request.spacing_m,
@@ -295,6 +613,8 @@ def optimize(request: RoadRequest):
             ldt, model, scenario, table,
             cct_k=request.cct_k, cri=request.cri,
             optimization_mode=request.optimization_mode,
+            angles_deg=angles_deg,
+            uniform=request.luminaire_mode == "fixed",
         )
         reference_road = (
             calculate_reference_road(reference_ldt, result.calculation.scenario, table)
@@ -312,11 +632,13 @@ def optimize(request: RoadRequest):
             "visual_grid": result.calculation.visual_grid,
             "photometric_profile": _profile_response(
                 ldt, result.calculation.operating_point, request.display_gamma_deg,
+                angles_deg=angles_deg,
                 symmetric=request.photometry_symmetry == "symmetric",
             ),
             "group_ldt": ldt_diagnostic(ldt),
             "luminaire_ldt": _result_photometry(
-                ldt, result.calculation.operating_point, cct_k=request.cct_k, cri=request.cri,
+                ldt, result.calculation.operating_point, angles_deg=angles_deg, cct_k=request.cct_k, cri=request.cri,
+                fixed=request.luminaire_mode == "fixed",
                 symmetric=request.photometry_symmetry == "symmetric",
             ),
             "reference_luminaire_ldt": ldt_diagnostic(reference_ldt) if reference_ldt else None,
@@ -331,7 +653,7 @@ def optimize(request: RoadRequest):
 
 @app.post("/api/road/calculate")
 def road_calculate(request: RoadRequest):
-    """Evaluate a supplied eight-channel profile without optimizing it."""
+    """Evaluate a supplied repeated-module profile without optimizing it."""
     try:
         ldt = parse_ldt_text(_decode_text(request.group_ldt_base64, "group_ldt"))
         reference_ldt = _reference_ldt(request)
@@ -352,9 +674,11 @@ def road_calculate(request: RoadRequest):
             lighting_class=request.lighting_class,
             photometry_symmetry=request.photometry_symmetry,
         )
+        angles_deg = _module_angles(request)
         result = calculate_road(
-            ldt, _model(request, ldt), request.currents_ma, scenario, table,
+            ldt, _model(request, ldt), _currents(request), scenario, table,
             cct_k=request.cct_k, cri=request.cri,
+            angles_deg=angles_deg,
         )
         reference_road = (
             calculate_reference_road(reference_ldt, scenario, table)
@@ -368,11 +692,13 @@ def road_calculate(request: RoadRequest):
             "visual_grid": result.visual_grid,
             "photometric_profile": _profile_response(
                 ldt, result.operating_point, request.display_gamma_deg,
+                angles_deg=angles_deg,
                 symmetric=request.photometry_symmetry == "symmetric",
             ),
             "group_ldt": ldt_diagnostic(ldt),
             "luminaire_ldt": _result_photometry(
-                ldt, result.operating_point, cct_k=request.cct_k, cri=request.cri,
+                ldt, result.operating_point, angles_deg=angles_deg, cct_k=request.cct_k, cri=request.cri,
+                fixed=request.luminaire_mode == "fixed",
                 symmetric=request.photometry_symmetry == "symmetric",
             ),
             "reference_luminaire_ldt": ldt_diagnostic(reference_ldt) if reference_ldt else None,

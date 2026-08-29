@@ -5962,6 +5962,7 @@ function Tunnel3DDrive({ lumList, W_m, H_m, shape, H_pared_m, tubeLength, mountH
   const [imgZoom, setImgZoom] = React.useState(1);
   const [showGuide, setShowGuide] = React.useState(true);
   const [videoSceneKey, setVideoSceneKey] = React.useState(initialSceneKey || 'sunny');
+  const [selectedPoint, setSelectedPoint] = React.useState(null);
   const speedRef = React.useRef(speed);
   const laneIdxRef = React.useRef(null);
   // "lightIntensity" ahora controla la EXPOSICION del tone mapping (ACES
@@ -5976,6 +5977,7 @@ function Tunnel3DDrive({ lumList, W_m, H_m, shape, H_pared_m, tubeLength, mountH
       setVideoSceneKey(initialSceneKey);
     }
   }, [initialSceneKey, sceneOptions.length]);
+  React.useEffect(() => { setSelectedPoint(null); }, [videoSceneKey]);
 
   const activeScene = sceneOptions.find(option => option.key === videoSceneKey)
     || sceneOptions[0]
@@ -6124,9 +6126,9 @@ function Tunnel3DDrive({ lumList, W_m, H_m, shape, H_pared_m, tubeLength, mountH
     );
     const profileMin = profileValues.length ? Math.min(...profileValues) : 0;
     const profileMax = profileValues.length ? Math.max(...profileValues) : 1;
-    const luminanceAt = (xValue, yValue) => {
+    const fieldForPosition = xValue => {
       if (!profileFields.length) return null;
-      const field = profileFields.reduce((best, candidate) => {
+      return profileFields.reduce((best, candidate) => {
         const start = Number(candidate.field_start), end = Number(candidate.field_end);
         const distance = xValue < start ? start - xValue : xValue > end ? xValue - end : 0;
         const bestDistance = !best ? Infinity : (
@@ -6137,6 +6139,10 @@ function Tunnel3DDrive({ lumList, W_m, H_m, shape, H_pared_m, tubeLength, mountH
         );
         return distance < bestDistance ? candidate : best;
       }, null);
+    };
+    const luminanceAt = (xValue, yValue) => {
+      const field = fieldForPosition(xValue);
+      if (!field) return null;
       const points = _asArr(field?.grid_points).map(point => ({
         x:Number(point?.x), y:Number(point?.y), L:Number(point?.L),
       })).filter(point => Number.isFinite(point.x) && Number.isFinite(point.y) && Number.isFinite(point.L));
@@ -6151,6 +6157,22 @@ function Tunnel3DDrive({ lumList, W_m, H_m, shape, H_pared_m, tubeLength, mountH
       return nearest.reduce((sum,point,index) => sum + point.L * weights[index], 0)
         / Math.max(1e-9, totalWeight);
     };
+    const wallLuminanceAt = (xValue, yValue, zValue) => {
+      const field = fieldForPosition(xValue);
+      const wall = field?.wall;
+      if (!wall?.sample_x_m?.length || !wall?.sample_z_m?.length) return null;
+      const side = yValue <= W_m / 2 ? 'left' : 'right';
+      const grid = side === 'left' ? wall.L_left_grid : wall.L_right_grid;
+      const xs = wall.sample_x_m.map(Number), zs = wall.sample_z_m.map(Number);
+      if (!Array.isArray(grid) || grid.length !== xs.length) return null;
+      const nearestX = xs.reduce((best, value, index) =>
+        Math.abs(value - xValue) < Math.abs(xs[best] - xValue) ? index : best, 0);
+      const nearestZ = zs.reduce((best, value, index) =>
+        Math.abs(value - zValue) < Math.abs(zs[best] - zValue) ? index : best, 0);
+      const row = Array.isArray(grid[nearestX]) ? grid[nearestX] : [];
+      const value = Number(row[nearestZ]);
+      return Number.isFinite(value) ? value : null;
+    };
     const profileStationValues = profileFields.flatMap(field => [
       Number(field.field_start), Number(field.field_end),
       ..._asArr(field.grid_points).map(point => Number(point?.x)),
@@ -6161,6 +6183,8 @@ function Tunnel3DDrive({ lumList, W_m, H_m, shape, H_pared_m, tubeLength, mountH
       .sort((a,b)=>a-b)
       .filter((sValue,index,values)=>index===0||Math.abs(sValue-values[index-1])>0.02)
       .map(sValue=>({s:sValue,frame:_routeFrameAt3D(sValue)}));
+    let tunnelSurfaceMesh = null;
+    let roadMesh = null;
 
     // ── Túnel extruido (dos anillos: x=0 y x=tubeLength) — recubrimiento
     //    pared/techo por color de vertice, interpolado segun altura real
@@ -6210,7 +6234,8 @@ function Tunnel3DDrive({ lumList, W_m, H_m, shape, H_pared_m, tubeLength, mountH
       const wallMat = new THREE.MeshStandardMaterial({
         vertexColors: true, roughness: 0.95, metalness: 0.0, side: THREE.DoubleSide,
       });
-      scene.add(new THREE.Mesh(wallGeo, wallMat));
+      tunnelSurfaceMesh = new THREE.Mesh(wallGeo, wallMat);
+      scene.add(tunnelSurfaceMesh);
 
       // Referencia visual de las paredes reflectantes: dos bandas longitudinales
       // discretas, colocadas sobre ambas paredes y siguiendo el eje OSM. El
@@ -6295,7 +6320,8 @@ function Tunnel3DDrive({ lumList, W_m, H_m, shape, H_pared_m, tubeLength, mountH
         vertexColors:true, color:0xffffff, roughness:1.0,
       });
       roadMat.toneMapped = false;
-      scene.add(new THREE.Mesh(roadGeo, roadMat));
+      roadMesh = new THREE.Mesh(roadGeo, roadMat);
+      scene.add(roadMesh);
     }
 
     // ── Carriles y arcenes: borde de calzada continuo + separadores
@@ -6483,6 +6509,58 @@ function Tunnel3DDrive({ lumList, W_m, H_m, shape, H_pared_m, tubeLength, mountH
     };
     setCam(-_APPROACH_M_3D, null);
 
+    const nearestRoutePoint = point => routeStations.reduce((best, station) => {
+      const dx=point.x-station.frame.x, dz=point.z-station.frame.z;
+      const distance=dx*dx+dz*dz;
+      if (best && distance>=best.distance) return best;
+      const lateral=(-station.frame.tz*dx)+(station.frame.tx*dz);
+      return {
+        distance,
+        s:station.s,
+        y:W_m/2-lateral,
+        z:point.y,
+      };
+    }, null);
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    const onCanvasClick = event => {
+      if (engineRef.current?.playing) return;
+      const rect=renderer.domElement.getBoundingClientRect();
+      pointer.x=((event.clientX-rect.left)/Math.max(1,rect.width))*2-1;
+      pointer.y=-((event.clientY-rect.top)/Math.max(1,rect.height))*2+1;
+      raycaster.setFromCamera(pointer,camera);
+      const hit=raycaster.intersectObjects(
+        [roadMesh,tunnelSurfaceMesh].filter(Boolean), false,
+      )[0];
+      if (!hit) { setSelectedPoint(null); return; }
+      const local=nearestRoutePoint(hit.point);
+      if (!local) return;
+      const field=fieldForPosition(local.s);
+      const isRoad=hit.object===roadMesh;
+      const surface=isRoad
+        ? 'Calzada'
+        : local.y<=Math.max(0.5,W_m*0.12) || local.y>=W_m-Math.max(0.5,W_m*0.12)
+          ? 'Pared'
+          : 'Techo';
+      const localL=isRoad
+        ? luminanceAt(local.s,local.y)
+        : wallLuminanceAt(local.s,local.y,local.z);
+      setSelectedPoint({
+        surface,
+        s:local.s,
+        y:local.y,
+        z:local.z,
+        L:localL,
+        fieldStart:Number(field?.field_start),
+        fieldEnd:Number(field?.field_end),
+        Lavg:Number(field?.Lavg_governing??field?.L),
+        U0:Number(field?.U0),
+        Ul:Number(field?.Ul),
+        TI:Number(field?.TI),
+      });
+    };
+    renderer.domElement.addEventListener('click', onCanvasClick);
+
     let raf = null, lastT = null;
     const animate = (t) => {
       raf = requestAnimationFrame(animate);
@@ -6520,6 +6598,7 @@ function Tunnel3DDrive({ lumList, W_m, H_m, shape, H_pared_m, tubeLength, mountH
 
     return () => {
       cancelAnimationFrame(raf);
+      renderer.domElement.removeEventListener('click', onCanvasClick);
       window.removeEventListener('resize', onResize);
       renderer.dispose();
       scene.traverse(obj => { if (obj.geometry) obj.geometry.dispose(); if (obj.material) obj.material.dispose(); });
@@ -6620,14 +6699,35 @@ function Tunnel3DDrive({ lumList, W_m, H_m, shape, H_pared_m, tubeLength, mountH
            </button>;
          })}
          <span style={{fontSize:'.60rem',color:'#cbd5e1',marginLeft:'auto',fontFamily:'monospace'}}>
-           {activeLumList.filter(lm=>Number(lm.flux_lm||0)>0).length} ud · {' '}
-           {activeLumList.reduce((sum,lm)=>sum+Number(lm.current_mA||0),0).toFixed(0)} mA
+            {activeLumList.filter(lm=>Number(lm.flux_lm||0)>0).length} ud · {' '}
+            {activeLumList.reduce((sum,lm)=>sum+Number(lm.current_mA||0),0).toFixed(0)} mA
            {activeLavgMin!=null && <> · L {activeLavgMin.toFixed(1)}–{activeLavgMax.toFixed(1)} cd/m²</>}
            {activeVerification?.minimum_U0!=null && <> · U₀ {Number(activeVerification.minimum_U0).toFixed(3)}</>}
-           {activeVerification?.minimum_Ul!=null && <> · Uₗ {Number(activeVerification.minimum_Ul).toFixed(3)}</>}
-         </span>
-       </div>
-       <div style={{position:'relative',width:'100%',height:380,borderRadius:6,overflow:'hidden'}}>
+            {activeVerification?.minimum_Ul!=null && <> · Uₗ {Number(activeVerification.minimum_Ul).toFixed(3)}</>}
+          </span>
+        </div>
+        <div style={{fontSize:'.61rem',color:'#94a3b8',marginBottom:7}}>
+          Pausa el recorrido y haz clic en la calzada, pared o techo para consultar la luminancia local.
+        </div>
+        {selectedPoint && (
+          <div style={{display:'flex',gap:10,alignItems:'center',flexWrap:'wrap',marginBottom:7,
+                       padding:'7px 9px',background:'#172033',border:'1px solid #334155',borderRadius:6,
+                       color:'#e2e8f0',fontSize:'.64rem'}}>
+            <strong style={{color:'#fbbf24'}}>{selectedPoint.surface}</strong>
+            <span>s={Number(selectedPoint.s).toFixed(2)} m · y={Number(selectedPoint.y).toFixed(2)} m</span>
+            <span>L local: <b>{Number.isFinite(selectedPoint.L) ? `${selectedPoint.L.toFixed(3)} cd/m²` : 'no disponible'}</b></span>
+            {Number.isFinite(selectedPoint.fieldStart)&&Number.isFinite(selectedPoint.fieldEnd)&&(
+              <span>Campo {selectedPoint.fieldStart.toFixed(1)}–{selectedPoint.fieldEnd.toFixed(1)} m ·
+                {' '}L̄={Number.isFinite(selectedPoint.Lavg)?`${selectedPoint.Lavg.toFixed(3)} cd/m²`:'—'} ·
+                {' '}U₀={Number.isFinite(selectedPoint.U0)?selectedPoint.U0.toFixed(3):'—'} ·
+                {' '}Uₗ={Number.isFinite(selectedPoint.Ul)?selectedPoint.Ul.toFixed(3):'—'} ·
+                {' '}TI={Number.isFinite(selectedPoint.TI)?`${selectedPoint.TI.toFixed(2)} %`:'—'}
+              </span>
+            )}
+            <span style={{color:'#94a3b8'}}>U₀/Uₗ/TI son métricas del campo CIE 140 asociado.</span>
+          </div>
+        )}
+        <div style={{position:'relative',width:'100%',height:380,borderRadius:6,overflow:'hidden'}}>
          <div ref={mountRef} style={{width:'100%',height:'100%'}}/>
          {!hasRealRoadProfile && (
            <div style={{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',

@@ -1,0 +1,16 @@
+Metadata-Version: 2.4
+Name: salvi-luminaria-optimizer
+Version: 0.1.0
+Summary: Photometric and electrical optimizer for repeated-module HL2X luminaires
+Requires-Python: >=3.11
+Requires-Dist: fastapi>=0.110
+Requires-Dist: numpy>=1.26
+Requires-Dist: pydantic>=2.0
+Requires-Dist: uvicorn>=0.29
+Provides-Extra: geometry
+Requires-Dist: cadquery<3,>=2.8; extra == "geometry"
+Requires-Dist: trimesh<6,>=5; extra == "geometry"
+Requires-Dist: embreex<5,>=4; extra == "geometry"
+Provides-Extra: solidworks
+Requires-Dist: pywin32>=306; sys_platform == "win32" and extra == "solidworks"
+Requires-Dist: rarfile>=4.2; extra == "solidworks"

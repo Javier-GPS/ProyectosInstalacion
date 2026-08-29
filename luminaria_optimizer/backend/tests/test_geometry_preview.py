@@ -3,9 +3,10 @@ from types import SimpleNamespace
 import numpy as np
 import trimesh
 
-from luminaire_optimizer.geometry import StepGeometry
-from luminaire_optimizer.optical import trace_tm25
+from luminaire_optimizer.geometry import StepGeometry, _find_emission_frame
+from luminaire_optimizer.optical import _mesh_hits, trace_tm25
 from luminaire_optimizer.ray_angles import direction_angles
+from luminaire_optimizer.solidworks_session import SolidWorksSession, _NativePartMesh
 
 
 class _Origin:
@@ -30,6 +31,17 @@ class _RaySet:
     def sample(self, count: int, *, seed: int):
         assert count == self.ray_count
         return self.rays.copy()
+
+
+class _HitIntersector:
+    def __init__(self, first, all_hits):
+        self.first = first
+        self.all_hits = all_hits
+        self.calls = []
+
+    def intersects_location(self, origins, directions, *, multiple_hits):
+        self.calls.append((len(origins), multiple_hits))
+        return self.all_hits if multiple_hits else self.first
 
 
 def test_step_geometry_serializes_global_meshes_as_json_lists():
@@ -67,6 +79,89 @@ def test_step_geometry_serializes_global_meshes_as_json_lists():
     assert payload["leds"][2]["vertices"] == [[40.0, 50.0, 60.0]]
 
 
+def test_transform_native_part_preserves_triangle_surface_ids():
+    mesh = trimesh.creation.box(extents=(2.0, 2.0, 2.0))
+    surface_ids = tuple(range(100, 100 + len(mesh.faces)))
+    part = _NativePartMesh(
+        "lens", mesh, surface_ids, (), (), (), (),
+    )
+
+    transformed = SolidWorksSession._transform_native_part(part, np.eye(3))
+
+    np.testing.assert_array_equal(transformed.mesh.triangle_surface_ids, surface_ids)
+
+
+def test_emission_frame_selects_face_toward_lens_instead_of_global_z():
+    import cadquery as cq
+
+    led = cq.Workplane("XY").box(2.0, 2.0, 2.0).translate((0.0, -2.0, 0.0)).val()
+    lens = cq.Workplane("XY").box(4.0, 4.0, 4.0).translate((0.0, 3.0, 0.0)).val()
+    frame = _find_emission_frame(cq, led, lens.Center())
+
+    np.testing.assert_allclose(frame.origin.toTuple(), (0.0, -1.0, 0.0), atol=1e-12)
+    np.testing.assert_allclose(frame.normal.toTuple(), (0.0, 1.0, 0.0), atol=1e-12)
+
+
+def test_mesh_hits_uses_first_intersection_without_fallback():
+    intersector = _HitIntersector(
+        (
+            np.array([[0.0, 0.0, 2.0], [0.0, 0.0, 3.0]]),
+            np.array([0, 1]),
+            np.array([1, 2]),
+        ),
+        (np.empty((0, 3)), np.empty(0, dtype=np.int64), np.empty(0, dtype=np.int64)),
+    )
+    mesh = SimpleNamespace(
+        ray=intersector,
+        face_normals=np.eye(3),
+    )
+
+    distance, points, normals, selected, triangles = _mesh_hits(
+        mesh,
+        np.zeros((2, 3)),
+        np.tile(np.array([[0.0, 0.0, 1.0]]), (2, 1)),
+    )
+
+    assert intersector.calls == [(2, False)]
+    np.testing.assert_array_equal(selected, [True, True])
+    np.testing.assert_array_equal(triangles, [1, 2])
+    np.testing.assert_allclose(distance, [2.0, 3.0])
+    np.testing.assert_allclose(points[:, 2], [2.0, 3.0])
+    np.testing.assert_allclose(normals, np.eye(3)[[1, 2]])
+
+
+def test_mesh_hits_falls_back_only_for_autocontacts():
+    intersector = _HitIntersector(
+        (
+            np.array([[0.0, 0.0, 0.00005]]),
+            np.array([0]),
+            np.array([0]),
+        ),
+        (
+            np.array([[0.0, 0.0, 0.00005], [0.0, 0.0, 2.0]]),
+            np.array([0, 0]),
+            np.array([0, 1]),
+        ),
+    )
+    mesh = SimpleNamespace(
+        ray=intersector,
+        face_normals=np.eye(3),
+    )
+
+    distance, points, normals, selected, triangles = _mesh_hits(
+        mesh,
+        np.zeros((1, 3)),
+        np.array([[0.0, 0.0, 1.0]]),
+    )
+
+    assert intersector.calls == [(1, False), (1, True)]
+    np.testing.assert_array_equal(selected, [True])
+    np.testing.assert_array_equal(triangles, [1])
+    np.testing.assert_allclose(distance, [2.0])
+    np.testing.assert_allclose(points[0], [0.0, 0.0, 2.0])
+    np.testing.assert_allclose(normals[0], [0.0, 1.0, 0.0])
+
+
 def test_visual_trace_is_bounded_and_keeps_distinct_statuses():
     lens_mesh = trimesh.creation.box(extents=(2.0, 2.0, 2.0))
     lens_mesh.triangle_surface_ids = np.arange(len(lens_mesh.faces), dtype=np.int64) + 100
@@ -94,6 +189,7 @@ def test_visual_trace_is_bounded_and_keeps_distinct_statuses():
     }
     assert all(detail["led_index"] in (0, 1, 2) for detail in details)
     assert all(len(detail["origin_xyz"]) == 3 for detail in details)
+    assert all(len(detail["input_direction_xyz"]) == 3 for detail in details)
     assert all(detail["c_deg"] is not None for detail in details)
     assert all(detail["gamma_deg"] is not None for detail in details)
     assert all("entry_surface_index" in detail for detail in details)
@@ -118,6 +214,21 @@ def test_visual_trace_is_bounded_and_keeps_distinct_statuses():
     )
     assert result.traced_ray_count == 9
     assert result.transmitted_rays.shape[1] == 7
+    surface_energy = result.diagnostic()["surface_energy"]
+    assert surface_energy
+    assert [item["surface_index"] for item in surface_energy] == sorted(
+        item["surface_index"] for item in surface_energy
+    )
+    assert all(
+        np.isfinite(item[field]) and item[field] >= 0.0
+        for item in surface_energy
+        for field in (
+            "entry_flux_lm", "tir_flux_lm", "exit_flux_lm",
+            "entry_pct", "tir_pct", "exit_pct",
+            "entry_incidence_mean_deg", "entry_incidence_max_deg",
+        )
+    )
+    assert any(item["entry_flux_lm"] > 0.0 for item in surface_energy)
 
 
 def test_preview_angles_use_the_same_mirror_and_offset_order_as_photometry():
@@ -160,3 +271,5 @@ def test_non_accelerated_preview_keeps_empty_reflection_surface_indices(monkeypa
     assert result.preview_rays_detail
     assert all(detail["reflection_points_xyz"] == [] for detail in result.preview_rays_detail)
     assert all(detail["reflection_surface_indices"] == [] for detail in result.preview_rays_detail)
+    assert result.surface_energy == ()
+    assert result.diagnostic()["surface_energy"] == []

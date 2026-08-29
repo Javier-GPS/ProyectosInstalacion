@@ -113,6 +113,7 @@ def precompute_luminance_influence(
     lumen from one optical group. This makes relative-current searches a
     matrix multiplication instead of a complete photometric recalculation.
     """
+    group_ldt.validate()
     xs, _, _ = _road_points(scenario)
     lane_ys = _lane_y_points(scenario)
     lane_centres = []
@@ -227,7 +228,7 @@ def _group_intensity_cd(
     *,
     symmetric: bool = False,
 ) -> float:
-    """Return the absolute candela from the eight virtual groups.
+    """Return the absolute candela from the virtual groups.
 
     ``c_luminaire_deg`` is already expressed in the complete luminaire frame.
     Each group samples the unchanged base LDT at the azimuth relative to its
@@ -261,11 +262,11 @@ def _base_group_intensity(
     *,
     symmetric: bool,
 ) -> float:
-    value = group_ldt.intensity_cd_per_klm(c_deg, gamma_deg)
+    value = group_ldt._intensity_cd_per_klm_unchecked(c_deg, gamma_deg)
     if not symmetric:
         return value
     reflected_c = (180.0 - c_deg) % 360.0
-    return 0.5 * (value + group_ldt.intensity_cd_per_klm(reflected_c, gamma_deg))
+    return 0.5 * (value + group_ldt._intensity_cd_per_klm_unchecked(reflected_c, gamma_deg))
 
 
 def photometric_azimuth_profile(
@@ -275,10 +276,11 @@ def photometric_azimuth_profile(
     gamma_deg: float = 45.0,
     samples: int = 360,
     symmetric: bool = False,
+    angles_deg: tuple[float, ...] | None = None,
 ) -> dict[str, object]:
     """Return the real oriented luminaire profile at one gamma angle.
 
-    The profile is calculated directly from the base group LDT and the eight
+    The profile is calculated directly from the base group LDT and the
     virtual sources. It is intended for orientation diagnostics and export,
     not as a replacement for the point-by-point road calculation.
     """
@@ -286,7 +288,10 @@ def photometric_azimuth_profile(
         raise ValueError("gamma_deg must be between 0 and 180")
     if samples < 8:
         raise ValueError("samples must be at least 8")
-    sources = _virtual_sources(operating)
+    group_ldt.validate()
+    if angles_deg is None:
+        angles_deg = tuple((index + 0.5) * 180.0 / len(operating.groups) for index in range(len(operating.groups)))
+    sources = _virtual_sources(operating, angles_deg)
     c_rotation = group_c_rotation_deg(group_ldt)
     c_angles = [360.0 * index / samples for index in range(samples)]
     values_cd = [
@@ -320,7 +325,7 @@ def photometric_azimuth_profile(
         "intensity_cd": values_cd,
         "max_intensity_cd": maximum,
         "normalized": [value / maximum if maximum > 0 else 0.0 for value in values_cd],
-        "group_angles_deg": list(DEFAULT_GROUP_ANGLES_DEG),
+        "group_angles_deg": list(angles_deg),
         "groups": group_profiles,
     }
 
@@ -609,11 +614,15 @@ def calculate_road(
     cri: int,
     include_visual_grid: bool = True,
     include_glare_metrics: bool = True,
+    angles_deg: tuple[float, ...] | None = None,
 ) -> RoadCalculation:
+    group_ldt.validate()
     operating = calculate_luminaire_operating_point(currents_ma, model, cct_k, cri)
+    if angles_deg is None:
+        angles_deg = tuple((index + 0.5) * 180.0 / model.group_count for index in range(model.group_count))
     metrics, visual_grid = _calculate_road_for_sources(
         group_ldt,
-        _virtual_sources(operating),
+        _virtual_sources(operating, angles_deg),
         scenario,
         rtable,
         include_visual_grid=include_visual_grid,
@@ -632,9 +641,10 @@ def calculate_reference_road(
     include_visual_grid: bool = True,
     include_glare_metrics: bool = True,
 ) -> ReferenceRoadCalculation:
-    """Evaluate a complete LDT independently from the eight-group model."""
+    """Evaluate a complete LDT independently from the repeated-group model."""
     # The uploaded reference must remain an exact photometric benchmark even
     # when the active design scenario is configured for optional symmetry.
+    luminaire_ldt.validate()
     reference_scenario = replace(scenario, photometry_symmetry="asymmetric")
     metrics, visual_grid = _calculate_road_for_sources(
         luminaire_ldt,

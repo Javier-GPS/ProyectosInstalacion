@@ -1,4 +1,4 @@
-"""Continuous critical-point guided optimizer for the eight-channel luminaire."""
+"""Continuous critical-point guided optimizer for repeated-module luminaires."""
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
@@ -30,11 +30,17 @@ class OptimizationResult:
     relative_currents_ma: tuple[float, ...] = ()
 
 
-def _symmetric_vector(pair_currents: list[float] | tuple[float, ...]) -> list[float]:
-    if len(pair_currents) != 4:
-        raise ValueError("symmetric HL2X optimization requires four pair currents")
-    return [pair_currents[0], pair_currents[1], pair_currents[2], pair_currents[3],
-            pair_currents[3], pair_currents[2], pair_currents[1], pair_currents[0]]
+def _symmetric_vector(
+    pair_currents: list[float] | tuple[float, ...], group_count: int = 8,
+) -> list[float]:
+    expected = (group_count + 1) // 2
+    if len(pair_currents) != expected:
+        raise ValueError(f"symmetric optimization requires {expected} independent currents")
+    result = [0.0] * group_count
+    for index, current in enumerate(pair_currents):
+        result[index] = current
+        result[group_count - index - 1] = current
+    return result
 
 
 def _uniformity_quality(uo: float, ul: float) -> tuple[float, ...]:
@@ -103,10 +109,16 @@ def _guided_relative_profile(
     cri: int,
     initial_current_ma: float,
     symmetric: bool,
+    uniform: bool = False,
 ) -> tuple[list[float], tuple[float, float, float], int]:
     """Adjust only groups that influence the current Uo/Ul critical points."""
     current = np.full(model.group_count, float(initial_current_ma), dtype=float)
-    variables = [(index,) for index in range(model.group_count)] if not symmetric else [(0, 7), (1, 6), (2, 5), (3, 4)]
+    variables = (
+        [tuple(range(model.group_count))]
+        if uniform else
+        [(index,) for index in range(model.group_count)]
+        if not symmetric else [tuple(sorted({index, model.group_count - index - 1})) for index in range((model.group_count + 1) // 2)]
+    )
     step = 100.0
     iterations = 0
 
@@ -159,14 +171,14 @@ def _guided_relative_profile(
     return current.tolist(), luminance_uniformity(luminance), iterations
 
 
-def _scaled_symmetric_vector(pair_currents: list[float], maximum: float) -> list[float]:
+def _scaled_symmetric_vector(pair_currents: list[float], maximum: float, group_count: int) -> list[float]:
     nonzero = max(pair_currents, default=0.0)
     if nonzero <= 0.0:
-        return [0.0] * 8
+        return [0.0] * group_count
     scale = maximum / nonzero
-    pair = [value * scale for value in pair_currents[:4]]
+    pair = [value * scale for value in pair_currents]
     pair = [max(0.0, min(HL2X_CURRENT_MAX_MA, value)) for value in pair]
-    return _symmetric_vector(pair)
+    return _symmetric_vector(pair, group_count)
 
 
 def _scaled_vector(relative_currents: list[float], maximum: float) -> list[float]:
@@ -175,6 +187,14 @@ def _scaled_vector(relative_currents: list[float], maximum: float) -> list[float
         return [0.0] * len(relative_currents)
     scale = maximum / nonzero
     return [max(0.0, min(HL2X_CURRENT_MAX_MA, value * scale)) for value in relative_currents]
+
+
+def _scaled_uniform_vector(relative_currents: list[float], maximum: float, group_count: int) -> list[float]:
+    nonzero = max(relative_currents, default=0.0)
+    if nonzero <= 0.0:
+        return [0.0] * group_count
+    current = max(0.0, min(HL2X_CURRENT_MAX_MA, maximum))
+    return [current] * group_count
 
 
 def _final_scale_candidates(
@@ -188,18 +208,24 @@ def _final_scale_candidates(
     cct_k: int,
     cri: int,
     symmetric: bool,
+    angles_deg: tuple[float, ...],
+    uniform: bool = False,
 ) -> list[list[float]]:
     """Find the useful absolute scale with a short monotonic search."""
     if max(relative_currents, default=0.0) <= 0.0:
-        return [[0.0] * (8 if symmetric else len(relative_currents))]
-
-    scale_vector = _scaled_symmetric_vector if symmetric else _scaled_vector
+        return [[0.0] * model.group_count]
 
     req = requirements_for(scenario.lighting_class)
     def evaluate_lavg(maximum: float) -> float:
         maximum = max(0.0, min(HL2X_CURRENT_MAX_MA, float(maximum)))
+        vector = (
+            _scaled_symmetric_vector(relative_currents, maximum, model.group_count)
+            if symmetric else _scaled_vector(relative_currents, maximum)
+        )
+        if uniform:
+            vector = _scaled_uniform_vector(relative_currents, maximum, model.group_count)
         operating = calculate_luminaire_operating_point(
-            scale_vector(relative_currents, maximum), model, cct_k, cri,
+            vector, model, cct_k, cri,
         )
         flux = np.array([group.group_flux_lm for group in operating.groups], dtype=float)
         return luminance_uniformity(luminance_from_flux(influence, flux))[0]
@@ -218,7 +244,16 @@ def _final_scale_candidates(
 
     levels = {0.0, float(HL2X_CURRENT_MAX_MA), target}
     levels.update(max(0.0, min(float(HL2X_CURRENT_MAX_MA), target + offset)) for offset in (-200.0, -100.0, -25.0, 25.0, 100.0, 200.0))
-    return [scale_vector(relative_currents, level) for level in sorted(levels)]
+    return [
+        (
+            _scaled_uniform_vector(relative_currents, level, model.group_count)
+            if uniform else (
+                _scaled_symmetric_vector(relative_currents, level, model.group_count)
+                if symmetric else _scaled_vector(relative_currents, level)
+            )
+        )
+        for level in sorted(levels)
+    ]
 
 
 def _final_quality(calculation: RoadCalculation, scenario: RoadScenario) -> tuple[float, ...]:
@@ -253,21 +288,25 @@ def optimize_currents_symmetric(
     cri: int,
     initial_current_ma: float = 700.0,
     include_visual_grid: bool = True,
+    angles_deg: tuple[float, ...] = (),
+    uniform: bool = False,
 ) -> OptimizationResult:
     """Optimize mirrored groups first, then apply thermal/power scaling."""
     # The mode only constrains currents. Never alter or symmetrise the LDT.
     scenario = replace(scenario, photometry_symmetry="asymmetric")
-    influence = precompute_luminance_influence(group_ldt, scenario, rtable)
+    angles_deg = angles_deg or tuple((index + 0.5) * 180.0 / model.group_count for index in range(model.group_count))
+    influence = precompute_luminance_influence(group_ldt, scenario, rtable, angles_deg=angles_deg)
     relative_vector, _, iterations = _guided_relative_profile(
         model, scenario, influence, cct_k=cct_k, cri=cri,
         initial_current_ma=initial_current_ma, symmetric=True,
     )
-    pair_currents = relative_vector[:4]
+    pair_currents = relative_vector[:(model.group_count + 1) // 2]
     candidates = _final_scale_candidates(
         pair_currents, group_ldt, model, scenario, rtable,
         influence,
         cct_k=cct_k, cri=cri,
         symmetric=True,
+        angles_deg=angles_deg,
     )
     best_calculation = None
     best_quality = None
@@ -277,6 +316,7 @@ def optimize_currents_symmetric(
                 group_ldt, model, candidate_vector, scenario, rtable,
                 cct_k=cct_k, cri=cri,
                 include_visual_grid=False, include_glare_metrics=True,
+                angles_deg=angles_deg,
             )
         except ValueError:
             continue
@@ -293,11 +333,12 @@ def optimize_currents_symmetric(
     final = calculate_road(
         group_ldt, model, list(best_calculation.operating_point.currents_ma),
         scenario, rtable, cct_k=cct_k, cri=cri, include_visual_grid=include_visual_grid,
+        angles_deg=angles_deg,
     )
     return OptimizationResult(
         tuple(final.operating_point.currents_ma), final, final.metrics.compliant,
         iterations + 1, message,
-        tuple(_scaled_symmetric_vector(pair_currents, int(HL2X_CURRENT_MAX_MA))),
+        tuple(_scaled_symmetric_vector(pair_currents, int(HL2X_CURRENT_MAX_MA), model.group_count)),
     )
 
 
@@ -311,18 +352,24 @@ def optimize_currents(
     cri: int,
     initial_current_ma: float = 700.0,
     include_visual_grid: bool = True,
+    angles_deg: tuple[float, ...] = (),
+    uniform: bool = False,
 ) -> OptimizationResult:
     # Independent and symmetric modes both use the measured LDT as supplied.
     scenario = replace(scenario, photometry_symmetry="asymmetric")
-    influence = precompute_luminance_influence(group_ldt, scenario, rtable)
+    angles_deg = angles_deg or tuple((index + 0.5) * 180.0 / model.group_count for index in range(model.group_count))
+    influence = precompute_luminance_influence(group_ldt, scenario, rtable, angles_deg=angles_deg)
     relative_vector, _, iterations = _guided_relative_profile(
         model, scenario, influence, cct_k=cct_k, cri=cri,
         initial_current_ma=initial_current_ma, symmetric=False,
+        uniform=uniform,
     )
     candidates = _final_scale_candidates(
         relative_vector, group_ldt, model, scenario, rtable,
         influence,
         cct_k=cct_k, cri=cri, symmetric=False,
+        angles_deg=angles_deg,
+        uniform=uniform,
     )
     best_calculation = None
     best_quality = None
@@ -332,6 +379,7 @@ def optimize_currents(
                 group_ldt, model, candidate_vector, scenario, rtable,
                 cct_k=cct_k, cri=cri,
                 include_visual_grid=False, include_glare_metrics=True,
+                angles_deg=angles_deg,
             )
         except ValueError:
             continue
@@ -344,6 +392,7 @@ def optimize_currents(
     final = calculate_road(
         group_ldt, model, list(best_calculation.operating_point.currents_ma),
         scenario, rtable, cct_k=cct_k, cri=cri, include_visual_grid=include_visual_grid,
+        angles_deg=angles_deg,
     )
     message = "" if final.metrics.compliant else (
         "Perfil independiente optimizado en Uo/Ul; se conserva la mejor escala validada"
@@ -365,6 +414,8 @@ def optimize_currents_and_tilt(
     cri: int,
     optimization_mode: str,
     initial_current_ma: float = 700.0,
+    angles_deg: tuple[float, ...] = (),
+    uniform: bool = False,
 ) -> OptimizationResult:
     """Optimize relative currents and tilt on the discrete engineering grid."""
     if optimization_mode not in {"symmetric", "independent"}:
@@ -385,17 +436,21 @@ def optimize_currents_and_tilt(
                 continue
             evaluated_tilts.add(tilt_deg)
             candidate_scenario = replace(scenario, tilt_deg=tilt_deg)
-            if optimization_mode == "symmetric":
+            if optimization_mode == "symmetric" and not uniform:
                 candidate = optimize_currents_symmetric(
                     group_ldt, model, candidate_scenario, rtable,
                     cct_k=cct_k, cri=cri, initial_current_ma=initial_current_ma,
                     include_visual_grid=False,
+                    angles_deg=angles_deg,
+                    uniform=uniform,
                 )
             else:
                 candidate = optimize_currents(
                     group_ldt, model, candidate_scenario, rtable,
                     cct_k=cct_k, cri=cri, initial_current_ma=initial_current_ma,
                     include_visual_grid=False,
+                    angles_deg=angles_deg,
+                    uniform=uniform,
                 )
             total_iterations += candidate.iterations
             quality = _final_quality(candidate.calculation, candidate_scenario) + (abs(tilt_deg),)
@@ -410,17 +465,21 @@ def optimize_currents_and_tilt(
         tilt_deg=best_result.calculation.scenario.tilt_deg,
         photometry_symmetry="asymmetric",
     )
-    if optimization_mode == "symmetric":
+    if optimization_mode == "symmetric" and not uniform:
         refined = optimize_currents_symmetric(
             group_ldt, model, selected_scenario, rtable,
             cct_k=cct_k, cri=cri, initial_current_ma=initial_current_ma,
             include_visual_grid=True,
+            angles_deg=angles_deg,
+            uniform=uniform,
         )
     else:
         refined = optimize_currents(
             group_ldt, model, selected_scenario, rtable,
             cct_k=cct_k, cri=cri, initial_current_ma=initial_current_ma,
             include_visual_grid=True,
+            angles_deg=angles_deg,
+            uniform=uniform,
         )
     message = refined.message
     tilt_message = f"Tilt optimizado: {selected_scenario.tilt_deg:+.1f}°."

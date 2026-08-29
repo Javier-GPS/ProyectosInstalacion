@@ -1,0 +1,15 @@
+fastapi>=0.110
+numpy>=1.26
+pydantic>=2.0
+uvicorn>=0.29
+
+[geometry]
+cadquery<3,>=2.8
+trimesh<6,>=5
+embreex<5,>=4
+
+[solidworks]
+rarfile>=4.2
+
+[solidworks:sys_platform == "win32"]
+pywin32>=306

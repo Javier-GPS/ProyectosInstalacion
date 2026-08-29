@@ -3,7 +3,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from luminaire_optimizer.composition import DEFAULT_GROUP_ANGLES_DEG, GROUP_C_ROTATION_DEG, compose_luminaire, group_c_rotation_deg
+from luminaire_optimizer.composition import DEFAULT_GROUP_ANGLES_DEG, GROUP_C_ROTATION_DEG, compose_luminaire, group_c_rotation_deg, scale_ldt_runtime
 from luminaire_optimizer.hl2x import Hl2xModel, calculate_luminaire_operating_point
 from luminaire_optimizer.ldt import LdtPhotometry, LampSet, ldt_diagnostic, ldt_text, parse_ldt_text
 from luminaire_optimizer.r_tables import ReducedLuminanceTable, load_rtable
@@ -27,6 +27,7 @@ from luminaire_optimizer.rayset import parse_tm25
 from luminaire_optimizer.optical import _refract
 from luminaire_optimizer.ray_photometry import rays_to_ldt
 from luminaire_optimizer.calibration import calibrate_orientation
+from luminaire_optimizer.api import GroupRequest, _currents, _model, _module_angles
 
 
 def group_ldt() -> LdtPhotometry:
@@ -243,6 +244,42 @@ def test_beta_uses_cie_140_complementary_angle():
 def test_symmetric_profile_mirrors_the_four_optical_pairs():
     assert _symmetric_vector([50, 100, 150, 200]) == [50, 100, 150, 200, 200, 150, 100, 50]
     assert DEFAULT_GROUP_ANGLES_DEG[0] + DEFAULT_GROUP_ANGLES_DEG[-1] == pytest.approx(180.0)
+
+
+def test_symmetric_profile_supports_an_odd_module_count():
+    assert _symmetric_vector([50, 100], 3) == [50, 100, 50]
+
+
+def test_custom_module_angles_flow_through_road_and_profile():
+    model = Hl2xModel(897.81, group_count=3)
+    angles = (30.0, 90.0, 150.0)
+    operating = calculate_luminaire_operating_point([700] * 3, model, 4000, 70)
+    profile = photometric_azimuth_profile(group_ldt(), operating, angles_deg=angles, samples=36)
+    assert profile["group_angles_deg"] == list(angles)
+    assert [group["azimuth_deg"] for group in profile["groups"]] == list(angles)
+
+
+def test_fixed_runtime_ldt_preserves_normalized_photometry():
+    runtime = scale_ldt_runtime(group_ldt(), 500.0, 4.0)
+    assert runtime.flux_lm == pytest.approx(500.0)
+    assert runtime.power_w == pytest.approx(4.0)
+    assert runtime.intensities_cd_per_klm == group_ldt().intensities_cd_per_klm
+
+
+def test_fixed_variant_repeats_one_led_lens_with_global_current():
+    request = GroupRequest(
+        group_ldt_base64="",
+        currents_ma=[700.0],
+        module_count=4,
+        luminaire_mode="fixed",
+        global_current_ma=600.0,
+        leds_per_group=1,
+    )
+    model = _model(request, group_ldt())
+    assert model.group_count == 4
+    assert model.leds_per_group == 1
+    assert _currents(request) == [600.0] * 4
+    assert _module_angles(request) == (90.0,) * 4
 
 
 def test_uniformity_quality_prioritizes_the_weakest_uniformity():

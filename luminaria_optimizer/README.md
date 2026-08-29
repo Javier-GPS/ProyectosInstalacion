@@ -1,7 +1,7 @@
 # Luminaria Optimizer
 
-Backend independiente para optimizar una luminaria de ocho grupos de tres
-LED LUXEON HL2X 3535. La primera fase calcula los puntos eléctricos y
+Backend independiente para optimizar luminarias con módulos de LED LUXEON HL2X
+3535. La primera fase calcula los puntos eléctricos y
 térmicos, compone un LDT sintético a partir del LDT del grupo y prepara las
 tablas de reflexión para el cálculo vial.
 
@@ -13,13 +13,14 @@ tablas de reflexión para el cálculo vial.
 - La regulación permitida es de 0 a 2.000 mA en pasos de 50 mA.
 - El LDT del grupo ya contiene los tres LED y la lente; no se vuelve a aplicar
   una eficiencia óptica sobre su flujo de referencia.
-- Durante el cálculo vial se mantienen ocho fuentes virtuales en la posición
+- Durante el cálculo vial se mantienen fuentes virtuales en la posición
   de cada luminaria. Cada fuente conserva el LDT base y su azimut de grupo y
   se escala con su propio flujo. No se regenera un LDT compuesto por cada
   combinación de corrientes.
 - El modelo de flujo, `Vf`, temperatura y potencia sigue el acoplamiento
   iterativo empleado por los motores de SALVI.
-- La primera versión supone que los ocho canales están activos
+- El modo modular permite configurar el número de canales; el modo fijo utiliza
+  una única corriente global
   simultáneamente; el modo temporal del multiplexor queda explícito en la
   configuración y no se inventa un `duty-cycle`.
 - Un LDT compuesto es una predicción calculada y no sustituye una medición de
@@ -49,10 +50,11 @@ Endpoints iniciales:
 - `POST /api/luminaire/compose`
 - `POST /api/road/calculate`
 - `POST /api/optimize`
+- `POST /api/optimizer/chat`
 
 `/api/luminaire/compose` es una exportación opcional para documentar una
-solución. `/api/road/calculate` y `/api/optimize` calculan directamente la
-suma de las ocho fuentes virtuales.
+ solución. `/api/road/calculate` y `/api/optimize` calculan directamente la
+ suma de las fuentes virtuales configuradas.
 
 Ambos endpoints viales aceptan opcionalmente `reference_luminaire_ldt_base64`.
 Cuando se proporciona, evalúan también ese LDT completo como una única fuente
@@ -79,6 +81,20 @@ procedimiento físico aplicable.
 
 El paquete no depende de `luxStudio` ni de la aplicación de túneles.
 
+## Modelos CAD
+
+Los modelos nativos se mantienen en `modelos lentes/` en la raíz del proyecto.
+Se admiten piezas `SLDPRT`, ensamblajes `SLDASM` y paquetes `ZIP` o `RAR` que
+contengan el ensamblaje y sus piezas referenciadas. La aplicación abre el
+documento nativo mediante SolidWorks y obtiene la teselación de sus caras en
+memoria para el trazado de rayos; el usuario no tiene que exportar STEP.
+
+Para habilitar la edición CAD y la lectura de paquetes RAR:
+
+```text
+python -m pip install -e ".[solidworks,geometry]"
+```
+
 ## Ray file TM-25
 
 El backend expone `parse_tm25()` para leer ray files binarios IES TM-25-13.
@@ -87,7 +103,7 @@ hacerse por bloques sin cargar el fichero completo en memoria. El ray file
 `LUXEON HL2Z_5000000Rays_IESTM25.tm25ray` corresponde a un LED HL2Z 4070
 individual; no sustituye al LDT del grupo de tres LED y lente.
 
-Para habilitar la geometría STEP en otra instalación:
+Para habilitar la geometría CAD nativa en otra instalación:
 
 ```text
 python -m pip install -e ".[geometry]"
@@ -101,12 +117,20 @@ La geometría se tessela una vez y las intersecciones se resuelven con Embree;
 la prueba de `1.000.000` de rayos por LED produjo `3.000.000` trayectorias en
 `149 s` en el entorno de desarrollo.
 
-La pantalla Modelo ofrece el endpoint `/api/geometry/trace` mediante el modo
-`Calcular desde STEP`: recibe el ensamblaje y el TM-25, calcula el LDT y carga
-el resultado como LDT de grupo para la fase vial. La respuesta devuelve una
-muestra visual de rayos transmitidos, no el millón completo. El cálculo es
-síncrono en esta primera versión; el siguiente paso natural es convertirlo en
-un trabajo con progreso y cancelación.
+La pantalla Modelo usa los endpoints CAD nativos mediante el modo
+`Calcular desde la lente`: recibe el modelo y el TM-25, detecta sus parámetros,
+permite modificarlos en la propia interfaz, calcula el LDT y carga el resultado
+como LDT de grupo para la fase vial. La respuesta devuelve una muestra visual
+de rayos transmitidos, no el millón completo. Cada trazado de una pieza conserva
+una copia nativa con marca temporal en `modelos lentes/`; el original no se
+sobrescribe. Los cambios de conversación o configuración no crean candidatos
+nuevos. El endpoint STEP se conserva solo para importaciones externas.
+
+La pantalla Modelo incluye también el diálogo `Copiloto óptico`, que usa el
+trazado, las superficies y los parámetros CAD como contexto para discutir
+estrategias antes de aplicarlas. Las propuestas requieren aprobación explícita;
+la ejecución automática de barridos paramétricos y su cancelación quedan como
+la siguiente ampliación del flujo.
 
 La optimización vial usa por defecto corrientes independientes y conserva la
 direccionalidad del LDT. El modo simétrico (`G1=G8`, `G2=G7`, `G3=G6`,

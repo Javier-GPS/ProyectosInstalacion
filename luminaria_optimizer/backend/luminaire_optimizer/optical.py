@@ -35,8 +35,32 @@ class RayTraceResult:
     untransmitted_flux_lm: float
     transmitted_rays: np.ndarray
     preview_rays_detail: tuple[dict[str, object], ...] = ()
+    surface_energy: tuple[dict[str, float | int], ...] = ()
 
     def diagnostic(self) -> dict[str, object]:
+        surface_energy = []
+        for record in sorted(
+            self.surface_energy, key=lambda item: int(item["surface_index"]),
+        ):
+            input_flux = self.input_flux_lm
+            surface_energy.append({
+                "surface_index": int(record["surface_index"]),
+                "entry_flux_lm": float(record["entry_flux_lm"]),
+                "tir_flux_lm": float(record["tir_flux_lm"]),
+                "exit_flux_lm": float(record["exit_flux_lm"]),
+                "entry_pct": 100.0 * float(record["entry_flux_lm"]) / input_flux
+                if input_flux else 0.0,
+                "tir_pct": 100.0 * float(record["tir_flux_lm"]) / input_flux
+                if input_flux else 0.0,
+                "exit_pct": 100.0 * float(record["exit_flux_lm"]) / input_flux
+                if input_flux else 0.0,
+                "entry_incidence_mean_deg": (
+                    float(record.get("entry_incidence_weighted_deg", 0.0))
+                    / float(record["entry_flux_lm"])
+                    if float(record["entry_flux_lm"]) else 0.0
+                ),
+                "entry_incidence_max_deg": float(record.get("entry_incidence_max_deg", 0.0)),
+            })
         return {
             "source_ray_count": self.source_ray_count,
             "led_count": self.led_count,
@@ -50,6 +74,7 @@ class RayTraceResult:
             "transmitted_flux_lm": self.transmitted_flux_lm,
             "total_internal_reflection_count": self.total_internal_reflection_count,
             "untransmitted_flux_lm": self.untransmitted_flux_lm,
+            "surface_energy": surface_energy,
             "transmission_pct": (
                 100.0 * self.transmitted_flux_lm / self.input_flux_lm
                 if self.input_flux_lm else 0.0
@@ -96,6 +121,7 @@ class _PreviewCollector:
         led_index: int,
         status: str,
         origin: np.ndarray,
+        input_direction: np.ndarray,
         entry: np.ndarray | None,
         exit_point: np.ndarray | None,
         final_direction: np.ndarray | None,
@@ -128,6 +154,7 @@ class _PreviewCollector:
             "led_index": int(led_index),
             "status": status,
             "origin_xyz": self._vector(origin),
+            "input_direction_xyz": self._vector(input_direction),
             "entry_xyz": self._vector(entry),
             "exit_xyz": self._vector(exit_point),
             "direction_xyz": direction,
@@ -157,6 +184,7 @@ class _PreviewCollector:
         led_indices: np.ndarray,
         statuses: np.ndarray,
         origins: np.ndarray,
+        input_directions: np.ndarray,
         entry_points: np.ndarray,
         entry_hit: np.ndarray,
         exit_points: np.ndarray,
@@ -185,6 +213,7 @@ class _PreviewCollector:
                     led_index=int(led_indices[index]),
                     status=status_value,
                     origin=origins[index],
+                    input_direction=input_directions[index],
                     entry=entry_points[index] if entry_hit[index] else None,
                     exit_point=exit_points[index] if status_value == "transmitted" else None,
                     final_direction=final_directions[index],
@@ -209,6 +238,7 @@ class _PreviewCollector:
         led_index: int,
         status: str,
         origin: np.ndarray,
+        input_direction: np.ndarray,
         entry: np.ndarray | None,
         exit_point: np.ndarray | None,
         final_direction: np.ndarray | None,
@@ -220,6 +250,7 @@ class _PreviewCollector:
             led_index=led_index,
             status=status,
             origin=origin,
+            input_direction=input_direction,
             entry=entry,
             exit_point=exit_point,
             final_direction=final_direction,
@@ -372,8 +403,45 @@ def _mesh_hits(mesh: Any, origins: np.ndarray, directions: np.ndarray) -> tuple[
     points = np.zeros((count, 3), dtype=np.float64)
     normals = np.zeros((count, 3), dtype=np.float64)
     triangles = np.full(count, -1, dtype=np.int64)
+
+    def store_fallback_hits(
+        locations: np.ndarray,
+        ray_indices: np.ndarray,
+        triangle_indices: np.ndarray,
+        fallback_rays: np.ndarray,
+    ) -> None:
+        if len(locations) == 0:
+            return
+        ray_indices = np.asarray(ray_indices, dtype=np.int64)
+        triangle_indices = np.asarray(triangle_indices, dtype=np.int64)
+        locations = np.asarray(locations, dtype=np.float64)
+        distances = np.einsum(
+            "ij,ij->i", locations - origins[fallback_rays[ray_indices]], directions[fallback_rays[ray_indices]],
+        )
+        valid = distances > 1e-4
+        if not np.any(valid):
+            return
+        ray_indices = ray_indices[valid]
+        triangle_indices = triangle_indices[valid]
+        locations = locations[valid]
+        distances = distances[valid]
+        order = np.lexsort((distances, ray_indices))
+        selected = np.zeros(len(fallback_rays), dtype=bool)
+        for index in order:
+            fallback_index = ray_indices[index]
+            if selected[fallback_index]:
+                continue
+            selected[fallback_index] = True
+            ray_index = fallback_rays[fallback_index]
+            distance[ray_index] = distances[index]
+            points[ray_index] = locations[index]
+            triangle_index = triangle_indices[index]
+            normals[ray_index] = mesh.face_normals[triangle_index]
+            triangles[ray_index] = triangle_index
+
+    # The fallback preserves the old tolerance behavior for probe self-hits.
     locations, ray_indices, triangle_indices = mesh.ray.intersects_location(
-        origins, directions, multiple_hits=True,
+        origins, directions, multiple_hits=False,
     )
     if len(locations) == 0:
         return distance, points, normals, np.zeros(count, dtype=bool), triangles
@@ -383,24 +451,30 @@ def _mesh_hits(mesh: Any, origins: np.ndarray, directions: np.ndarray) -> tuple[
     distances = np.einsum(
         "ij,ij->i", locations - origins[ray_indices], directions[ray_indices],
     )
-    valid = distances > 1e-4
-    if not np.any(valid):
-        return distance, points, normals, np.zeros(count, dtype=bool), triangles
-    ray_indices = ray_indices[valid]
-    triangle_indices = triangle_indices[valid]
-    locations = locations[valid]
-    distances = distances[valid]
-    order = np.lexsort((distances, ray_indices))
     selected = np.zeros(count, dtype=bool)
-    for index in order:
-        ray_index = ray_indices[index]
-        if selected[ray_index]:
-            continue
-        selected[ray_index] = True
-        distance[ray_index] = distances[index]
-        points[ray_index] = locations[index]
-        normals[ray_index] = mesh.face_normals[triangle_indices[index]]
-        triangles[ray_index] = triangle_indices[index]
+    valid = distances > 1e-4
+    selected_rays = ray_indices[valid]
+    distance[selected_rays] = distances[valid]
+    points[selected_rays] = locations[valid]
+    normals[selected_rays] = mesh.face_normals[triangle_indices[valid]]
+    triangles[selected_rays] = triangle_indices[valid]
+    selected[selected_rays] = True
+
+    autocontact_rays = ray_indices[~valid]
+    if len(autocontact_rays):
+        fallback_locations, fallback_indices, fallback_triangles = mesh.ray.intersects_location(
+            origins[autocontact_rays],
+            directions[autocontact_rays],
+            multiple_hits=True,
+        )
+        store_fallback_hits(
+            fallback_locations,
+            fallback_indices,
+            fallback_triangles,
+            autocontact_rays,
+        )
+        fallback_valid = np.isfinite(distance[autocontact_rays])
+        selected[autocontact_rays[fallback_valid]] = True
     return distance, points, normals, selected, triangles
 
 
@@ -534,7 +608,9 @@ def _trace_mesh_batch(
         "statuses": statuses,
         "entry_points": entry_points,
         "entry_hit": hit,
+        "entry_transmission": entry_transmission,
         "entry_surface_indices": entry_surfaces,
+        "entry_normals": entry_normals,
         "exit_points": exit_points,
         "exit_surface_indices": exit_surfaces,
         "final_directions": final_directions,
@@ -543,6 +619,21 @@ def _trace_mesh_batch(
         "reflection_points": reflection_points,
         "reflection_surface_indices": reflection_surface_indices,
     }
+
+
+def _surface_energy_values(
+    totals: dict[int, dict[str, float]], surface_index: int,
+) -> dict[str, float]:
+    return totals.setdefault(
+        surface_index,
+        {
+            "entry_flux_lm": 0.0,
+            "tir_flux_lm": 0.0,
+            "exit_flux_lm": 0.0,
+            "entry_incidence_weighted_deg": 0.0,
+            "entry_incidence_max_deg": 0.0,
+        },
+    )
 
 
 def trace_tm25(
@@ -558,7 +649,7 @@ def trace_tm25(
     c_mirror: bool = False,
     c_offset_deg: float = 0.0,
 ) -> RayTraceResult:
-    """Trace a reproducible sample of the ray set through all three LEDs.
+    """Trace a reproducible sample of the ray set through all detected LEDs.
 
     The input ray file is a single-LED source. Its rays are translated to each
     LED emission origin, and flux is scaled from the sample back to the full
@@ -597,6 +688,7 @@ def trace_tm25(
     intercepted_flux = 0.0
     transmitted_flux = 0.0
     transmitted_rows: list[np.ndarray] = []
+    surface_energy_totals: dict[int, dict[str, float]] = {}
     mesh = getattr(geometry, "lens_mesh", None)
     preview_collector = _PreviewCollector(
         preview_ray_count,
@@ -611,13 +703,68 @@ def trace_tm25(
             local_directions = chunk[:, 3:6].astype(np.float64)
             local_directions /= np.maximum(np.linalg.norm(local_directions, axis=1, keepdims=True), 1e-12)
             local_flux = chunk[:, flux_column].astype(np.float64) * flux_scale
-            origins = np.concatenate([
-                local_origins + np.asarray(origin.toTuple(), dtype=np.float64)
-                for origin in geometry.emission_origins
-            ])
-            directions = np.tile(local_directions, (len(geometry.emission_origins), 1))
+            frames = getattr(geometry, "emission_frames", ())
+            if frames:
+                origins = np.concatenate([
+                    local_origins[:, :2] @ _frame_basis(frame)[:2] + np.asarray(frame.origin.toTuple(), dtype=np.float64)
+                    for frame in frames
+                ])
+                directions = np.concatenate([
+                    local_directions @ _frame_basis(frame)
+                    for frame in frames
+                ])
+            else:
+                origins = np.concatenate([
+                    local_origins + np.asarray(origin.toTuple(), dtype=np.float64)
+                    for origin in geometry.emission_origins
+                ])
+                directions = np.tile(local_directions, (len(geometry.emission_origins), 1))
             source_flux = np.tile(local_flux, len(geometry.emission_origins))
             batch = _trace_mesh_batch(mesh, origins, directions, source_flux, lens_index, max_bounces)
+            entry_surface_indices = batch["entry_surface_indices"]
+            entry_mask = batch["entry_hit"] & (entry_surface_indices >= 0)
+            if np.any(entry_mask):
+                entry_incidence = np.degrees(np.arccos(np.clip(
+                    -np.einsum("ij,ij->i", directions[entry_mask], batch["entry_normals"][entry_mask]),
+                    -1.0, 1.0,
+                )))
+                for surface_index in np.unique(entry_surface_indices[entry_mask]):
+                    surface_index = int(surface_index)
+                    surface_mask = entry_mask & (entry_surface_indices == surface_index)
+                    values = _surface_energy_values(surface_energy_totals, surface_index)
+                    angles = entry_incidence[entry_surface_indices[entry_mask] == surface_index]
+                    weights = source_flux[surface_mask]
+                    values["entry_incidence_weighted_deg"] += float(np.sum(weights * angles))
+                    values["entry_incidence_max_deg"] = max(
+                        values["entry_incidence_max_deg"], float(np.max(angles)),
+                    )
+            for surface_index in np.unique(entry_surface_indices[batch["entry_hit"]]):
+                surface_index = int(surface_index)
+                if surface_index < 0:
+                    continue
+                _surface_energy_values(surface_energy_totals, surface_index)["entry_flux_lm"] += float(
+                    source_flux[entry_surface_indices == surface_index].sum(),
+                )
+            for ray_index, reflection_surfaces in batch["reflection_surface_indices"].items():
+                tir_flux = float(
+                    source_flux[int(ray_index)] * batch["entry_transmission"][int(ray_index)],
+                )
+                for surface_index in reflection_surfaces:
+                    surface_index = int(surface_index)
+                    if surface_index < 0:
+                        continue
+                    _surface_energy_values(surface_energy_totals, surface_index)["tir_flux_lm"] += tir_flux
+            transmitted_mask = batch["statuses"] == "transmitted"
+            exit_surface_indices = batch["exit_surface_indices"]
+            for surface_index in np.unique(exit_surface_indices[transmitted_mask]):
+                surface_index = int(surface_index)
+                if surface_index < 0:
+                    continue
+                _surface_energy_values(surface_energy_totals, surface_index)["exit_flux_lm"] += float(
+                    batch["output_power"][
+                        transmitted_mask & (exit_surface_indices == surface_index)
+                    ].sum(),
+                )
             if preview_ray_count:
                 led_indices = np.repeat(
                     np.arange(len(geometry.emission_origins), dtype=np.int64),
@@ -627,6 +774,7 @@ def trace_tm25(
                     led_indices=led_indices,
                     statuses=batch["statuses"],
                     origins=origins,
+                    input_directions=directions,
                     entry_points=batch["entry_points"],
                     entry_hit=batch["entry_hit"],
                     exit_points=batch["exit_points"],
@@ -647,21 +795,32 @@ def trace_tm25(
             transmitted_count += batch["transmitted_count"]
             transmitted_flux += batch["transmitted_flux"]
             tir_count += batch["tir_count"]
-            transmitted_rows.append(batch["transmitted"])
+            transmitted = batch["transmitted"].copy()
+            if frames and len(transmitted):
+                transmitted[:, 3:6] = transmitted[:, 3:6] @ _frame_basis(frames[0]).T
+            transmitted_rows.append(transmitted)
             input_flux += float(source_flux.sum())
             continue
+        frames = getattr(geometry, "emission_frames", ())
         for ray in chunk:
             local_origin = ray[:3].astype(np.float64)
             local_direction = _unit(ray[3:6].astype(np.float64))
             source_flux = float(ray[flux_column]) * flux_scale
             for led_index, emission_origin in enumerate(geometry.emission_origins):
-                origin = local_origin + np.asarray(emission_origin.toTuple(), dtype=np.float64)
+                if frames:
+                    frame = frames[led_index]
+                    basis = _frame_basis(frame)
+                    origin = local_origin[:2] @ basis[:2] + np.asarray(frame.origin.toTuple(), dtype=np.float64)
+                    direction = local_direction @ basis
+                else:
+                    origin = local_origin + np.asarray(emission_origin.toTuple(), dtype=np.float64)
+                    direction = local_direction
                 traced_count += 1
                 input_flux += source_flux
                 status, entry_point, exit_point, final_direction, optical_transmission, ray_tir_count = _trace_single_lens_ray(
                     geometry.lens,
                     origin,
-                    local_direction,
+                    direction,
                     lens_index,
                     max_bounces,
                 )
@@ -673,6 +832,7 @@ def trace_tm25(
                     led_index=led_index,
                     status=status,
                     origin=origin,
+                    input_direction=direction,
                     entry=entry_point,
                     exit_point=exit_point,
                     final_direction=final_direction,
@@ -692,9 +852,12 @@ def trace_tm25(
                 power = output_power
                 transmitted_count += 1
                 transmitted_flux += power
+                photometric_direction = direction
+                if frames:
+                    photometric_direction = direction @ _frame_basis(frames[0]).T
                 transmitted_rows.append([
                     exit_point[0], exit_point[1], exit_point[2],
-                    final_direction[0], final_direction[1], final_direction[2], power,
+                    photometric_direction[0], photometric_direction[1], photometric_direction[2], power,
                 ])
 
     transmitted_array = np.vstack(transmitted_rows) if transmitted_rows else np.empty((0, 7), dtype=np.float64)
@@ -713,4 +876,22 @@ def trace_tm25(
         untransmitted_flux_lm=input_flux - transmitted_flux,
         transmitted_rays=transmitted_array,
         preview_rays_detail=preview_collector.records(),
+        surface_energy=tuple(
+            {
+                "surface_index": surface_index,
+                "entry_flux_lm": values["entry_flux_lm"],
+                "tir_flux_lm": values["tir_flux_lm"],
+                "exit_flux_lm": values["exit_flux_lm"],
+                "entry_incidence_weighted_deg": values["entry_incidence_weighted_deg"],
+                "entry_incidence_max_deg": values["entry_incidence_max_deg"],
+            }
+            for surface_index, values in sorted(surface_energy_totals.items())
+        ),
     )
+
+
+def _frame_basis(frame: Any) -> np.ndarray:
+    """Return a row-wise local X/Y/Z to world-coordinate transform."""
+    return np.asarray([
+        frame.axis_x.toTuple(), frame.axis_y.toTuple(), frame.normal.toTuple(),
+    ], dtype=np.float64)

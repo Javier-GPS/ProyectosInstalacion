@@ -13,6 +13,55 @@ class GeometryError(ValueError):
 
 
 @dataclass(frozen=True)
+class GeometryVector:
+    """Small coordinate carrier shared by STEP and native CAD geometry."""
+
+    x: float
+    y: float
+    z: float
+
+    def toTuple(self) -> tuple[float, float, float]:
+        return self.x, self.y, self.z
+
+
+@dataclass(frozen=True)
+class GeometryBox:
+    xmin: float
+    xmax: float
+    ymin: float
+    ymax: float
+    zmin: float
+    zmax: float
+
+
+@dataclass(frozen=True)
+class MeshSolid:
+    """Minimal solid metadata used when the mesh comes from SolidWorks COM."""
+
+    volume_mm3: float
+    bounds_mm: GeometryBox
+    face_count: int
+
+    def BoundingBox(self) -> GeometryBox:
+        return self.bounds_mm
+
+    def Volume(self) -> float:
+        return self.volume_mm3
+
+    def Faces(self) -> tuple[None, ...]:
+        return (None,) * self.face_count
+
+
+@dataclass(frozen=True)
+class EmissionFrame:
+    origin: Any
+    axis_x: Any
+    axis_y: Any
+    normal: Any
+    face_index: int
+
+
+@dataclass(frozen=True)
 class StepGeometry:
     """The STEP solids, global LED origins and optional triangle meshes."""
 
@@ -24,6 +73,8 @@ class StepGeometry:
     led_meshes: tuple[Any | None, ...] = ()
     lens_surface_ids: tuple[int, ...] = ()
     lens_surface_labels: tuple[str, ...] = ()
+    emission_frames: tuple[EmissionFrame, ...] = ()
+    coordinate_frame: str = "STEP"
 
     @property
     def solid_count(self) -> int:
@@ -53,6 +104,8 @@ class StepGeometry:
                 "zmax": lens_box.zmax,
             },
             "led_origins_mm": [origin.toTuple() for origin in self.emission_origins],
+            "led_emission_normals": [frame.normal.toTuple() for frame in self.emission_frames],
+            "led_emission_faces": [frame.face_index for frame in self.emission_frames],
         }
 
     @staticmethod
@@ -82,7 +135,7 @@ class StepGeometry:
         return {
             "units": "mm",
             "coordinate_system": "global",
-            "coordinate_frame": "STEP",
+            "coordinate_frame": self.coordinate_frame,
             "lens": lens,
             "leds": leds,
         }
@@ -91,9 +144,9 @@ class StepGeometry:
 def load_step_geometry(path: str | Path) -> StepGeometry:
     """Import a STEP assembly and identify its largest solid as the lens.
 
-    The supplied assembly contains one large lens solid and three equal small
-    LED solids. LED origins are placed on the maximum-Z face of each LED,
-    which is the useful emission plane for the supplied ray set.
+    The supplied assembly contains one large lens solid and one or more LED
+    solids. The LED emission face is selected from the face oriented toward
+    the lens, and the ray file is mapped to that face's local frame.
     """
     try:
         import cadquery as cq
@@ -113,20 +166,23 @@ def load_step_geometry(path: str | Path) -> StepGeometry:
     if len(solids) < 2:
         raise GeometryError(
             f"El STEP seleccionado contiene {len(solids)} sólido(s); "
-            "se necesita un ensamblaje con una lente y tres sólidos LED."
+            "se necesita un ensamblaje con una lente y al menos un sólido LED."
         )
 
     lens = max(solids, key=lambda solid: solid.Volume())
     leds = tuple(sorted((solid for solid in solids if solid is not lens), key=lambda solid: solid.Center().x))
-    if len(leds) != 3:
+    if not leds:
         raise GeometryError(
-            f"El STEP debe contener una lente y tres sólidos LED; "
+            f"El STEP debe contener una lente y al menos un sólido LED; "
             f"se encontraron {len(leds)} LED."
         )
     origins = []
+    emission_frames = []
+    lens_center = lens.Center()
     for led in leds:
-        box = led.BoundingBox()
-        origins.append(cq.Vector(led.Center().x, led.Center().y, box.zmax))
+        frame = _find_emission_frame(cq, led, lens_center)
+        emission_frames.append(frame)
+        origins.append(frame.origin)
     meshes: tuple[Any, ...] = ()
     try:
         import trimesh
@@ -177,4 +233,50 @@ def load_step_geometry(path: str | Path) -> StepGeometry:
         tuple(meshes[1:]) if meshes else (),
         tuple(lens_surface_ids) if meshes else (),
         tuple(lens_surface_labels) if meshes else (),
+        tuple(emission_frames),
+    )
+
+
+def _find_emission_frame(cq: Any, led: Any, lens_center: Any) -> EmissionFrame:
+    """Choose the LED face facing the lens and build its local ray frame."""
+    led_center = led.Center()
+    to_lens = np.asarray((lens_center - led_center).toTuple(), dtype=np.float64)
+    to_lens /= max(float(np.linalg.norm(to_lens)), 1e-12)
+    candidates = []
+    fallback_candidates = []
+    for face_index, face in enumerate(led.Faces()):
+        try:
+            normal = np.asarray(face.normalAt().toTuple(), dtype=np.float64)
+        except Exception:
+            continue
+        norm = float(np.linalg.norm(normal))
+        if norm <= 1e-12:
+            continue
+        normal /= norm
+        alignment = float(normal @ to_lens)
+        area = float(face.Area())
+        candidate = (area, alignment, face_index, face, normal)
+        fallback_candidates.append((area, abs(alignment), face_index, face, normal))
+        if alignment > 1e-6:
+            candidates.append(candidate)
+    if not candidates:
+        candidates = fallback_candidates
+    if not candidates:
+        raise GeometryError("No se pudo identificar una cara emisora en un LED.")
+    _, _, face_index, face, normal = max(candidates, key=lambda item: (item[0], item[1]))
+    if normal @ to_lens < 0.0:
+        normal = -normal
+    # Keep the projected world X axis as photometric C0 whenever possible.
+    # This makes the generated LDT compatible with the road convention while
+    # allowing the native CAD assembly to use any mounting orientation.
+    reference = np.array([1.0, 0.0, 0.0])
+    if abs(float(normal[0])) > 0.9:
+        reference = np.array([0.0, 1.0, 0.0])
+    axis_x = reference - normal * float(reference @ normal)
+    axis_x /= max(float(np.linalg.norm(axis_x)), 1e-12)
+    axis_y = np.cross(normal, axis_x)
+    axis_y /= max(float(np.linalg.norm(axis_y)), 1e-12)
+    center = np.asarray(face.Center().toTuple(), dtype=np.float64)
+    return EmissionFrame(
+        cq.Vector(*center), cq.Vector(*axis_x), cq.Vector(*axis_y), cq.Vector(*normal), face_index,
     )

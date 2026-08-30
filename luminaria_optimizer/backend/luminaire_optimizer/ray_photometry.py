@@ -71,7 +71,7 @@ def rays_to_ldt(
     lorl = 100.0 * result.transmitted_flux_lm / result.input_flux_lm
     return LdtPhotometry(
         company="SALVI",
-        name="SALVI HL2Z 3 LED DOT Monte Carlo",
+        name=f"SALVI HL2Z {result.led_count} LED DOT Monte Carlo",
         c_angles_deg=c_angles,
         gamma_angles_deg=gamma_angles,
         intensities_cd_per_klm=matrix.tolist(),

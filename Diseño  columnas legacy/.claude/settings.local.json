@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker version *)",
+      "Bash(curl -s http://localhost:8000/health)"
+    ]
+  }
+}

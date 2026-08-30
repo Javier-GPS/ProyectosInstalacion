@@ -96,6 +96,10 @@ class LdtPhotometry:
     def intensity_cd_per_klm(self, c_deg: float, gamma_deg: float) -> float:
         """Bilinearly interpolate the full expanded matrix."""
         self.validate()
+        return self._intensity_cd_per_klm_unchecked(c_deg, gamma_deg)
+
+    def _intensity_cd_per_klm_unchecked(self, c_deg: float, gamma_deg: float) -> float:
+        """Interpolate a photometry grid that has already been validated."""
         gamma = max(0.0, min(180.0, float(gamma_deg)))
         directional = self.metadata.get("directional_c0_c180", "").strip().lower() == "true"
         # An LDT with no upper-hemisphere samples cannot provide a physical

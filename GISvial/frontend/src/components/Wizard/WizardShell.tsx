@@ -3,17 +3,20 @@ import Header from '../Header';
 import MapView from '../Map/MapView';
 import MapControls from '../Map/MapControls';
 import WizardNav from './WizardNav';
-import StepProyecto from './StepProyecto';
 import StepZona from './StepZona';
 import StepVias from './StepVias';
-import StepLuminarias from './StepLuminarias';
 import StepInforme from './StepInforme';
+import CityEditor from '../Editor/CityEditor';
+import ProjectsPage from '../../pages/ProjectsPage';
+import ProjectDetailPage from '../../pages/ProjectDetailPage';
 import { useGisStore } from '../../store/useGisStore';
 import type { WizardStep } from '../../store/types';
 
 const WizardShell: React.FC = () => {
   const stepWizard = useGisStore(s => s.stepWizard);
   const setStepWizard = useGisStore(s => s.setStepWizard);
+  const view = useGisStore(s => s.view);
+  const setView = useGisStore(s => s.setView);
   const sidebarOpen = useGisStore(s => s.sidebarOpen);
   const setSidebarOpen = useGisStore(s => s.setSidebarOpen);
   const initialized = useGisStore(s => s.initialized);
@@ -97,18 +100,28 @@ const WizardShell: React.FC = () => {
   }, [initialized, activeProjectId, projects]);
 
   const handleStepChange = useCallback((step: WizardStep) => {
+    if (step === 'proyecto') {
+      setView('projects');
+      return;
+    }
     if (stepWizard === 'vias' && step !== 'vias' && !confirmPlanningLeave()) return;
+    setView('editor');
     setStepWizard(step);
-  }, [stepWizard, confirmPlanningLeave, setStepWizard]);
+  }, [stepWizard, confirmPlanningLeave, setView, setStepWizard]);
+
+  const openZoneInMap = useCallback((zoneId: string) => {
+    if (!confirmPlanningLeave()) return;
+    setSelectedZone(zoneId);
+    setStepWizard('vias');
+    setView('editor');
+  }, [confirmPlanningLeave, setSelectedZone, setStepWizard, setView]);
 
   const renderStep = () => {
     switch (stepWizard) {
-      case 'proyecto': return <StepProyecto />;
       case 'zona': return <StepZona status={statusGranular.zones || 'idle'} error={zoneLoadError} onRetry={() => setZoneReloadKey(value => value + 1)} />;
       case 'vias': return <StepVias />;
-      case 'luminarias': return <StepLuminarias />;
       case 'informe': return <StepInforme />;
-      default: return <StepProyecto />;
+      default: return <StepZona status={statusGranular.zones || 'idle'} error={zoneLoadError} onRetry={() => setZoneReloadKey(value => value + 1)} />;
     }
   };
 
@@ -125,26 +138,44 @@ const WizardShell: React.FC = () => {
 
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-salvi-cream">
+      {/* Header — wizard nav only in the editor */}
       <Header>
-        <WizardNav currentStep={stepWizard} onStepChange={handleStepChange} />
+        {view === 'editor' && (
+          <WizardNav
+            currentStep={stepWizard}
+            onStepChange={handleStepChange}
+            onBackToZones={() => { if (!confirmPlanningLeave()) return; setView('project'); }}
+          />
+        )}
       </Header>
 
-      <div className="flex-1 relative flex overflow-hidden">
-        {/* Map background */}
-        <div className="absolute inset-0">
-          <MapView />
-          <MapControls mapId="gis-map" />
-        </div>
-
-        {/* Sidebar — collapsible */}
-        {sidebarOpen && (
-          <div className="relative z-10 flex gap-1.5 p-1.5 pointer-events-none max-w-sm">
-            <div className="pointer-events-auto w-96 max-h-full overflow-hidden">
-              {renderStep()}
-            </div>
+      {view === 'projects' ? (
+        <ProjectsPage />
+      ) : view === 'project' ? (
+        <ProjectDetailPage
+          onOpenZone={openZoneInMap}
+          onCreateZone={() => { setView('editor'); setStepWizard('zona'); }}
+          onBack={() => setView('projects')}
+        />
+      ) : (
+        <div className="flex-1 relative flex overflow-hidden">
+          {/* Map background */}
+          <div className="absolute inset-0">
+            <MapView />
+            <MapControls mapId="gis-map" />
           </div>
-        )}
-      </div>
+
+          {/* Sidebar — collapsible */}
+          {sidebarOpen && (
+            <div className="relative z-10 flex gap-1.5 p-1.5 pointer-events-none max-w-sm">
+              <div className="pointer-events-auto w-96 max-h-full overflow-hidden">
+                {renderStep()}
+              </div>
+            </div>
+          )}
+          <CityEditor />
+        </div>
+      )}
     </div>
   );
 };

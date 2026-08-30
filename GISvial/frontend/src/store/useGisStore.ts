@@ -6,11 +6,12 @@ import { createViasSlice, type ViasSlice } from './slices/viasSlice';
 import { createLuminariasSlice, type LuminariasSlice } from './slices/luminariasSlice';
 import { createFotometriaSlice, type FotometriaSlice } from './slices/fotometriaSlice';
 import { createUiSlice, type UiSlice } from './slices/uiSlice';
+import { createEditorSlice, type EditorSlice } from './slices/editorSlice';
 
 export { ROAD_CFG } from './types';
 export type { RoadTypeCfg, WizardStep, DetailSelectionMode, StatusGranular } from './types';
 
-export type GisStore = ProyectosSlice & ZonasSlice & ViasSlice & LuminariasSlice & FotometriaSlice & UiSlice & MapSlice;
+export type GisStore = ProyectosSlice & ZonasSlice & ViasSlice & LuminariasSlice & FotometriaSlice & UiSlice & MapSlice & EditorSlice;
 
 export const useGisStore = create<GisStore>()((...a) => ({
   ...createMapSlice(...a),
@@ -20,4 +21,5 @@ export const useGisStore = create<GisStore>()((...a) => ({
   ...createLuminariasSlice(...a),
   ...createFotometriaSlice(...a),
   ...createUiSlice(...a),
+  ...createEditorSlice(...a),
 }));

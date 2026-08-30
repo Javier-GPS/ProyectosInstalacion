@@ -15,7 +15,19 @@ export interface GisUser {
 export interface GisProject {
   id: string;
   name: string;
+  project_name?: string;
+  client?: string | null;
+  location?: string | null;
+  designer?: string | null;
+  study_date?: string | null;
+  reference?: string | null;
+  calculation_type?: string | null;
+  standard?: string | null;
+  notes?: string | null;
+  status?: string | null;
   created_at: string;
+  updated_at?: string | null;
+  last_opened_at?: string | null;
   access_role?: 'admin' | 'owner' | 'editor' | 'viewer';
 }
 
@@ -124,6 +136,18 @@ export interface GisPlanningPatch {
   spacing?: number | null;
   distribution?: GisDistribution | null;
   luxParams?: GisPlanningLuxParams | null;
+  // ── Road characteristics overrides (correct OSM-estimated data) ──
+  estWidth?: number | null;
+  lanes?: number | null;
+  lanesForward?: number | null;
+  lanesBackward?: number | null;
+  sidewalk?: string | null;
+  sidewalkWidthLeft?: number | null;
+  sidewalkWidthRight?: number | null;
+  median?: boolean | null;
+  medianWidth?: number | null;
+  dual?: boolean | null;
+  maxspeed?: number | null;
 }
 
 export interface GisPlanningPayload {
@@ -165,12 +189,25 @@ export interface GisPlanningInventoryTarget {
   estWidth?: number | null;
   widthSrc?: string | null;
   lanes?: number | null;
+  lanesForward?: number | null;
+  lanesBackward?: number | null;
   sidewalk?: string | null;
   sidewalkWidthLeft?: number | null;
   sidewalkWidthRight?: number | null;
   median?: boolean | null;
   medianWidth?: number | null;
   dual?: boolean | null;
+  cyclewayWidth?: number | null;
+  parking?: string | null;
+  shoulderWidth?: number | null;
+  maxspeed?: number | null;
+  platformWidth?: number | null;
+  functionalClass?: string | null;
+  formOfWay?: string | null;
+  geomSources?: Record<string, string> | null;
+  geom?: Record<string, any> | null;
+  tramoSeq?: number | null;
+  tramoOf?: number | null;
 }
 
 export interface GisMergedStreet {
@@ -260,6 +297,17 @@ export interface GisRoadWorkScope {
 export interface Etagged<T> {
   data: T;
   etag: string;
+}
+
+export interface GisZoneSelection {
+  zone_id: string;
+  revision: number;
+  schema_version: 1;
+  base_inventory_hash: string;
+  selected_target_refs: string[];
+  current: boolean;
+  updated_at: string | null;
+  updated_by: number | null;
 }
 
 export interface GisLuxJobItem {
@@ -375,6 +423,43 @@ export interface GisPlantillaRow {
   lm: number;
   model: string;
   lente: string;
+}
+
+export interface GisZoneSummary {
+  zone: GisZone;
+  osm: {
+    loaded: boolean;
+    loaded_at: string | null;
+    segment_count: number;
+    named_street_count: number;
+    distinct_name_count: number;
+    geometry_available: number;
+    length_km: number;
+  };
+  planning: {
+    revision: number | null;
+    target_overrides: number;
+    group_defaults: number;
+    updated_at: string | null;
+  };
+  scope: {
+    current: boolean;
+    length_m: number | null;
+    member_count: number;
+  };
+  selection: {
+    current: boolean;
+    count: number;
+  };
+  study: {
+    job_state: string | null;
+    job_total: number;
+    job_succeeded: number;
+    job_failed: number;
+    job_updated_at: string | null;
+    materialized_targets: number;
+  };
+  luminaires: number;
 }
 
 export interface LoginResponse {

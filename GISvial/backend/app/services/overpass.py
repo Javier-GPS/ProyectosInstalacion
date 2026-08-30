@@ -21,12 +21,6 @@ OVERPASS_URLS = (
 OVERPASS_TIMEOUT = 180  # HTTP client timeout (seconds)
 OVERPASS_QUERY_TIMEOUT = 120  # Overpass query timeout (seconds)
 OVERPASS_CACHE_TTL = 3600  # 1 hour cache for Overpass responses
-DEFAULT_WIDTHS = {
-    "motorway": 10.5, "trunk": 9.0, "primary": 7.0, "secondary": 6.0,
-    "tertiary": 5.5, "residential": 4.5, "living_street": 4.0,
-    "service": 3.5, "pedestrian": 3.0, "footway": 2.0, "path": 2.0,
-    "cycleway": 2.0,
-}
 MAIN_HIGHWAYS = {
     "motorway", "trunk", "primary", "secondary", "tertiary",
     "unclassified", "residential", "living_street", "road",
@@ -163,34 +157,20 @@ def normalize_element(element: Mapping) -> dict | None:
     highway = _tag(tags.get("highway")) or "unclassified"
     is_tunnel = str(tags.get("tunnel") or "").lower() in {"yes", "true", "1", "culvert"}
     road_type = "tunnel" if is_tunnel else highway
-    width = _number(tags.get("width"))
-    lanes = _number(tags.get("lanes"))
-    if width is not None:
-        estimated_width, width_source = width, "osm_width"
-    elif lanes is not None:
-        # Deduct 1 carril for bike lane if present, use 3.0m/lane urban standard
-        has_bike = str(tags.get("cycleway") or "").lower() in {"yes", "true", "1", "lane", "track", "separate"}
-        effective_lanes = lanes - (1 if has_bike else 0)
-        estimated_width, width_source = effective_lanes * 3.0, "lanes"
-    else:
-        estimated_width, width_source = DEFAULT_WIDTHS.get(highway, 4.0), "default"
 
-    # Sidewalk width from explicit OSM tags
-    sw_left_tag = tags.get("sidewalk:left:width") or tags.get("sidewalk:both:width")
-    sw_right_tag = tags.get("sidewalk:right:width") or tags.get("sidewalk:both:width")
-    sw_width_tag = tags.get("sidewalk:width")
-    sw_left = _number(sw_left_tag) if sw_left_tag else None
-    sw_right = _number(sw_right_tag) if sw_right_tag else None
-    if sw_left is None and sw_right is None and sw_width_tag:
-        sw_left = sw_right = _number(sw_width_tag)
-
-    # Median detection
-    median_raw = str(tags.get("median") or "").lower()
-    median = median_raw in {"yes", "true", "1"}
-    median_width = _number(tags.get("median:width"))
-    dual_carriageway = str(tags.get("dual_carriageway") or "").lower() in {"yes", "true", "1", "separate"}
-    if not dual_carriageway and median:
-        dual_carriageway = True
+    # ── Geometry profile from OSM tags ───────────────────────────────────
+    from .road_geometry import osm_profile, reconcile
+    raw_width = _number(tags.get("width"))
+    merged, geom_sources = reconcile([osm_profile(tags)])
+    estimated_width = merged.get("width")
+    width_source = merged.get("widthSrc")
+    lanes = merged.get("lanes")
+    sidewalk = merged.get("sidewalk")
+    sw_left = merged.get("sidewalkWidthLeft")
+    sw_right = merged.get("sidewalkWidthRight")
+    median = merged.get("median")
+    median_width = merged.get("medianWidth")
+    dual_carriageway = merged.get("dual")
 
     return {
         "id": element.get("id"),
@@ -204,21 +184,28 @@ def normalize_element(element: Mapping) -> dict | None:
         "locName": _tag(tags.get("loc_name")),
         "nameState": name_state(tags),
         "roadRole": road_role(highway),
-        "lit": _tag(tags.get("lit")),
+        "lit": _tag(tags.get("lit")) or merged.get("lit"),
         "tags": dict(tags),
         "len": round(_haversine_km(points), 6),
         "geom": points,
         "estWidth": estimated_width,
-        "width": width,
+        "width": raw_width,
         "widthSrc": width_source,
         "lanes": lanes,
-        "sidewalk": tags.get("sidewalk"),
+        "lanesForward": merged.get("lanesForward"),
+        "lanesBackward": merged.get("lanesBackward"),
+        "sidewalk": sidewalk,
         "sidewalkWidthLeft": sw_left,
         "sidewalkWidthRight": sw_right,
         "median": median,
         "medianWidth": median_width,
         "dual": dual_carriageway,
-        "surface": tags.get("surface"),
+        "cyclewayWidth": merged.get("cyclewayWidth"),
+        "parking": merged.get("parking"),
+        "shoulderWidth": merged.get("shoulderWidth"),
+        "maxspeed": merged.get("maxspeed"),
+        "surface": tags.get("surface") or merged.get("surface"),
+        "geomSources": geom_sources,
         "tunnel": is_tunnel,
     }
 

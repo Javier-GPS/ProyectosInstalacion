@@ -1,5 +1,6 @@
 services:
   redis-cache:
+    container_name: redis-cache
     image: redis:7-alpine
     command: redis-server /usr/local/etc/redis/redis.conf
     ports:
@@ -10,6 +11,7 @@ services:
     restart: unless-stopped
 
   redis-streams:
+    container_name: redis-streams
     image: redis:7-alpine
     command: redis-server /usr/local/etc/redis/redis.conf
     ports:

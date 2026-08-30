@@ -13,7 +13,7 @@ from .core.config import settings
 from .core.database import engine
 from .core.redis import close_redis, init_redis
 from .models import ensure_gis_tables
-from .routers import auth, zones, luminaires, photometric, exports, admin, lux_jobs
+from .routers import auth, zones, luminaires, photometric, exports, admin, lux_jobs, projects
 from .routers.deps import ensure_users_table
 
 
@@ -55,6 +55,7 @@ app.include_router(photometric.router, tags=["Photometric"])
 app.include_router(exports.router, tags=["Exports"])
 app.include_router(admin.router, tags=["Admin, AI, DB"])
 app.include_router(lux_jobs.router, tags=["Lux jobs"])
+app.include_router(projects.router, tags=["Projects"])
 
 
 @app.get("/api/health")

@@ -34,6 +34,13 @@ def _number(value: object, default: float) -> float:
     return number if math.isfinite(number) else default
 
 
+def _first_number(*values: object, default: float) -> float:
+    for value in values:
+        if value is not None:
+            return _number(value, default)
+    return default
+
+
 def effective_patch(payload: dict, target: dict) -> dict:
     group = payload.get("group_defaults", {}).get(target.get("group_ref"), {}) or {}
     override = payload.get("target_overrides", {}).get(target.get("target_ref"), {}) or {}
@@ -62,10 +69,10 @@ def build_lux_config(snapshot: dict) -> dict:
     }.get(distribution, "Lineal")
     optic = str(lux.get("optic") or "F151")
     config = {
-        "road_width": _number(target.get("estWidth"), 7.0),
-        "sidewalk_left": _number(lux.get("sidewalkL"), _number(target.get("sidewalkWidthLeft"), 0.0)),
-        "sidewalk_right": _number(lux.get("sidewalkR"), _number(target.get("sidewalkWidthRight"), 0.0)),
-        "lanes": max(1, min(6, int(_number(target.get("lanes"), 2)))),
+        "road_width": _first_number(params.get("estWidth"), target.get("estWidth"), default=7.0),
+        "sidewalk_left": _first_number(lux.get("sidewalkL"), params.get("sidewalkWidthLeft"), target.get("sidewalkWidthLeft"), default=0.0),
+        "sidewalk_right": _first_number(lux.get("sidewalkR"), params.get("sidewalkWidthRight"), target.get("sidewalkWidthRight"), default=0.0),
+        "lanes": max(1, min(6, int(_first_number(params.get("lanes"), target.get("lanes"), default=2)))),
         "arrangement": arrangement,
         "height": max(4.0, min(40.0, _number(lux.get("poleH"), 9.0))),
         "spacing": max(5.0, min(60.0, _number(params.get("spacing"), 30.0))),

@@ -35,10 +35,10 @@
 
 @layer components {
   .gis-panel {
-    background: rgba(255,255,255,0.92);
+    background: #FFFFFF;
     border: 1px solid var(--salvi-line);
-    backdrop-filter: blur(8px);
-    box-shadow: 0 8px 32px rgba(30,30,30,0.08);
+    border-radius: 0.75rem;
+    box-shadow: 0 1px 3px rgba(30,30,30,0.08);
   }
 
   .gis-scroll {
@@ -50,4 +50,26 @@
   .gis-scroll::-webkit-scrollbar-thumb { border-radius: 999px; background: rgba(160,154,145,0.5); }
 
   .maplibregl-ctrl-attrib { display: none !important; }
+
+  .dashed-border-spaced {
+    position: relative;
+    background-color: #FFFFFF;
+    border-radius: 0.75rem;
+    transition: box-shadow 0.15s, transform 0.15s;
+  }
+  .dashed-border-spaced::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 0.75rem;
+    padding: 2px;
+    background: repeating-linear-gradient(90deg, var(--salvi-muted) 0 10px, transparent 10px 22px);
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+  .dashed-border-spaced:hover::before {
+    background: repeating-linear-gradient(90deg, var(--salvi-black) 0 10px, transparent 10px 22px);
+  }
 }

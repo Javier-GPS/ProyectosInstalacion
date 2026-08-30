@@ -8,6 +8,7 @@ include:
 services:
   # Database compartida (PostgreSQL)
   db:
+    container_name: db
     image: postgres:16-alpine
     ports:
       - "5432:5432"
@@ -27,6 +28,7 @@ services:
 
   # Gateway — nginx (reverse proxy + auth_request)
   gateway:
+    container_name: gateway
     build: ./gateway
     ports:
       - "80:80"
@@ -39,6 +41,7 @@ services:
 
   # OAuth2 Proxy — validación JWT OIDC
   oauth2-proxy:
+    container_name: oauth2-proxy
     image: quay.io/oauth2-proxy/oauth2-proxy:v7.6.0
     ports:
       - "4180:4180"
@@ -75,6 +78,7 @@ services:
 
   # LuxStudio backend
   luxstudio-backend:
+    container_name: luxstudio-backend
     build: ./luxStudio/backend
     ports:
       - "8750:8750"
@@ -94,6 +98,7 @@ services:
 
   # LuxStudio frontend
   luxstudio-frontend:
+    container_name: luxstudio-frontend
     build:
       context: ./luxStudio/frontend
       args:
@@ -107,6 +112,7 @@ services:
 
   # GISVial backend
   gisvial-backend:
+    container_name: gisvial-backend
     build: ./GISvial/backend
     ports:
       - "8733:8733"
@@ -131,6 +137,7 @@ services:
 
   # GISVial frontend
   gisvial-frontend:
+    container_name: gisvial-frontend
     build:
       context: ./GISvial/frontend
       args:
@@ -144,6 +151,7 @@ services:
 
   # GIS worker — same image/code as the API; PostgreSQL remains authoritative.
   gisvial-worker:
+    container_name: gisvial-worker
     build: ./GISvial/backend
     command: ["python", "-m", "app.worker"]
     environment:
@@ -168,6 +176,7 @@ services:
 
   # Portal común: login único y acceso embebido a los dos servicios
   portal:
+    container_name: portal
     build:
       context: ./portal
       args:

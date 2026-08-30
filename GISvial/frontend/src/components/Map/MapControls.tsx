@@ -21,7 +21,7 @@ const MapControls: React.FC<MapControlsProps> = ({ mapId }) => {
   };
 
   return (
-    <div className="absolute top-3 right-3 z-20 flex flex-col gap-1">
+    <div className="absolute bottom-3 right-3 z-20 flex flex-col gap-1">
       <button
         onClick={handleZoomIn}
         className="bg-white/90 backdrop-blur-sm border border-salvi-line rounded-t-md px-2.5 py-1 text-sm font-bold text-salvi-black hover:bg-salvi-surface transition-colors shadow-sm"

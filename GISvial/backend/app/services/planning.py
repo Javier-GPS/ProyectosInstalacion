@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from .overpass import road_role
+from .road_geometry import assign_tramos, resolve_way
 from .street_merge import merge_streets
 
 
@@ -109,6 +110,68 @@ def _record_name_fields(record: Mapping) -> tuple[str | None, str | None, str, s
     return osm_name, osm_ref, state, _label(record.get("roadRole")) or road_role(highway)
 
 
+def inventory_counts(records: list[object]) -> dict:
+    """Lightweight counts over raw ways — no projections, no street merging.
+
+    Mirrors the ``counts`` block of :func:`normalize_inventory` so summaries
+    can be served from a persisted JSONB column instead of re-normalizing.
+    """
+    geometry_available = invalid_length_count = unnamed_segment_count = 0
+    explicit_noname_count = ref_only_count = variant_only_count = legacy_name_count = 0
+    named_way_count = 0
+    name_state_counts: dict[str, int] = {}
+    road_role_counts: dict[str, int] = {}
+    global_streets: set[str] = set()
+    source_needs_refresh = False
+
+    for raw in records:
+        record = raw if isinstance(raw, Mapping) else {}
+        name, ref, state, role = _record_name_fields(record)
+        source_needs_refresh = source_needs_refresh or "nameState" not in record
+        if _geometry(record.get("geom")) is not None:
+            geometry_available += 1
+        segment_length = length_m(record.get("len"))
+        if segment_length is None:
+            invalid_length_count += 1
+        if name is None:
+            unnamed_segment_count += 1
+        else:
+            named_way_count += 1
+            global_streets.add(name)
+        if state == "explicit_noname":
+            explicit_noname_count += 1
+        elif state == "ref_only":
+            ref_only_count += 1
+        elif state == "variant_only":
+            variant_only_count += 1
+        elif state == "legacy":
+            legacy_name_count += 1
+        name_state_counts[state] = name_state_counts.get(state, 0) + 1
+        road_role_counts[role] = road_role_counts.get(role, 0) + 1
+
+    segment_count = len(records)
+    return {
+        "counts": {
+            "segment_count": segment_count,
+            "named_street_count": len(global_streets),
+            "distinct_name_count": len(global_streets),
+            "named_way_count": named_way_count,
+            "unnamed_segment_count": unnamed_segment_count,
+            "without_osm_name_count": unnamed_segment_count,
+            "explicit_noname_count": explicit_noname_count,
+            "ref_only_count": ref_only_count,
+            "variant_only_count": variant_only_count,
+            "legacy_name_count": legacy_name_count,
+            "geometry_available": geometry_available,
+            "geometry_unavailable": segment_count - geometry_available,
+            "invalid_length_count": invalid_length_count,
+        },
+        "name_state_counts": name_state_counts,
+        "road_role_counts": road_role_counts,
+        "source_needs_refresh": source_needs_refresh,
+    }
+
+
 def normalize_inventory(zone_id: str, records: list[object]) -> dict[str, Any]:
     """Return one authoritative planning projection without mutating ``records``."""
     inventory_digest = hashlib.md5()
@@ -178,16 +241,29 @@ def normalize_inventory(zone_id: str, records: list[object]) -> dict[str, Any]:
         else:
             group["length_m"] += segment_length
 
-        est_width = record.get("estWidth") if isinstance(record, Mapping) else None
-        width_src = record.get("widthSrc") if isinstance(record, Mapping) else None
-        lanes_val = record.get("lanes") if isinstance(record, Mapping) else None
-        sw = record.get("sidewalk") if isinstance(record, Mapping) else None
-        sw_left = record.get("sidewalkWidthLeft") if isinstance(record, Mapping) else None
-        sw_right = record.get("sidewalkWidthRight") if isinstance(record, Mapping) else None
-        median = record.get("median") if isinstance(record, Mapping) else None
-        median_w = record.get("medianWidth") if isinstance(record, Mapping) else None
-        dual = record.get("dual") if isinstance(record, Mapping) else None
-        surface = record.get("surface") if isinstance(record, Mapping) else None
+        resolved = resolve_way(record)
+        geom = resolved["merged"]
+        geom_sources = resolved["sources"]
+
+        est_width = geom.get("width")
+        width_src = geom.get("widthSrc")
+        lanes_val = geom.get("lanes")
+        lanes_fwd = geom.get("lanesForward")
+        lanes_bwd = geom.get("lanesBackward")
+        sw = geom.get("sidewalk")
+        sw_left = geom.get("sidewalkWidthLeft")
+        sw_right = geom.get("sidewalkWidthRight")
+        median = geom.get("median")
+        median_w = geom.get("medianWidth")
+        dual = geom.get("dual")
+        surface = geom.get("surface")
+        cycleway_w = geom.get("cyclewayWidth")
+        parking = geom.get("parking")
+        shoulder_w = geom.get("shoulderWidth")
+        maxspeed = geom.get("maxspeed")
+        platform_w = geom.get("platformWidth")
+        functional_class = geom.get("functionalClass")
+        form_of_way = geom.get("formOfWay")
 
         targets.append({
             "target_ref": target_ref(source_index, projection),
@@ -212,14 +288,33 @@ def normalize_inventory(zone_id: str, records: list[object]) -> dict[str, Any]:
             "estWidth": est_width,
             "widthSrc": width_src,
             "lanes": lanes_val,
+            "lanesForward": lanes_fwd,
+            "lanesBackward": lanes_bwd,
             "sidewalk": sw,
             "sidewalkWidthLeft": sw_left,
             "sidewalkWidthRight": sw_right,
             "median": median,
             "medianWidth": median_w,
             "dual": dual,
+            "cyclewayWidth": cycleway_w,
+            "parking": parking,
+            "shoulderWidth": shoulder_w,
+            "maxspeed": maxspeed,
+            "platformWidth": platform_w,
+            "functionalClass": functional_class,
+            "formOfWay": form_of_way,
             "surface": surface,
+            "geomSources": geom_sources,
+            "geom": geom,
         })
+
+    # Per-street tramo numbering: a new tramo opens when geometry changes.
+    tramo_map = assign_tramos(targets)
+    for target in targets:
+        entry = tramo_map.get(target["target_ref"])
+        if entry:
+            target["tramoSeq"] = entry["tramoSeq"]
+            target["tramoOf"] = entry["tramoOf"]
 
     groups = list(groups_by_ref.values())
     inventory_digest.update(b"]")

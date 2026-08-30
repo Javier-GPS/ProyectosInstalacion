@@ -1,20 +1,24 @@
-"""Fetch building footprints from Catastro INSPIRE WFS and compute street widths.
+"""Compute street section widths (facade-to-facade) from building footprints.
 
-The Spanish Catastro (Dirección General del Catastro) publishes building
-footprints under the INSPIRE directive via a public WFS endpoint. This
-service queries those footprints and computes facade-to-facade distances
-for each road segment, giving us an accurate total street section width
-(calzada + both aceras) even where OSM has no width tag.
+Buildings come from OpenStreetMap (Overpass ``building`` ways) — real,
+globally available and free. The Spanish Catastro INSPIRE WFS
+(ovc.catastro.meh.es) used to serve this, but it returns 404 and is removed.
 
-Future: add more WFS sources per country (France: BDTOPO, UK: OS MasterMap,
-Germany: ALKIS, etc.) so building_width.py becomes the multi-backend
-street width resolver for any region.
+For each road way we sample its midpoint, find the nearest building centroid
+on each side (>90° apart in bearing) and sum the facade-to-facade distance:
+the total street *section* width (calzada + aceras). This is a real,
+measured value where OSM has no width tag — stored as ``sectionWidth`` and
+reconciled in road_geometry.py as ``platformWidth``.
+
+Future: additional footprint sources per region could be plugged here
+(e.g. Microsoft building footprints) — the computation only needs polygons.
 """
 from __future__ import annotations
 
 import hashlib
 import logging
-from collections.abc import Mapping, Sequence
+import math
+from collections.abc import Mapping
 from typing import Any
 
 import httpx
@@ -24,58 +28,86 @@ from .overpass import parse_bbox
 
 logger = logging.getLogger(__name__)
 
-CATASTRO_CACHE_TTL = 86400  # 24h — building footprints change very slowly
-
-# ── Catastro INSPIRE WFS ────────────────────────────────────────────────────
-# Public WFS serving building footprints for all of Spain (EPSG:4326).
-CATASTRO_WFS = "https://ovc.catastro.meh.es/Inspire/DownloadWFS.aspx"
+BUILDINGS_CACHE_TTL = 86400 * 7  # 7 days — footprints change slowly
+BUILDINGS_COUNT_LIMIT = 6000
 
 
-def _build_wfs_url(bbox: str) -> str:
-    """Build WFS GetFeature URL for building footprints (GeoJSON output)."""
+def _buildings_url(bbox: str) -> str:
     south, north, west, east = parse_bbox(bbox)
     return (
-        f"{CATASTRO_WFS}"
-        f"?SERVICE=WFS&VERSION=2.0.0&REQUEST=GetFeature"
-        f"&TYPENAMES=BU:Building"
-        f"&BBOX={south},{west},{north},{east},urn:ogc:def:crs:EPSG::4326"
-        f"&OUTPUTFORMAT=application/json"
-        f"&COUNT=5000"
+        f"[out:json][timeout:180];"
+        f"way[\"building\"]({south},{west},{north},{east});out tags geom;"
     )
 
 
-def _building_cache_key(bbox: str) -> str:
+def _buildings_cache_key(bbox: str) -> str:
     h = hashlib.md5(bbox.encode()).hexdigest()
-    return f"buildings:catastro:{h}"
+    return f"buildings:osm:{h}"
 
 
 async def fetch_buildings(bbox: str) -> list[dict]:
-    """Fetch building footprints from Catastro INSPIRE WFS.
+    """Fetch building footprints from OpenStreetMap.
 
-    Returns a list of GeoJSON Feature objects, each with a Polygon geometry
-    in [lon, lat] coordinates (EPSG:4326). Results are cached in Redis for 24h.
+    Returns a list of GeoJSON Feature objects (Polygon rings in [lon, lat]).
+    Cached in Redis for 7 days. Raises on network failure so callers can log
+    and skip enrichment.
     """
-    # Try cache first
-    cache_key = _building_cache_key(bbox)
+    cache_key = _buildings_cache_key(bbox)
     cached = await cache_get(cache_key)
     if cached is not None and isinstance(cached, list):
         logger.info("Building footprints served from cache: bbox=%s", bbox)
         return cached
 
-    url = _build_wfs_url(bbox)
-    logger.info("Fetching building footprints from Catastro WFS: bbox=%s", bbox)
-    async with httpx.AsyncClient(timeout=120, follow_redirects=True) as client:
-        resp = await client.get(url)
-        resp.raise_for_status()
-        body = resp.json()
-    features = body.get("features") if isinstance(body, Mapping) else body
-    if not isinstance(features, list):
-        logger.warning("Catastro WFS returned unexpected format: %s", type(body).__name__)
+    query = _buildings_url(bbox)
+    mirrors = (
+        "https://overpass-api.de/api/interpreter",
+        "https://overpass.kumi.systems/api/interpreter",
+        "https://overpass.openstreetmap.fr/api/interpreter",
+    )
+    body: Any = None
+    last_error: Exception | None = None
+    async with httpx.AsyncClient(
+        timeout=200,
+        headers={"User-Agent": "SALVI-GIS/2.0"},
+        follow_redirects=True,
+    ) as client:
+        for url in mirrors:
+            try:
+                resp = await client.post(url, content=query)
+                resp.raise_for_status()
+                body = resp.json()
+                break
+            except Exception as exc:  # noqa: BLE001 — try next mirror
+                last_error = exc
+                logger.warning("Overpass mirror %s failed for buildings: %s", url, exc)
+    if body is None:
+        raise RuntimeError(f"No Overpass mirror available for buildings: {last_error}")
+
+    elements = body.get("elements") if isinstance(body, Mapping) else None
+    if not isinstance(elements, list):
         return []
 
-    # Store in cache
-    await cache_set(cache_key, features, ttl=CATASTRO_CACHE_TTL)
-    logger.info("Catastro returned %d building footprints (cached %dh)", len(features), CATASTRO_CACHE_TTL // 3600)
+    features: list[dict] = []
+    for element in elements:
+        if element.get("type") != "way" or not isinstance(element.get("geometry"), list):
+            continue
+        ring: list[list[float]] = []
+        for pt in element["geometry"]:
+            if isinstance(pt, Mapping) and type(pt.get("lon")) in (int, float) and type(pt.get("lat")) in (int, float):
+                ring.append([float(pt["lon"]), float(pt["lat"])])
+        if len(ring) < 3:
+            continue
+        if ring[0] != ring[-1]:
+            ring.append(ring[0][:])
+        features.append({
+            "type": "Feature",
+            "geometry": {"type": "Polygon", "coordinates": [ring]},
+        })
+        if len(features) >= BUILDINGS_COUNT_LIMIT:
+            break
+
+    await cache_set(cache_key, features, ttl=BUILDINGS_CACHE_TTL)
+    logger.info("OSM returned %d building footprints (cached %dd)", len(features), BUILDINGS_CACHE_TTL // 86400)
     return features
 
 
@@ -96,7 +128,6 @@ def _validate_coords(geom: Any) -> list[list[float]] | None:
 
 def _haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Great-circle distance in metres between two (lat, lon) points."""
-    import math
     R = 6371008.8
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
@@ -140,7 +171,7 @@ def _compute_segment_width(
       1. Compute the midpoint of the segment.
       2. Find the nearest building centroid overall — that's one side.
       3. Find the nearest building in roughly the opposite direction.
-      4. Distance between the two facade edges = street width.
+      4. Distance between the two facade edges = street section width.
 
     Returns width in metres, or None if <2 buildings found.
     """
@@ -165,17 +196,20 @@ def _compute_segment_width(
     _, i0 = scored[0]
     ring0, (c0_lon, c0_lat) = buildings[i0]
 
-    # Find nearest building roughly opposite side (bearing difference > 90°)
+    # Find nearest building roughly opposite side (bearing difference > 90°).
+    # Lons/lats must be scaled by cos(lat) before the angle test, otherwise
+    # near-vertical streets fail the "opposite side" gate spuriously.
     import math
+    lon_scale = math.cos(math.radians(mid_lat))
     bearing_to_c0 = (math.degrees(math.atan2(
-        c0_lon - mid_lon, c0_lat - mid_lat)) + 360) % 360
+        (c0_lon - mid_lon) * lon_scale, c0_lat - mid_lat)) + 360) % 360
     i1 = None
     for d, idx in scored[1:]:
         ring1, (c1_lon, c1_lat) = buildings[idx]
         bearing_to_c1 = (math.degrees(math.atan2(
-            c1_lon - mid_lon, c1_lat - mid_lat)) + 360) % 360
+            (c1_lon - mid_lon) * lon_scale, c1_lat - mid_lat)) + 360) % 360
         diff = abs(bearing_to_c1 - bearing_to_c0)
-        if diff > 90 and diff < 270:
+        if 90 < diff < 270:
             i1 = idx
             break
 
@@ -185,13 +219,13 @@ def _compute_segment_width(
     ring1, _ = buildings[i1]
 
     # Compute min distance from midpoint to each building's facade
-    d0 = min(_point_to_segment_distance(mid_lon, mid_lat, ring[i][0], ring[i][1],
-                                         ring[(i + 1) % len(ring)][0],
-                                         ring[(i + 1) % len(ring)][1])
+    d0 = min(_point_to_segment_distance(mid_lon, mid_lat, ring0[i][0], ring0[i][1],
+                                         ring0[(i + 1) % len(ring0)][0],
+                                         ring0[(i + 1) % len(ring0)][1])
              for i in range(len(ring0) - 1))
-    d1 = min(_point_to_segment_distance(mid_lon, mid_lat, ring[i][0], ring[i][1],
-                                         ring[(i + 1) % len(ring)][0],
-                                         ring[(i + 1) % len(ring)][1])
+    d1 = min(_point_to_segment_distance(mid_lon, mid_lat, ring1[i][0], ring1[i][1],
+                                         ring1[(i + 1) % len(ring1)][0],
+                                         ring1[(i + 1) % len(ring1)][1])
              for i in range(len(ring1) - 1))
 
     # Total width = distance to facade on left + right
@@ -205,12 +239,10 @@ def _compute_segment_width(
 
 
 def enrich_widths(ways: list[dict], buildings: list[dict]) -> list[dict]:
-    """Update OSM ways with facade-to-facade width from building footprints.
+    """Update OSM ways with facade-to-facade section width from footprints.
 
-    For each way that doesn't already have an ``osm_width`` source, compute
-    the street section width and store it as ``estWidth`` with
-    ``widthSrc="catastro"``.
-
+    For each way that doesn't already have a direct OSM width measurement,
+    compute the street section width and store it as ``sectionWidth``.
     Returns the (mutated) ways list.
     """
     if not buildings:
@@ -221,8 +253,12 @@ def enrich_widths(ways: list[dict], buildings: list[dict]) -> list[dict]:
     for feat in buildings:
         geom = feat.get("geometry") if isinstance(feat, Mapping) else None
         ring = _validate_coords(geom)
-        if ring is None:
+        if ring is None or len(ring) < 4 or not all(len(p) >= 2 for p in ring):
             continue
+        # normalized: closed ring
+        ring = [list(map(float, p[:2])) for p in ring]
+        if ring[0] != ring[-1]:
+            ring.append(ring[0][:])
         parsed.append((ring, _building_center(ring)))
 
     if len(parsed) < 2:
@@ -234,14 +270,15 @@ def enrich_widths(ways: list[dict], buildings: list[dict]) -> list[dict]:
         # Skip ways that already have a direct OSM width measurement
         if way.get("widthSrc") == "osm_width" and way.get("width") is not None:
             continue
+        if way.get("sectionWidth"):
+            continue
         geom = way.get("geom")
         if not isinstance(geom, list) or len(geom) < 2:
             continue
         width = _compute_segment_width(geom, parsed)
         if width is not None:
-            way["estWidth"] = width
-            way["widthSrc"] = "catastro"
-            way["width"] = None  # clear raw width, we use computed
+            way["sectionWidth"] = width
+            way["sectionWidthSrc"] = "osm_buildings"
             updated += 1
 
     if updated:

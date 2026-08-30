@@ -1,6 +1,6 @@
 /** API helpers for GIS backend requests with AbortSignal support. */
 import { errorMessage, requestJson, requestJsonWithSignal } from './http';
-import type { Etagged, GisLuxJob, GisPlanningDraft, GisPlanningInventory, GisPlanningPayload, GisRoadScopeAnchor, GisRoadWorkScope } from '../types';
+import type { Etagged, GisLuxJob, GisPlanningDraft, GisPlanningInventory, GisPlanningPayload, GisRoadScopeAnchor, GisRoadWorkScope, GisProject, GisZoneSelection, GisZoneSummary } from '../types';
 
 let _authFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response> = fetch;
 
@@ -21,12 +21,14 @@ const apiBlob = (url: string, init?: RequestInit, fallback = 'Download failed', 
 };
 
 // ── Projects ──────────────────────────────────────────────────────────────
-export const getProjects = (signal?: AbortSignal) => api<any[]>('/api/projects', undefined, undefined, signal);
-export const createProject = (name: string, signal?: AbortSignal) => api<any>('/api/projects', { method: 'POST', body: JSON.stringify({ name }), headers: { 'Content-Type': 'application/json' } }, undefined, signal);
+export const getProjects = (signal?: AbortSignal) => api<GisProject[]>('/api/projects', undefined, undefined, signal);
+export const createProject = (body: Record<string, unknown>, signal?: AbortSignal) => api<GisProject>('/api/projects', { method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } }, undefined, signal);
+export const updateProject = (id: string, body: Record<string, unknown>, signal?: AbortSignal) => api<GisProject>(`/api/projects/${id}`, { method: 'PUT', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } }, undefined, signal);
 export const deleteProject = (id: string, signal?: AbortSignal) => api<void>(`/api/projects/${id}`, { method: 'DELETE' }, undefined, signal);
 
 // ── Zones ─────────────────────────────────────────────────────────────────
 export const getZones = (projectId?: string, signal?: AbortSignal) => api<any[]>(`/api/zones${projectId ? `?project_id=${projectId}` : ''}`, undefined, undefined, signal);
+export const getProjectZonesSummary = (projectId: string, signal?: AbortSignal) => api<GisZoneSummary[]>(`/api/projects/${projectId}/zones-summary`, undefined, undefined, signal);
 export const createZone = (data: any, signal?: AbortSignal) => api<any>('/api/zones', { method: 'POST', body: JSON.stringify(data), headers: { 'Content-Type': 'application/json' } }, undefined, signal);
 export const updateZone = (id: string, data: any, signal?: AbortSignal) => api<any>(`/api/zones/${id}`, { method: 'PUT', body: JSON.stringify(data), headers: { 'Content-Type': 'application/json' } }, undefined, signal);
 export const deleteZone = (id: string, signal?: AbortSignal) => api<void>(`/api/zones/${id}`, { method: 'DELETE' }, undefined, signal);
@@ -81,6 +83,11 @@ export const getBuildingWidths = (zoneId: string, signal?: AbortSignal) =>
     `/api/zones/${zoneId}/building-widths`, undefined, undefined, signal,
   );
 
+export const getEditorFeatures = (zoneId: string, bbox: string, signal?: AbortSignal) =>
+  api<{ features: { kind: string; ring: [number, number][]; height?: number | null }[]; error?: string }>(
+    `/api/zones/${zoneId}/editor-features?bbox=${encodeURIComponent(bbox)}`, undefined, undefined, signal,
+  );
+
 export const getPlanningDraft = (zoneId: string, signal?: AbortSignal) =>
   etagged<GisPlanningDraft | null>(`/api/zones/${zoneId}/planning-draft`, undefined, signal);
 
@@ -109,6 +116,20 @@ export const putPlanningDraft = (
 
 export const getRoadScope = (zoneId: string, signal?: AbortSignal) =>
   etagged<GisRoadWorkScope | null>(`/api/zones/${zoneId}/road-scope`, undefined, signal);
+
+export const getZoneSelection = (zoneId: string, signal?: AbortSignal) =>
+  etagged<GisZoneSelection | null>(`/api/zones/${zoneId}/selection`, undefined, signal);
+
+export const putZoneSelection = (
+  zoneId: string,
+  baseInventoryHash: string,
+  selectedTargetRefs: string[],
+  signal?: AbortSignal,
+) => etagged<GisZoneSelection>(`/api/zones/${zoneId}/selection`, {
+  method: 'PUT',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ schema_version: 1, base_inventory_hash: baseInventoryHash, selected_target_refs: selectedTargetRefs }),
+}, signal);
 
 export const putRoadScope = (
   zoneId: string,
@@ -207,6 +228,8 @@ export const cancelLuxJob = (projectId: string, jobId: string, signal?: AbortSig
 
 // ── Exports ───────────────────────────────────────────────────────────────
 export const exportDxf = (zoneId: string, signal?: AbortSignal) => apiBlob(`/api/export/dxf?zone_id=${zoneId}`, undefined, undefined, signal);
+export const exportDxfObjects = (zoneId: string, roads: unknown[], objects: unknown[], signal?: AbortSignal) =>
+  apiBlob('/api/export/dxf', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ zone_id: zoneId, roads, objects }) }, undefined, signal);
 export const exportPlantilla = (zoneId: string, rows: any[], signal?: AbortSignal) => api<any>('/api/export/plantilla_luminotecnica', { method: 'POST', body: JSON.stringify({ zone_id: zoneId, rows }), headers: { 'Content-Type': 'application/json' } }, undefined, signal);
 
 // ── Import ────────────────────────────────────────────────────────────────

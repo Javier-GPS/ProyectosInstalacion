@@ -67,6 +67,19 @@ class GisPlanningPatch(BaseModel):
     distribution: Optional[Distribution] = None
     luxParams: Optional[GisLuxParamsPatch] = None
 
+    # ── Road characteristics overrides (correct OSM-estimated data) ──
+    estWidth: Optional[NonNegativeNumber] = None
+    lanes: Optional[NonNegativeNumber] = None
+    lanesForward: Optional[NonNegativeNumber] = None
+    lanesBackward: Optional[NonNegativeNumber] = None
+    sidewalk: Optional[ShortText] = None
+    sidewalkWidthLeft: Optional[NonNegativeNumber] = None
+    sidewalkWidthRight: Optional[NonNegativeNumber] = None
+    median: Optional[bool] = None
+    medianWidth: Optional[NonNegativeNumber] = None
+    dual: Optional[bool] = None
+    maxspeed: Optional[NonNegativeNumber] = None
+
 
 class GisPlanningPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -124,6 +137,20 @@ class GisRoutePreview(BaseModel):
     a: GisRoadScopeAnchor
     b: GisRoadScopeAnchor
     allowed_group_refs: Optional[list[ShortText]] = None
+
+
+class GisZoneSelectionPut(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1] = 1
+    base_inventory_hash: str = Field(pattern=r"^(sha256:[0-9a-f]{64}|md5:[0-9a-f]{32})$")
+    selected_target_refs: list[ShortText] = Field(default_factory=list, max_length=10000)
+
+    @model_validator(mode="after")
+    def validate_unique(self):
+        if len(set(self.selected_target_refs)) != len(self.selected_target_refs):
+            raise ValueError("selected_target_refs must be unique")
+        return self
 
 
 # GisImportInventoryBody lives in schemas/luminaires.py (shared)

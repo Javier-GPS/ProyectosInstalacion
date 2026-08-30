@@ -125,6 +125,19 @@ export const pointInsideBoundary = (point: [number, number], boundary: NonNullab
   return polygons.some(polygon => pointInPolygon(point, polygon));
 };
 
+export const polygonFromPoints = (points: [number, number][]): { type: 'Polygon'; coordinates: [number, number][][] } => ({
+  type: 'Polygon',
+  coordinates: [[...points, points[0]]],
+});
+
+/** Target refs whose full geometry lies inside the polygon. */
+export const targetsInsidePolygon = (
+  targets: GisPlanningInventoryTarget[],
+  polygon: { type: 'Polygon'; coordinates: [number, number][][] },
+) => targets
+  .filter(target => target.geometry && lineInsideBoundary(target.geometry, polygon))
+  .map(target => target.target_ref);
+
 const ringIntersectionMeasures = (a: [number, number], b: [number, number], ring: [number, number][]) => {
   const r: [number, number] = [b[0] - a[0], b[1] - a[1]];
   const denominatorR = r[0] ** 2 + r[1] ** 2;

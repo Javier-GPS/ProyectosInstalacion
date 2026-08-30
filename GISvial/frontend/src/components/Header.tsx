@@ -21,17 +21,12 @@ const Header: React.FC<HeaderProps> = ({ children }) => {
   const { language, setLanguage, t } = useI18n();
   // Dentro del portal la sesión la gestiona la cabecera del portal: sin usuario ni logout propios.
   const embedded = window.self !== window.top;
-  const activeProjectId = useGisStore(s => s.activeProjectId);
-  const projects = useGisStore(s => s.projects);
-  const setActiveProject = useGisStore(s => s.setActiveProject);
+  const view = useGisStore(s => s.view);
+  const activeProject = useGisStore(s => s.projects.find(p => String(p.id) === String(s.activeProjectId)));
   const sidebarOpen = useGisStore(s => s.sidebarOpen);
   const setSidebarOpen = useGisStore(s => s.setSidebarOpen);
   const confirmPlanningLeave = useGisStore(s => s.confirmPlanningLeave);
 
-  const changeProject = (id: string | null) => {
-    if (!confirmPlanningLeave()) return;
-    setActiveProject(id);
-  };
   const toggleSidebar = () => {
     if (sidebarOpen && !confirmPlanningLeave()) return;
     setSidebarOpen(!sidebarOpen);
@@ -42,48 +37,42 @@ const Header: React.FC<HeaderProps> = ({ children }) => {
 
   return (
     <header className="h-14 bg-white/90 backdrop-blur-sm border-b border-salvi-line flex items-center justify-between px-4 shrink-0 z-10 shadow-sm">
-      {/* Left — brand + project selector + wizard nav */}
+      {/* Left — brand + project name + wizard nav (editor only) */}
       <div className="flex items-center gap-4 min-w-0">
-        <div className="flex items-center gap-2 shrink-0">
+        <span className="flex items-center gap-2 shrink-0">
           <span className="font-brand font-light text-xl text-salvi-black tracking-[4px]">SALVI</span>
           <span className="bg-green-100 text-state-success text-xs font-bold px-2 py-0.5 rounded">GIS</span>
-        </div>
+        </span>
 
-        <div className="h-5 w-px bg-salvi-line shrink-0" />
-
-        <select
-          value={activeProjectId || ''}
-          onChange={e => changeProject(e.target.value || null)}
-          className="text-sm border border-salvi-line rounded-md px-2 py-1 bg-white text-salvi-black max-w-[160px]"
-          title={t('nav.projects')}
-        >
-          <option value="">— {t('nav.projects')} —</option>
-          {projects.map(p => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
-
-        {/* Wizard navigation injected by WizardShell */}
-        {children && (
+        {view === 'editor' && (
           <>
+            <div className="h-5 w-px bg-salvi-line shrink-0" />
+            <span className="text-sm font-medium text-salvi-grey truncate max-w-[180px]" title={activeProject?.name || ''}>
+              {activeProject?.name || ''}
+            </span>
+
             <div className="h-5 w-px bg-salvi-line shrink-0" />
             {children}
           </>
         )}
       </div>
 
-      {/* Right — sidebar toggle + language + user */}
+      {/* Right — sidebar toggle (editor only) + language + user */}
       <div className="flex items-center gap-3 shrink-0">
-        <button
-          onClick={toggleSidebar}
-          className="text-xs border border-salvi-line rounded-md px-2 py-1 text-salvi-grey hover:bg-salvi-surface transition-colors"
-          title={sidebarOpen ? 'Cerrar panel' : 'Abrir panel'}
-          aria-label={sidebarOpen ? 'Cerrar panel' : 'Abrir panel'}
-        >
-          {sidebarOpen ? '◀' : '▶'}
-        </button>
+        {view === 'editor' && (
+          <>
+            <button
+              onClick={toggleSidebar}
+              className="text-xs border border-salvi-line rounded-md px-2 py-1 text-salvi-grey hover:bg-salvi-surface transition-colors"
+              title={sidebarOpen ? 'Cerrar panel' : 'Abrir panel'}
+              aria-label={sidebarOpen ? 'Cerrar panel' : 'Abrir panel'}
+            >
+              {sidebarOpen ? '◀' : '▶'}
+            </button>
 
-        <div className="h-5 w-px bg-salvi-line" />
+            <div className="h-5 w-px bg-salvi-line" />
+          </>
+        )}
 
         <select
           value={language}

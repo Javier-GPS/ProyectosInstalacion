@@ -7,6 +7,11 @@ import type { WizardStep } from './store/types';
 
 const WizardShell = React.lazy(() => import('./components/Wizard/WizardShell'));
 
+const viewForStep = (step?: string): 'projects' | 'project' | 'editor' => {
+  if (step === 'proyecto') return 'projects';
+  return 'editor';
+};
+
 function LoadingScreen() {
   return (
     <main className="flex min-h-screen items-center justify-center bg-salvi-cream">
@@ -24,11 +29,13 @@ function App() {
   const setActiveProject = useGisStore(s => s.setActiveProject);
   const setSelectedZone = useGisStore(s => s.setSelectedZone);
   const setStepWizard = useGisStore(s => s.setStepWizard);
+  const setView = useGisStore(s => s.setView);
   const confirmPlanningLeave = useGisStore(s => s.confirmPlanningLeave);
   const activeProjectId = useGisStore(s => s.activeProjectId);
   const selectedZoneId = useGisStore(s => s.selectedZoneId);
   const stepWizard = useGisStore(s => s.stepWizard);
-  const contextRef = useRef({ activeProjectId, selectedZoneId, stepWizard });
+  const view = useGisStore(s => s.view);
+  const contextRef = useRef({ activeProjectId, selectedZoneId, stepWizard, view });
 
   // Expose authFetch to the API layer
   useEffect(() => {
@@ -36,8 +43,8 @@ function App() {
   }, [authFetch]);
 
   useEffect(() => {
-    contextRef.current = { activeProjectId, selectedZoneId, stepWizard };
-  }, [activeProjectId, selectedZoneId, stepWizard]);
+    contextRef.current = { activeProjectId, selectedZoneId, stepWizard, view };
+  }, [activeProjectId, selectedZoneId, stepWizard, view]);
 
   // Sync new hash events → store without treating ordinary store updates as hash navigation.
   useEffect(() => {
@@ -57,7 +64,8 @@ function App() {
     if (params.projectId) setActiveProject(params.projectId);
     if (params.zoneId) setSelectedZone(params.zoneId);
     if (params.step) setStepWizard(params.step as WizardStep);
-  }, [params.projectId, params.zoneId, params.step, confirmPlanningLeave, setHashParams, setActiveProject, setSelectedZone, setStepWizard]);
+    if (params.step && params.projectId) setView(viewForStep(params.step));
+  }, [params.projectId, params.zoneId, params.step, confirmPlanningLeave, setHashParams, setActiveProject, setSelectedZone, setStepWizard, setView]);
 
   if (loading) return <LoadingScreen />;
   if (!user) return <LoadingScreen />;

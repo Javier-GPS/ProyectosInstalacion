@@ -1,10 +1,10 @@
 /** Wizard steps replacing the old appMode planning/detail. */
-export type WizardStep = 'proyecto' | 'zona' | 'vias' | 'luminarias' | 'informe';
+export type WizardStep = 'proyecto' | 'zona' | 'vias' | 'informe';
 
 /** Granular loading status per entity. */
 export type StatusGranular = 'idle' | 'loading' | 'loaded' | 'error';
 
-/** Selection mode within the luminarias step. */
+/** Selection mode within the elements/luminarias step. */
 export type DetailSelectionMode = 'none' | 'click' | 'marquee' | 'lasso' | 'criteria';
 
 export interface RoadSelectionHit {
@@ -33,6 +33,8 @@ export interface RoadSelectionDraft {
   area_points: [number, number][];
   boundary?: { type: 'Polygon'; coordinates: [number, number][][] };
   allowed_group_refs?: string[];
+  /** Tramos auto-selected by the last closed larzo (so they can be undone alone). */
+  lassoTargetRefs?: string[];
   a?: RoadSelectionAnchor;
   b?: RoadSelectionAnchor;
   path?: [number, number][];

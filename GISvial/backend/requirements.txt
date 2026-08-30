@@ -7,6 +7,7 @@ python-dotenv>=1.1
 httpx>=0.27
 python-jose[cryptography]>=3.3
 redis>=5.2
+overturemaps>=1.0.2
 
 # --- GISvial version ---
-# v0.3.1 — Overpass paralelo, Redis cache, Nominatim async, MD5 hash, DB pool tuning
+# v0.3.2 — Overture Maps global widths, OSM buildings section widths, IGN-RT lanes

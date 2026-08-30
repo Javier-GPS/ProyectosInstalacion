@@ -3,6 +3,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useGisStore, ROAD_CFG } from '../../store/useGisStore';
 import type { GisPlanningInventoryTarget, GisPlanningPatch, GisLightingClass, GisDistribution } from '../../types';
 import { targetDisplayLabel, targetName, targetRef } from '../../lib/roadNaming';
+import SegmentGeometryInfo from './SegmentGeometryInfo';
 
 const UNE_CLASSES: GisLightingClass[] = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7'];
 const DISTRIBUTIONS: { value: GisDistribution; label: string }[] = [
@@ -44,10 +45,6 @@ const SegmentContextPopup: React.FC<SegmentContextPopupProps> = ({ x, y, target,
 
   const cfg = roadType ? ROAD_CFG[roadType] : undefined;
   const hasOverride = Object.keys(patch).length > 0;
-
-  // Actual segment values from OSM (estWidth, sidewalk)
-  const segWidth = target.estWidth ?? cfg?.width;
-  const segSidewalk = target.sidewalk ?? null;
 
   // Count how many targets share this street name
   const osmName = targetName(target);
@@ -112,16 +109,6 @@ const SegmentContextPopup: React.FC<SegmentContextPopupProps> = ({ x, y, target,
   const popupX = Math.min(x, window.innerWidth - 340);
   const popupY = Math.min(y, window.innerHeight - 420);
 
-  // Sidewalk display: luxParams override > parsed OSM sidewalk:width > OSM sidewalk tag > default
-  const swL = target.sidewalkWidthLeft ?? ((target.sidewalk === 'both' || target.sidewalk === 'left') ? 2.0 : null);
-  const swR = target.sidewalkWidthRight ?? ((target.sidewalk === 'both' || target.sidewalk === 'right') ? 2.0 : null);
-  const displaySidewalkL = lux.sidewalkL ?? inheritedLux.sidewalkL ?? swL;
-  const displaySidewalkR = lux.sidewalkR ?? inheritedLux.sidewalkR ?? swR;
-  const hasSidewalk = displaySidewalkL != null || displaySidewalkR != null || segSidewalk != null;
-  const widthIsEst = target.widthSrc && target.widthSrc !== 'osm_width';
-  const srcIcon = target.widthSrc === 'osm_width' ? '📏' : target.widthSrc === 'lanes' ? '🔢' : target.widthSrc === 'catastro' ? '🏛' : target.widthSrc === 'default' ? '⚠' : '❓';
-  const srcLabel = target.widthSrc === 'osm_width' ? 'OSM directo' : target.widthSrc === 'lanes' ? 'carriles×3.0' : target.widthSrc === 'catastro' ? 'Catastro fachadas' : target.widthSrc === 'default' ? 'estimado por tipo' : 'desconocido';
-
   return (
     <div
       ref={ref}
@@ -135,45 +122,14 @@ const SegmentContextPopup: React.FC<SegmentContextPopupProps> = ({ x, y, target,
       </div>
 
       {/* Info section */}
-      <div className="border-b border-salvi-line/50 px-3 py-2 text-[10px] text-salvi-muted">
-        <div className="flex flex-wrap gap-x-3 gap-y-1">
-          <span>Tramo {target.source_index + 1}</span>
-          {target.nameState && <span>{target.nameState === 'explicit_noname' ? 'Sin nombre declarado' : target.nameState}</span>}
-          {targetRef(target) && <span>Ref. {targetRef(target)}</span>}
-          <span>{target.length_m == null ? '—' : `${Math.round(target.length_m)} m`}</span>
-          {roadType && <span>{cfg ? cfg.labelKey.replace('road.', '') : roadType}</span>}
-        </div>
-        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
-          {segWidth != null && (
-            <span title={`Fuente: ${srcLabel}`}>
-              {srcIcon} Calzada {segWidth} m
-              <span className="opacity-50"> · {srcLabel}</span>
-            </span>
-          )}
-        </div>
-        {/* Sidewalk info */}
-        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5">
-          {displaySidewalkL != null && (
-            <span title={target.sidewalkWidthLeft != null ? 'OSM sidewalk:width' : 'Estimado 2.0m por defecto'}>
-              🚶 Acera I {displaySidewalkL} m{target.sidewalkWidthLeft != null ? ' (OSM)' : ' (est.)'}
-            </span>
-          )}
-          {displaySidewalkR != null && (
-            <span title={target.sidewalkWidthRight != null ? 'OSM sidewalk:width' : 'Estimado 2.0m por defecto'}>
-              🚶 Acera D {displaySidewalkR} m{target.sidewalkWidthRight != null ? ' (OSM)' : ' (est.)'}
-            </span>
-          )}
-          {!displaySidewalkL && !displaySidewalkR && segSidewalk && (
-            <span>🚶 sidewalk: {segSidewalk} <span className="opacity-50">(sin dimensión)</span></span>
-          )}
-          {!displaySidewalkL && !displaySidewalkR && !segSidewalk && (
-            <span className="opacity-50">🚶 Sin datos de acera</span>
-          )}
-        </div>
-        {target.dual && <div className="mt-0.5 text-[9px] text-state-info">🛤 Doble calzada{target.median ? ' con mediana' : ''}</div>}
-        {target.median && target.medianWidth != null && <div className="text-[9px] text-state-info">📐 Mediana {target.medianWidth} m</div>}
-        {widthIsEst && <div className="mt-0.5 text-[9px] text-state-warning">⚠ Calzada estimada — verificar in situ</div>}
+      <div className="flex flex-wrap gap-x-3 gap-y-1 border-b border-salvi-line/50 px-3 py-2 text-[10px] text-salvi-muted">
+        <span>Tramo {target.source_index + 1}</span>
+        {target.nameState && <span>{target.nameState === 'explicit_noname' ? 'Sin nombre declarado' : target.nameState}</span>}
+        {targetRef(target) && <span>Ref. {targetRef(target)}</span>}
+        <span>{target.length_m == null ? '—' : `${Math.round(target.length_m)} m`}</span>
+        {roadType && <span>{cfg ? cfg.labelKey.replace('road.', '') : roadType}</span>}
       </div>
+      <SegmentGeometryInfo target={target} />
 
       {/* Street selection */}
       {hasStreetSelection && (

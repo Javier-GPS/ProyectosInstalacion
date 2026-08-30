@@ -10,6 +10,7 @@ from app.services.planning import (
     base_inventory_hash,
     compact_payload,
     group_ref,
+    inventory_counts,
     length_m,
     normalize_inventory,
 )
@@ -95,6 +96,11 @@ class PlanningInventoryTests(unittest.TestCase):
         ], [{"group_ref": "g", "road_type": "residential"}])
 
         self.assertEqual([street["street"] for street in result], ["Calle"])
+
+    def test_inventory_counts_matches_normalize_inventory_counts(self):
+        counts = inventory_counts(self.records)["counts"]
+        expected = normalize_inventory("z1", self.records)["counts"]
+        self.assertEqual(counts, expected)
 
 
 class PlanningSchemaTests(unittest.TestCase):

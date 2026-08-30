@@ -1,65 +1,19 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CheckSquare, MousePointer, Search, Trash2, PlayCircle, Square, PencilRuler } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import { useAuth } from '../../auth/AuthContext';
-import { ApiStatusError, cancelLuxJob, createLuxJob, deleteRoadScope, getBuildingWidths, getLuminaires, getLuxJob, getPlanningDraft, getPlanningInventory, getRoadScope, loadPlanningOsm, putPlanningDraft, putRoadScope } from '../../lib/api';
-import { useGisStore, ROAD_CFG, type RoadTypeCfg } from '../../store/useGisStore';
-import type {
-  Etagged, GisDistribution, GisLightingClass, GisPlanningDraft,
-  GisPlanningInventoryTarget, GisPlanningLuxParams, GisPlanningPatch,
-  GisPlanningPayload, GisRoadWorkScope,
-  GisLuxJob,
-} from '../../types';
+import {
+  ApiStatusError, cancelLuxJob, createLuxJob, getBuildingWidths, getLuminaires,
+  getLuxJob, getPlanningDraft, getPlanningInventory, getZoneSelection, loadPlanningOsm, putPlanningDraft, putZoneSelection,
+} from '../../lib/api';
+import { useGisStore, ROAD_CFG } from '../../store/useGisStore';
+import type { Etagged, GisLuxJob, GisPlanningDraft, GisPlanningInventory, GisPlanningPayload } from '../../types';
 import type { RoadSelectionDraft } from '../../store/types';
-import { lineInsideBoundary, roadSelectionIsCurrent } from '../../lib/roadSelection';
-import { targetDisplayLabel, targetGroupKey, targetGroupLabel, targetName, targetSelectionKey } from '../../lib/roadNaming';
+import { roadSelectionIsCurrent } from '../../lib/roadSelection';
+import { targetName } from '../../lib/roadNaming';
+import { applyRoadOverrides, effectivePatch, ROAD_CHAR_KEYS } from '../../lib/planningOverrides';
 
 const EMPTY_PAYLOAD = (): GisPlanningPayload => ({ group_defaults: {}, target_overrides: {} });
-const scopeToDraft = (scope: GisRoadWorkScope, etag: string, boundarySignature: string): RoadSelectionDraft => ({
-  zone_id: scope.zone_id,
-  inventory_hash: scope.base_inventory_hash,
-  boundary_signature: boundarySignature,
-  status: scope.current ? 'complete' : 'stale',
-  area_points: scope.boundary.coordinates[0].slice(0, -1),
-  boundary: scope.boundary,
-  allowed_group_refs: scope.allowed_group_refs,
-  a: { ...scope.a, measure: scope.a.segment_t, coordinate: scope.path[0] },
-  b: { ...scope.b, measure: scope.b.segment_t, coordinate: scope.path[scope.path.length - 1] },
-  path: scope.path,
-  length_m: scope.length_m,
-  member_count: scope.members.length,
-  etag,
-});
-const UNE_CLASSES: GisLightingClass[] = [
-  'M1', 'M2', 'M3', 'M4', 'M5', 'M6',
-  'C0', 'C1', 'C2', 'C3', 'C4', 'C5',
-  'P1', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7',
-];
-const DISTRIBUTIONS: { value: GisDistribution; label: string }[] = [
-  { value: 'unilateral_r', label: 'Unilateral derecha' },
-  { value: 'unilateral_l', label: 'Unilateral izquierda' },
-  { value: 'bilateral_pareado', label: 'Bilateral' },
-  { value: 'bilateral_tresbolillo', label: 'Bilateral tresbolillo' },
-  { value: 'centrada_mediana', label: 'Centrada en mediana' },
-  { value: 'mediana_compartida', label: 'Sin luminarias (mediana compartida)' },
-];
-const LUX_FIELDS: { key: keyof GisPlanningLuxParams; label: string; type: 'number' | 'text' }[] = [
-  { key: 'poleH', label: 'Altura poste (m)', type: 'number' },
-  { key: 'armLen', label: 'Longitud brazo (m)', type: 'number' },
-  { key: 'setback', label: 'Retranqueo (m)', type: 'number' },
-  { key: 'tilt', label: 'Inclinación (°)', type: 'number' },
-  { key: 'sidewalkL', label: 'Acera izquierda (m)', type: 'number' },
-  { key: 'sidewalkR', label: 'Acera derecha (m)', type: 'number' },
-  { key: 'medianW', label: 'Mediana (m)', type: 'number' },
-  { key: 'maintFactor', label: 'Factor mantenimiento', type: 'number' },
-  { key: 'brand', label: 'Fabricante', type: 'text' },
-  { key: 'range', label: 'Gama', type: 'text' },
-  { key: 'diffuser', label: 'Difusor', type: 'text' },
-  { key: 'optic', label: 'Óptica', type: 'text' },
-  { key: 'ledType', label: 'Tipo LED', type: 'text' },
-  { key: 'power', label: 'Potencia (W)', type: 'number' },
-  { key: 'colorTemp', label: 'Temperatura color (K)', type: 'number' },
-  { key: 'cri', label: 'CRI', type: 'number' },
-];
 
 type Resource =
   | { kind: 'loading' }
@@ -70,95 +24,14 @@ type Resource =
   | { kind: 'conflict' }
   | { kind: 'error' };
 
-const has = (value: object | null | undefined, key: PropertyKey) => !!value && Object.prototype.hasOwnProperty.call(value, key);
-
-const PlanningFields: React.FC<{
-  patch: GisPlanningPatch;
-  inherited?: GisPlanningPatch;
-  onChange: (patch: GisPlanningPatch) => void;
-}> = ({ patch, inherited, onChange }) => {
-  const override = inherited !== undefined;
-  const effective = <K extends keyof GisPlanningPatch>(key: K) => has(patch, key) ? patch[key] : inherited?.[key];
-  const setField = <K extends keyof GisPlanningPatch>(key: K, value: GisPlanningPatch[K] | undefined) => {
-    const next = { ...patch };
-    if (value === undefined) delete next[key];
-    else (next as any)[key] = value;
-    onChange(next);
-  };
-  const patchLux = patch.luxParams && typeof patch.luxParams === 'object' ? patch.luxParams : {};
-  const inheritedLux = inherited?.luxParams && typeof inherited.luxParams === 'object' ? inherited.luxParams : {};
-  const setLux = (key: keyof GisPlanningLuxParams, value: string | number | null | undefined) => {
-    const nextLux = { ...patchLux };
-    if (value === undefined) delete nextLux[key];
-    else (nextLux as any)[key] = value;
-    const next = { ...patch };
-    if (Object.keys(nextLux).length) next.luxParams = nextLux;
-    else delete next.luxParams;
-    onChange(next);
-  };
-
-  return (
-    <div className="space-y-2">
-      <label className="block text-[11px] text-salvi-muted">
-        Clase UNE-EN 13201
-        <select
-          value={(effective('lighting_class') as string | null | undefined) ?? ''}
-          onChange={e => setField('lighting_class', e.target.value ? e.target.value as GisLightingClass : override ? null : undefined)}
-          className="mt-0.5 w-full rounded border border-salvi-line bg-white px-2 py-1 text-xs"
-        >
-          <option value="">Sin asignar</option>
-          {UNE_CLASSES.map(value => <option key={value} value={value}>{value}</option>)}
-        </select>
-        {override && has(patch, 'lighting_class') && <button onClick={() => setField('lighting_class', undefined)} className="mt-1 text-[10px] text-state-info">Usar valor del tipo</button>}
-      </label>
-      <label className="block text-[11px] text-salvi-muted">
-        Interdistancia (m)
-        <input
-          type="number" min="0" step="0.1"
-          value={(effective('spacing') as number | null | undefined) ?? ''}
-          onChange={e => setField('spacing', e.target.value === '' ? override ? null : undefined : Number(e.target.value))}
-          className="mt-0.5 w-full rounded border border-salvi-line px-2 py-1 text-xs"
-        />
-        {override && has(patch, 'spacing') && <button onClick={() => setField('spacing', undefined)} className="mt-1 text-[10px] text-state-info">Usar valor del tipo</button>}
-      </label>
-      <label className="block text-[11px] text-salvi-muted">
-        Distribución
-        <select
-          value={(effective('distribution') as string | null | undefined) ?? ''}
-          onChange={e => setField('distribution', e.target.value ? e.target.value as GisDistribution : override ? null : undefined)}
-          className="mt-0.5 w-full rounded border border-salvi-line bg-white px-2 py-1 text-xs"
-        >
-          <option value="">Sin asignar</option>
-          {DISTRIBUTIONS.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
-        </select>
-        {override && has(patch, 'distribution') && <button onClick={() => setField('distribution', undefined)} className="mt-1 text-[10px] text-state-info">Usar valor del tipo</button>}
-      </label>
-      <details>
-        <summary className="cursor-pointer text-[11px] font-medium text-salvi-grey">Parámetros Lux Studio</summary>
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          {LUX_FIELDS.map(field => {
-            const own = has(patchLux, field.key);
-            const value = own ? patchLux[field.key] : inheritedLux[field.key];
-            return (
-              <label key={field.key} className="text-[10px] text-salvi-muted">
-                {field.label}
-                <input
-                  type={field.type}
-                  min={field.type === 'number' && field.key !== 'tilt' ? 0 : undefined}
-                  max={field.key === 'cri' ? 100 : undefined}
-                  value={(value as string | number | null | undefined) ?? ''}
-                  onChange={e => setLux(field.key, e.target.value === '' ? override ? null : undefined : field.type === 'number' ? Number(e.target.value) : e.target.value)}
-                  className="mt-0.5 w-full rounded border border-salvi-line px-1.5 py-1 text-[11px]"
-                />
-                {override && own && <button onClick={() => setLux(field.key, undefined)} className="text-[9px] text-state-info">Heredar</button>}
-              </label>
-            );
-          })}
-        </div>
-      </details>
-    </div>
-  );
-};
+const CHAR_FIELDS: { key: (typeof ROAD_CHAR_KEYS)[number]; label: string; step: number; unit: string }[] = [
+  { key: 'estWidth', label: 'Calzada', step: 0.5, unit: 'm' },
+  { key: 'lanes', label: 'Carriles', step: 1, unit: '' },
+  { key: 'sidewalkWidthLeft', label: 'Acera I', step: 0.5, unit: 'm' },
+  { key: 'sidewalkWidthRight', label: 'Acera D', step: 0.5, unit: 'm' },
+  { key: 'medianWidth', label: 'Mediana', step: 0.5, unit: 'm' },
+  { key: 'maxspeed', label: 'Velocidad', step: 5, unit: 'km/h' },
+];
 
 const StepVias: React.FC = () => {
   const { t } = useI18n();
@@ -168,64 +41,72 @@ const StepVias: React.FC = () => {
   const activeProjectId = useGisStore(s => s.activeProjectId);
   const activeProject = useGisStore(s => s.projects.find(project => project.id === s.activeProjectId));
   const inventory = useGisStore(s => s.activePlanningInventory);
-  const visibility = useGisStore(s => s.roadTypeVisibility);
   const setInventory = useGisStore(s => s.setActivePlanningInventory);
-  const setStorePayload = useGisStore(s => s.setPlanningPayload);
   const storePlanningPayload = useGisStore(s => s.planningPayload);
   const setStoreBasePayload = useGisStore(s => s.setPlanningBasePayload);
   const setPlanningDirty = useGisStore(s => s.setPlanningDirty);
   const confirmPlanningLeave = useGisStore(s => s.confirmPlanningLeave);
   const savedStorePayload = useGisStore(s => s.planningSavedPayload);
   const discardVersion = useGisStore(s => s.planningDiscardVersion);
-  const setVisibility = useGisStore(s => s.setRoadTypeVisibility);
   const roadSelectionByZone = useGisStore(s => s.roadSelectionByZone);
   const setRoadSelection = useGisStore(s => s.setRoadSelection);
   const setStepWizard = useGisStore(s => s.setStepWizard);
-  const selectedTargetRef = useGisStore(s => s.selectedTargetRef);
-  const selectedStreetName = useGisStore(s => s.selectedStreetName);
-  const setSelectedSegment = useGisStore(s => s.setSelectedSegment);
-  const setZoneLuminaires = useGisStore(s => s.setZoneLuminaires);
   const accumulatedSelection = useGisStore(s => s.accumulatedSelection);
+  const savedSelectionByZone = useGisStore(s => s.savedSelectionByZone);
   const toggleTargetSelection = useGisStore(s => s.toggleTargetSelection);
-  const toggleStreetSelection = useGisStore(s => s.toggleStreetSelection);
   const clearAccumulatedSelection = useGisStore(s => s.clearAccumulatedSelection);
   const setAccumulatedSelection = useGisStore(s => s.setAccumulatedSelection);
+  const commitSelection = useGisStore(s => s.commitSelection);
+  const restoreSelection = useGisStore(s => s.restoreSelection);
+  const planningDirty = useGisStore(s => s.planningDirty);
+  const zoneLuminaires = useGisStore(s => s.zoneLuminaires);
+  const selectedLumIds = useGisStore(s => s.selectedLumIds);
+  const setZoneLuminaires = useGisStore(s => s.setZoneLuminaires);
+  const openEditor = useGisStore(s => s.openEditor);
+  const clearSelection = useGisStore(s => s.clearSelection);
+  const showCompliance = useGisStore(s => s.showCompliance);
+  const setShowCompliance = useGisStore(s => s.setShowCompliance);
+  const setMergeTargetPatches = useGisStore(s => s.setMergeTargetPatches);
+
   const [resource, setResource] = useState<Resource>({ kind: 'loading' });
   const [payload, setPayload] = useState<GisPlanningPayload>(EMPTY_PAYLOAD);
   const [basePayload, setBasePayload] = useState<GisPlanningPayload>(EMPTY_PAYLOAD);
   const [message, setMessage] = useState('');
   const [reloadKey, setReloadKey] = useState(0);
   const [saving, setSaving] = useState(false);
-  const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
-  const [expandedStreet, setExpandedStreet] = useState<string | null>(null);
-  const [selectedTarget, setSelectedTarget] = useState<GisPlanningInventoryTarget | null>(null);
   const [query, setQuery] = useState('');
+  const [showSelectedTramos, setShowSelectedTramos] = useState(false);
   const [staleReady, setStaleReady] = useState(false);
   const [loadingOsm, setLoadingOsm] = useState(false);
-  const [scopeBusy, setScopeBusy] = useState(false);
-  const [selectionExpandedStreet, setSelectionExpandedStreet] = useState<string | null>(null);
   const [buildingStatus, setBuildingStatus] = useState<string | null>(null);
+  const osmLoadRef = useRef<AbortController | null>(null);
+  const inventoryEtagRef = useRef<string | null>(null);
+  const legacyRefreshAttemptedRef = useRef(new Set<string>());
+
   const [luxJob, setLuxJob] = useState<GisLuxJob | null>(null);
   const luxJobEtagRef = useRef<string | undefined>();
   const [luxJobError, setLuxJobError] = useState('');
   const [luxStarting, setLuxStarting] = useState(false);
   const [luxMode, setLuxMode] = useState<'calculate' | 'optimize'>('optimize');
   const luxIntentIdRef = useRef<string>();
-  const osmLoadRef = useRef<AbortController | null>(null);
-  const inventoryEtagRef = useRef<string | null>(null);
-  const legacyRefreshAttemptedRef = useRef(new Set<string>());
+  const [selExpandedStreet, setSelExpandedStreet] = useState<string | null>(null);
 
   const zone = zones.find(z => z.id === selectedZoneId);
   const roadSelection = selectedZoneId ? roadSelectionByZone[selectedZoneId] : undefined;
   const dirty = JSON.stringify(payload) !== JSON.stringify(basePayload);
   const zoneSelection = selectedZoneId ? (accumulatedSelection[selectedZoneId] || {}) : {};
   const selectedCount = Object.keys(zoneSelection).length;
+  const totalTargetCount = inventory?.targets.length ?? 0;
+  const projectEditable = activeProject?.access_role !== 'viewer' && user?.role !== 'VIEWER';
+  const savedSelection = selectedZoneId ? (savedSelectionByZone[selectedZoneId] || {}) : {};
+  const hasPendingSelection = JSON.stringify(zoneSelection) !== JSON.stringify(savedSelection);
+
+  const zoneId = selectedZoneId;
+  const lums = zoneId ? (zoneLuminaires[zoneId] || []) : [];
+  const jobRunning = !!luxJob && !['succeeded', 'partial', 'failed', 'cancelled', 'unknown'].includes(luxJob.state);
   const calculableTargetRefs = inventory?.targets
     .filter(target => zoneSelection[target.target_ref] && target.geometry)
     .map(target => target.target_ref) || [];
-  const nonCalculableSelectedCount = selectedCount - calculableTargetRefs.length;
-  const totalTargetCount = inventory?.targets.length ?? 0;
-  const projectEditable = activeProject?.access_role !== 'viewer' && user?.role !== 'VIEWER';
 
   useEffect(() => {
     setPlanningDirty(dirty);
@@ -236,10 +117,8 @@ const StepVias: React.FC = () => {
     if (!discardVersion) return;
     setPayload(savedStorePayload);
     setBasePayload(savedStorePayload);
-    setSelectedTarget(null);
   }, [discardVersion, savedStorePayload]);
 
-  // The map popup edits the shared store directly; keep the form payload in sync.
   useEffect(() => {
     if (JSON.stringify(storePlanningPayload) !== JSON.stringify(payload)) setPayload(storePlanningPayload);
   }, [storePlanningPayload]);
@@ -259,13 +138,11 @@ const StepVias: React.FC = () => {
     setStaleReady(false);
     setBuildingStatus(null);
     setMessage('');
-    setSelectedTarget(null);
     setInventory(null);
     setStoreBasePayload(EMPTY_PAYLOAD());
 
     (async () => {
       try {
-        // ── Step 1: Load inventory (with ETag for 304 caching) ─────
         const inventoryResult = await getPlanningInventory(selectedZoneId, inventoryEtagRef.current || undefined, undefined, controller.signal);
         let nextInventory = inventoryResult.data;
         const newEtag = inventoryResult.etag;
@@ -276,30 +153,17 @@ const StepVias: React.FC = () => {
           return;
         }
 
-        // Cached ways from before the naming contract are refreshed in the
-        // background by a separate effect; the panel renders legacy data first.
-
-        // ── Step 2: Draft + RoadScope en PARALELO ──────────────────
         let draftResult: Etagged<GisPlanningDraft | null> | null = null;
-        let scopeResult: Etagged<GisRoadWorkScope | null> | null = null;
         try {
-          const [dr, sr] = await Promise.all([
-            getPlanningDraft(selectedZoneId, controller.signal)
-              .catch(e => { if (e instanceof ApiStatusError && e.status === 404) return { data: null, etag: '' }; throw e; }),
-            getRoadScope(selectedZoneId, controller.signal)
-              .catch(e => { if (e instanceof ApiStatusError && e.status === 204) return { data: null, etag: '' }; throw e; }),
-          ]);
-          draftResult = dr as Etagged<GisPlanningDraft | null>;
-          scopeResult = sr as Etagged<GisRoadWorkScope | null>;
+          draftResult = await getPlanningDraft(selectedZoneId, controller.signal)
+            .catch(e => { if (e instanceof ApiStatusError && e.status === 404) return { data: null, etag: '' }; throw e; }) as Etagged<GisPlanningDraft | null>;
         } catch (error) {
           if (!(error instanceof ApiStatusError) || error.status !== 404) throw error;
         }
 
-        // ── Step 3: Check building widths status ────────────────────
         try {
           const bw = await getBuildingWidths(selectedZoneId, controller.signal);
           if (live) setBuildingStatus(bw.status);
-          // If computing, poll every 5s until available, then refresh inventory
           if (bw.status === 'computing' && live) {
             const poll = async () => {
               while (live) {
@@ -310,11 +174,10 @@ const StepVias: React.FC = () => {
                   if (!live) return;
                   setBuildingStatus(res.status);
                   if (res.status === 'available') {
-                    // Force-refresh inventory to get Catastro-enriched widths
                     const refreshed = await getPlanningInventory(selectedZoneId, undefined, true, controller.signal);
                     if (refreshed.data && live) {
                       setInventory(refreshed.data);
-                       setMessage('🏛 Anchos de vía actualizados con datos del Catastro');
+                      setMessage('Anchos de vía actualizados con datos del Catastro');
                     }
                     return;
                   }
@@ -336,27 +199,14 @@ const StepVias: React.FC = () => {
         }
         setInventory(nextInventory);
 
-        // ── Log data source summary ─────────────────────────────────
-        const srcCounts: Record<string, number> = {};
-        for (const t of nextInventory.targets) {
-          const src = t.widthSrc || 'unknown';
-          srcCounts[src] = (srcCounts[src] || 0) + 1;
-        }
-        const srcLabels: Record<string, string> = { osm_width: '📏 OSM', lanes: '🔢 carriles', catastro: '🏛 Catastro', default: '⚠ default', unknown: '❓' };
-        console.log('┌── SALVI GIS: Inventario cargado ────────────────');
-        console.log(`│ Zona:       ${nextInventory.zone_id}`);
-        console.log(`│ Total vías: ${nextInventory.targets.length}`);
-        for (const [src, n] of Object.entries(srcCounts)) {
-          const pct = (n / nextInventory.targets.length * 100).toFixed(0);
-          console.log(`│   ${srcLabels[src] || src}: ${n} (${pct}%)`);
-        }
-        console.log('└──────────────────────────────────────────────────');
+        // Restore the confirmed street selection (Aceptar) for this zone.
+        try {
+          const selResult = await getZoneSelection(selectedZoneId, controller.signal);
+          if (live && selResult.data && selResult.data.base_inventory_hash === nextInventory.base_inventory_hash) {
+            restoreSelection(selectedZoneId, selResult.data.selected_target_refs);
+          }
+        } catch { /* selection restore is best-effort */ }
 
-        const localScope = useGisStore.getState().roadSelectionByZone[selectedZoneId];
-        const zoneBoundary = useGisStore.getState().zones.find(item => item.id === selectedZoneId)?.geometry.boundary;
-        if (scopeResult?.data && (!localScope || ['complete', 'stale', 'invalid'].includes(localScope.status))) {
-          setRoadSelection(selectedZoneId, scopeToDraft(scopeResult.data, scopeResult.etag, JSON.stringify(zoneBoundary)));
-        }
         if (!draftResult || !draftResult.data) {
           const empty = EMPTY_PAYLOAD();
           setPayload(empty); setBasePayload(empty); setStoreBasePayload(empty);
@@ -377,102 +227,9 @@ const StepVias: React.FC = () => {
       }
     })();
     return () => { live = false; controller.abort(); };
-  }, [selectedZoneId, reloadKey, setInventory, setRoadSelection, setStoreBasePayload, clearAccumulatedSelection]);
+  }, [selectedZoneId, reloadKey, setInventory, setRoadSelection, setStoreBasePayload, clearAccumulatedSelection, restoreSelection]);
 
   useEffect(() => () => osmLoadRef.current?.abort(), []);
-
-  // Cached ways from before the naming contract need one forced refresh.
-  // Runs in the background so the panel never blocks on Overpass and a
-  // failure can never take the whole planning panel to the error state.
-  useEffect(() => {
-    if (!selectedZoneId || !inventory?.source_needs_refresh) return;
-    if (legacyRefreshAttemptedRef.current.has(selectedZoneId)) return;
-    legacyRefreshAttemptedRef.current.add(selectedZoneId);
-    const previousHash = inventory.base_inventory_hash;
-    let alive = true;
-    const controller = new AbortController();
-    setMessage('Actualizando etiquetado OSM…');
-    (async () => {
-      try {
-        await loadPlanningOsm(selectedZoneId, controller.signal, true);
-        const refreshed = await getPlanningInventory(selectedZoneId, undefined, true, controller.signal);
-        if (!alive) return;
-        if (refreshed.data) {
-          if (refreshed.data.base_inventory_hash !== previousHash) clearAccumulatedSelection(selectedZoneId);
-          setInventory(refreshed.data);
-          inventoryEtagRef.current = refreshed.etag || '';
-          if (alive) setMessage('');
-        }
-      } catch (error) {
-        if ((error as Error).name === 'AbortError') legacyRefreshAttemptedRef.current.delete(selectedZoneId);
-        console.warn('Could not refresh legacy OSM naming data', error);
-        if (alive) setMessage('No se pudo actualizar el etiquetado OSM antiguo; se muestran los datos anteriores.');
-      }
-    })();
-    return () => { alive = false; controller.abort(); };
-  }, [selectedZoneId, inventory?.source_needs_refresh, setInventory, clearAccumulatedSelection]);
-
-  useEffect(() => {
-    if (!selectedZoneId) return;
-    const controller = new AbortController();
-    getLuminaires(selectedZoneId, controller.signal)
-      .then(luminaires => { if (!controller.signal.aborted) setZoneLuminaires(selectedZoneId, luminaires); })
-      .catch(() => { /* Existing map data is allowed to remain empty. */ });
-    return () => controller.abort();
-  }, [selectedZoneId, setZoneLuminaires]);
-
-  useEffect(() => {
-    setLuxJob(null);
-    luxJobEtagRef.current = undefined;
-    setLuxJobError('');
-    luxIntentIdRef.current = undefined;
-    if (!activeProjectId || !selectedZoneId) return;
-    const storageKey = `gis-lux-job:${activeProjectId}:${selectedZoneId}`;
-    const savedJobId = window.localStorage.getItem(storageKey);
-    if (!savedJobId) return;
-    let alive = true;
-    getLuxJob(String(activeProjectId), savedJobId)
-      .then(result => {
-        if (alive && result.data) {
-          luxJobEtagRef.current = result.etag;
-          setLuxJob(result.data);
-        }
-      })
-      .catch(error => {
-        if (error instanceof ApiStatusError && error.status === 404) window.localStorage.removeItem(storageKey);
-      });
-    return () => { alive = false; };
-  }, [activeProjectId, selectedZoneId]);
-
-  useEffect(() => {
-    if (!luxJob || !activeProjectId) return;
-    let alive = true;
-    let timer: number | undefined;
-    const poll = async () => {
-      try {
-        const result = await getLuxJob(String(activeProjectId), luxJob.id, luxJobEtagRef.current);
-        if (!alive) return;
-        if (result.etag) {
-          luxJobEtagRef.current = result.etag;
-        }
-        if (result.data) {
-          setLuxJob(result.data);
-          if (['succeeded', 'partial', 'failed', 'cancelled', 'unknown'].includes(result.data.state)) {
-            if (selectedZoneId && result.data.succeeded > 0) {
-              const lums = await getLuminaires(selectedZoneId);
-              if (alive) setZoneLuminaires(selectedZoneId, lums);
-            }
-            return;
-          }
-        }
-      } catch (error) {
-        if (alive) setLuxJobError((error as Error).message || 'No se pudo consultar el progreso');
-      }
-      if (alive) timer = window.setTimeout(poll, 1800);
-    };
-    poll();
-    return () => { alive = false; if (timer) window.clearTimeout(timer); };
-  }, [luxJob?.id, activeProjectId, selectedZoneId, setZoneLuminaires]);
 
   useEffect(() => {
     if (!selectedZoneId || !inventory || !roadSelection || ['draw_area', 'invalid', 'stale'].includes(roadSelection.status)) return;
@@ -491,17 +248,94 @@ const StepVias: React.FC = () => {
     return () => window.removeEventListener('beforeunload', warn);
   }, [dirty]);
 
-  const updatePayload = (next: GisPlanningPayload) => { setPayload(next); setStorePayload(next); setMessage(''); };
-  const setGroupPatch = (groupRef: string, patch: GisPlanningPatch) => {
-    const groups = { ...payload.group_defaults };
-    if (Object.keys(patch).length) groups[groupRef] = patch; else delete groups[groupRef];
-    updatePayload({ ...payload, group_defaults: groups });
-  };
-  const setTargetPatch = (targetRef: string, patch: GisPlanningPatch) => {
-    const targets = { ...payload.target_overrides };
-    if (Object.keys(patch).length) targets[targetRef] = patch; else delete targets[targetRef];
-    updatePayload({ ...payload, target_overrides: targets });
-  };
+  // ── Lux job: resume from localStorage, poll while running ──
+  useEffect(() => {
+    setLuxJob(null);
+    luxJobEtagRef.current = undefined;
+    setLuxJobError('');
+    luxIntentIdRef.current = undefined;
+    if (!activeProjectId || !zoneId) return;
+    const storageKey = `gis-lux-job:${activeProjectId}:${zoneId}`;
+    const savedJobId = window.localStorage.getItem(storageKey);
+    if (!savedJobId) return;
+    let alive = true;
+    getLuxJob(String(activeProjectId), savedJobId)
+      .then(result => {
+        if (alive && result.data) {
+          luxJobEtagRef.current = result.etag;
+          setLuxJob(result.data);
+        }
+      })
+      .catch(error => {
+        if (error instanceof ApiStatusError && error.status === 404) window.localStorage.removeItem(storageKey);
+      });
+    return () => { alive = false; };
+  }, [activeProjectId, zoneId]);
+
+  useEffect(() => {
+    if (!luxJob || !activeProjectId) return;
+    let alive = true;
+    let timer: number | undefined;
+    const poll = async () => {
+      try {
+        const result = await getLuxJob(String(activeProjectId), luxJob.id, luxJobEtagRef.current);
+        if (!alive) return;
+        if (result.etag) {
+          luxJobEtagRef.current = result.etag;
+        }
+        if (result.data) {
+          setLuxJob(result.data);
+          if (['succeeded', 'partial', 'failed', 'cancelled', 'unknown'].includes(result.data.state)) {
+            if (zoneId && result.data.succeeded > 0) {
+              const lums = await getLuminaires(zoneId);
+              if (alive) setZoneLuminaires(zoneId, lums);
+            }
+            return;
+          }
+        }
+      } catch (error) {
+        if (alive) setLuxJobError((error as Error).message || 'No se pudo consultar el progreso');
+      }
+      if (alive) timer = window.setTimeout(poll, 1800);
+    };
+    poll();
+    return () => { alive = false; if (timer) window.clearTimeout(timer); };
+  }, [luxJob?.id, activeProjectId, zoneId, setZoneLuminaires]);
+
+  const startLuxJob = useCallback(async () => {
+    if (!activeProjectId || !zoneId || !inventory || !calculableTargetRefs.length || luxStarting || jobRunning || planningDirty || !projectEditable) return;
+    setLuxStarting(true); setLuxJobError('');
+    const intentId = luxIntentIdRef.current || (typeof crypto !== 'undefined' && crypto.randomUUID
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
+    luxIntentIdRef.current = intentId;
+    try {
+      const result = await createLuxJob(
+        String(activeProjectId), zoneId, calculableTargetRefs,
+        inventory.base_inventory_hash, intentId, luxMode,
+      );
+      luxJobEtagRef.current = undefined;
+      setLuxJob(result);
+      window.localStorage.setItem(`gis-lux-job:${activeProjectId}:${zoneId}`, result.id);
+      luxIntentIdRef.current = undefined;
+    } catch (error) {
+      setLuxJobError((error as Error).message || 'No se pudo iniciar el cálculo Lux');
+      if (error instanceof ApiStatusError) {
+        luxIntentIdRef.current = undefined;
+        if (error.status === 409 && /STALE|stale|INVENTORY/.test(error.message)) {
+          setLuxJobError('El inventario o la configuración cambió. Recarga la selección.');
+        }
+      }
+    } finally { setLuxStarting(false); }
+  }, [activeProjectId, zoneId, inventory, calculableTargetRefs, luxStarting, jobRunning, projectEditable, luxMode]);
+
+  const cancelCurrentLuxJob = useCallback(async () => {
+    if (!luxJob || !activeProjectId) return;
+    try {
+      const result = await cancelLuxJob(String(activeProjectId), luxJob.id);
+      setLuxJob(result);
+    } catch (error) { setLuxJobError((error as Error).message || 'No se pudo cancelar'); }
+  }, [luxJob, activeProjectId]);
 
   const save = async () => {
     if (!selectedZoneId || !inventory || saving || !dirty || (resource.kind !== 'absent' && resource.kind !== 'current')) return;
@@ -524,6 +358,21 @@ const StepVias: React.FC = () => {
     } finally { setSaving(false); }
   };
 
+  const persistSelection = useCallback(async () => {
+    if (!selectedZoneId || !inventory) return;
+    const sel = useGisStore.getState().accumulatedSelection[selectedZoneId] || {};
+    try {
+      await putZoneSelection(selectedZoneId, inventory.base_inventory_hash, Object.keys(sel));
+    } catch (error) {
+      setMessage((error as Error).message || 'No se pudo guardar la selección');
+    }
+  }, [selectedZoneId, inventory]);
+
+  const acceptSelection = useCallback((zoneId: string) => {
+    commitSelection(zoneId);
+    void persistSelection();
+  }, [commitSelection, persistSelection]);
+
   const recreate = async () => {
     if (!selectedZoneId || !inventory || resource.kind !== 'stale' || !staleReady || !window.confirm('La red viaria ha cambiado. ¿Descartar la planificación anterior y empezar vacía?')) return;
     setSaving(true); setMessage('');
@@ -536,8 +385,10 @@ const StepVias: React.FC = () => {
     } catch (error) { setMessage((error as Error).message || 'No se pudo recrear'); }
     finally { setSaving(false); }
   };
-  const navigate = (step: 'zona' | 'luminarias') => {
+  const navigate = (step: 'zona' | 'informe') => {
     if (!confirmPlanningLeave()) return;
+    if (step === 'informe' && selectedZoneId && hasPendingSelection && !window.confirm('La selección todavía no se ha confirmado. ¿Aceptar los cambios actuales y continuar?')) return;
+    if (step === 'informe' && selectedZoneId) acceptSelection(selectedZoneId);
     setStepWizard(step);
   };
   const reload = () => {
@@ -571,148 +422,102 @@ const StepVias: React.FC = () => {
       boundary_signature: JSON.stringify(zone.geometry.boundary),
       status: 'draw_area',
       area_points: [],
-      allowed_group_refs: inventory.groups.filter(group => visibility[group.group_ref] !== false).map(group => group.group_ref),
-      etag: roadSelection?.etag,
+      etag: undefined,
     });
   };
-  const closeArea = () => {
-    if (!selectedZoneId || !zone?.geometry.boundary || !roadSelection || roadSelection.area_points.length < 3) return;
-    const ring = [...roadSelection.area_points, roadSelection.area_points[0]];
-    if (!lineInsideBoundary(ring, zone.geometry.boundary)) {
-      setRoadSelection(selectedZoneId, { ...roadSelection, error: 'El área completa debe quedar dentro del límite real de la zona.' });
-      return;
-    }
-    setRoadSelection(selectedZoneId, {
-      ...roadSelection,
-      boundary: { type: 'Polygon', coordinates: [ring] },
-      status: 'pick_a',
-      a: undefined,
-      b: undefined,
-      path: undefined,
-      length_m: undefined,
-      error: undefined,
-    });
-  };
-  const cancelArea = () => {
+  const clearAreaDraft = () => {
     if (!selectedZoneId || !roadSelection) return;
-    if (roadSelection.etag) {
-      setRoadSelection(selectedZoneId, { ...roadSelection, status: 'invalid' });
-      setReloadKey(value => value + 1);
-    } else setRoadSelection(selectedZoneId, null);
-  };
-  const saveScope = async () => {
-    if (!selectedZoneId || !inventory || !zone?.geometry.boundary || !roadSelection?.boundary || !roadSelection.a || !roadSelection.b || scopeBusy) return;
-    setScopeBusy(true);
-    setRoadSelection(selectedZoneId, { ...roadSelection, status: 'saving', error: undefined });
-    try {
-      const anchor = (value: NonNullable<RoadSelectionDraft['a']>) => ({ target_ref: value.target_ref, segment_index: value.segment_index, segment_t: value.segment_t });
-      const result = await putRoadScope(
-        selectedZoneId,
-        inventory.base_inventory_hash,
-        roadSelection.boundary,
-        roadSelection.allowed_group_refs || [],
-        anchor(roadSelection.a),
-        anchor(roadSelection.b),
-        roadSelection.etag ? { ifMatch: roadSelection.etag } : { ifNoneMatch: '*' },
-      );
-      setRoadSelection(selectedZoneId, scopeToDraft(result.data, result.etag, JSON.stringify(zone.geometry.boundary)));
-      setMessage('Ámbito y recorrido guardados');
-    } catch (error) {
-      const conflict = error instanceof ApiStatusError && error.status === 412;
-      setRoadSelection(selectedZoneId, { ...roadSelection, status: conflict ? 'invalid' : 'ready', error: conflict ? 'Otro usuario modificó el ámbito. Recarga antes de guardar.' : (error as Error).message });
-    } finally { setScopeBusy(false); }
-  };
-  const removeScope = async () => {
-    if (!selectedZoneId || !roadSelection?.etag || scopeBusy || !window.confirm('¿Eliminar el área y el recorrido guardados?')) return;
-    setScopeBusy(true);
-    try {
-      await deleteRoadScope(selectedZoneId, roadSelection.etag);
-      setRoadSelection(selectedZoneId, null);
-      setMessage('Ámbito eliminado');
-    } catch (error) {
-      setRoadSelection(selectedZoneId, { ...roadSelection, error: (error as Error).message || 'No se pudo eliminar' });
-    } finally { setScopeBusy(false); }
-  };
-  const recalculateScope = () => {
-    if (!selectedZoneId || !inventory || !zone?.geometry.boundary || !roadSelection?.boundary) return;
-    setRoadSelection(selectedZoneId, {
-      ...roadSelection,
-      inventory_hash: inventory.base_inventory_hash,
-      boundary_signature: JSON.stringify(zone.geometry.boundary),
-      status: 'pick_a',
-      allowed_group_refs: inventory.groups.filter(group => visibility[group.group_ref] !== false).map(group => group.group_ref),
-      a: undefined,
-      b: undefined,
-      path: undefined,
-      length_m: undefined,
-      error: undefined,
-    });
+    if ((roadSelection.status === 'draw_area' || roadSelection.status === 'complete') && roadSelection.lassoTargetRefs?.length) {
+      // Undo only the last lazo: remove its tramos, keep the previously-selected ones.
+      const cur = accumulatedSelection[selectedZoneId] || {};
+      const next = { ...cur };
+      for (const ref of roadSelection.lassoTargetRefs) delete next[ref];
+      setAccumulatedSelection(selectedZoneId, Object.keys(next));
+    }
+    setRoadSelection(selectedZoneId, null);
   };
 
-  const startLuxJob = async () => {
-    if (!activeProjectId || !selectedZoneId || !inventory || !calculableTargetRefs.length || luxStarting || dirty || !projectEditable) return;
-    if (!['absent', 'current'].includes(resource.kind)) return;
-    setLuxStarting(true); setLuxJobError('');
-    const intentId = luxIntentIdRef.current || (typeof crypto !== 'undefined' && crypto.randomUUID
-      ? crypto.randomUUID()
-      : `${Date.now()}-${Math.random().toString(16).slice(2)}`);
-    luxIntentIdRef.current = intentId;
-    try {
-      const result = await createLuxJob(
-        String(activeProjectId), selectedZoneId, calculableTargetRefs,
-        inventory.base_inventory_hash, intentId, luxMode,
-      );
-      luxJobEtagRef.current = undefined;
-      setLuxJob(result);
-      window.localStorage.setItem(`gis-lux-job:${activeProjectId}:${selectedZoneId}`, result.id);
-      luxIntentIdRef.current = undefined;
-    } catch (error) {
-      setLuxJobError((error as Error).message || 'No se pudo iniciar el cálculo Lux');
-      if (error instanceof ApiStatusError) {
-        luxIntentIdRef.current = undefined;
-        if (error.status === 409 && /STALE|stale|INVENTORY/.test(error.message)) {
-          setResource({ kind: 'stale', etag: 'etag' in resource ? resource.etag : '' });
-          clearAccumulatedSelection(selectedZoneId);
-          setLuxJobError('El inventario o la configuración cambió. Recarga y vuelve a seleccionar los tramos.');
-        }
-      }
-    } finally { setLuxStarting(false); }
-  };
-
-  const cancelCurrentLuxJob = async () => {
-    if (!luxJob || !activeProjectId) return;
-    try {
-      const result = await cancelLuxJob(String(activeProjectId), luxJob.id);
-      setLuxJob(result);
-    } catch (error) { setLuxJobError((error as Error).message || 'No se pudo cancelar'); }
-  };
-
-  const streetSelState = (targets: GisPlanningInventoryTarget[]): { all: boolean; some: boolean; none: boolean } => {
-    const selectable = targets.filter(target => target.geometry);
-    const all = selectable.length > 0 && selectable.every(t => zoneSelection[t.target_ref]);
-    return { all, some: selectable.some(t => zoneSelection[t.target_ref]), none: !selectable.some(t => zoneSelection[t.target_ref]) };
-  };
-
-  const streetsByGroup = useMemo(() => {
-    const result = new Map<string, Map<string, GisPlanningInventoryTarget[]>>();
-    inventory?.targets.forEach(target => {
-      const streets = result.get(target.group_ref) || new Map<string, GisPlanningInventoryTarget[]>();
-      const key = targetGroupKey(target);
-      const targets = streets.get(key);
-      if (targets) targets.push(target); else streets.set(key, [target]);
-      result.set(target.group_ref, streets);
-    });
-    return result;
-  }, [inventory]);
-
-  const flyToStreet = useCallback((streetName: string, targets: GisPlanningInventoryTarget[]) => {
-    const t = targets.find(t => t.geometry && t.geometry.length > 0);
-    if (!t?.geometry) return;
-    const coords = t.geometry;
-    const lat = coords.reduce((s, c) => s + c[1], 0) / coords.length;
-    const lon = coords.reduce((s, c) => s + c[0], 0) / coords.length;
-    (window as any).__focusGisLocation?.(lat, lon);
+  const revealTarget = useCallback((targetRef: string) => {
+    (window as any).__blinkGisTarget?.(targetRef);
   }, []);
+
+  const hoverTarget = useCallback((targetRef: string | null) => {
+    if (targetRef) (window as any).__highlightGisTarget?.(targetRef);
+  }, []);
+
+  const clearHover = useCallback(() => {
+    (window as any).__clearGisHighlight?.();
+  }, []);
+
+  const normalizedQuery = query.trim().toLowerCase();
+
+  const selectedTramosByStreet = useMemo(() => {
+    if (!inventory || !selectedZoneId) return [];
+    const zoneSel = accumulatedSelection[selectedZoneId] || {};
+    const byStreet = new Map<string, { selected: typeof inventory.targets; all: typeof inventory.targets }>();
+    for (const target of inventory.targets) {
+      const street = targetName(target) || `Tramo ${target.source_index + 1}`;
+      const entry = byStreet.get(street) || { selected: [], all: [] };
+      entry.all.push(target);
+      if (zoneSel[target.target_ref]) entry.selected.push(target);
+      byStreet.set(street, entry);
+    }
+    return [...byStreet.entries()]
+      .filter(([, entry]) => entry.selected.length > 0)
+      .map(([street, entry]) => ({ key: street, street, targets: entry.selected, allTargets: entry.all }));
+  }, [inventory, selectedZoneId, accumulatedSelection]);
+
+  const segmentList = useMemo(() => (inventory?.targets || [])
+    .map(target => ({ target, label: targetName(target) || `Tramo ${target.source_index + 1}` }))
+    .filter(({ label }) => !normalizedQuery || label.toLowerCase().includes(normalizedQuery)),
+  [inventory, normalizedQuery]);
+
+  const selectedTargetsFlat = useMemo(() => {
+    if (!inventory || !selectedZoneId) return [];
+    const zoneSel = accumulatedSelection[selectedZoneId] || {};
+    return inventory.targets.filter(t => zoneSel[t.target_ref]);
+  }, [inventory, selectedZoneId, accumulatedSelection]);
+
+  // ── Batch characteristic editor ──
+  const [charBatch, setCharBatch] = useState<Record<string, true>>({});
+  const charInitRef = useRef<string | null>(null);
+  const charRefs = Object.keys(charBatch);
+
+  useEffect(() => {
+    if (!selectedZoneId) { setCharBatch({}); charInitRef.current = null; return; }
+    const sel = accumulatedSelection[selectedZoneId] || {};
+    const sig = JSON.stringify(sel);
+    if (charInitRef.current !== sig) {
+      charInitRef.current = sig;
+      setCharBatch({ ...sel });
+    }
+  }, [selectedZoneId, accumulatedSelection]);
+
+  const charFieldState = useCallback((key: (typeof ROAD_CHAR_KEYS)[number]) => {
+    if (!charRefs.length) return { value: '', mixed: false };
+    const values = charRefs.map(ref => {
+      const t = inventory?.targets.find(x => x.target_ref === ref);
+      if (!t) return null;
+      return (applyRoadOverrides(t, effectivePatch(storePlanningPayload, t)) as any)[key] ?? null;
+    });
+    const nonNull = values.filter(v => v != null);
+    if (!nonNull.length) return { value: '', mixed: false };
+    const distinct = new Set(nonNull.map(String));
+    if (distinct.size === 1) return { value: nonNull[0], mixed: false };
+    return { value: '', mixed: true };
+  }, [charRefs, inventory, storePlanningPayload]);
+
+  const setBatchChar = useCallback((key: (typeof ROAD_CHAR_KEYS)[number], value: number | string | null) => {
+    if (!charRefs.length) return;
+    setMergeTargetPatches(charRefs, { [key]: value } as any);
+  }, [charRefs, setMergeTargetPatches]);
+
+  const resetBatchChar = useCallback(() => {
+    if (!charRefs.length) return;
+    const patch: Record<string, null> = {};
+    for (const key of ROAD_CHAR_KEYS) patch[key] = null;
+    setMergeTargetPatches(charRefs, patch as any);
+  }, [charRefs, setMergeTargetPatches]);
 
   if (!zone) return <div className="gis-panel rounded-xl p-6 text-center text-sm text-salvi-muted">Selecciona una zona primero</div>;
   if (resource.kind === 'loading') return <div className="gis-panel rounded-xl p-6 text-center text-sm text-salvi-muted">Cargando vías y planificación…</div>;
@@ -733,32 +538,57 @@ const StepVias: React.FC = () => {
   );
 
   const editable = resource.kind === 'absent' || resource.kind === 'current';
-  const normalizedQuery = query.trim().toLowerCase();
-  const groups = inventory.groups.filter(group => {
-    if (!normalizedQuery || (group.road_type || 'sin tipo').toLowerCase().includes(normalizedQuery)) return true;
-    return [...(streetsByGroup.get(group.group_ref)?.entries() || [])].some(([key, targets]) =>
-      key.toLowerCase().includes(normalizedQuery) || targetGroupLabel(targets[0]).toLowerCase().includes(normalizedQuery),
+  const haveBoundary = !!zone.geometry.boundary;
+
+  const resultList = segmentList.map(({ target, label }, idx) => {
+    const selected = !!zoneSelection[target.target_ref];
+    return (
+      <div
+        key={target.target_ref}
+        className={`flex items-center gap-2 px-3 py-1.5 ${idx > 0 ? 'border-t border-salvi-line/60' : ''} ${selected ? 'bg-[#1F7A4D]/5' : ''}`}
+        onMouseEnter={() => hoverTarget(target.target_ref)}
+        onMouseLeave={clearHover}
+      >
+        <input
+          type="checkbox"
+          checked={selected}
+          disabled={!target.geometry && !selected}
+          onChange={() => { if (selectedZoneId) toggleTargetSelection(selectedZoneId, target.target_ref); }}
+          className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-[#1F7A4D]"
+          aria-label={`Seleccionar tramo ${target.source_index + 1}`}
+        />
+        <button
+          onClick={() => revealTarget(target.target_ref)}
+          className="min-w-0 flex-1 truncate text-left text-xs font-medium text-salvi-black hover:underline"
+          title="Ver este tramo en el mapa"
+        >
+          {label}
+        </button>
+        <div className="flex shrink-0 items-center gap-2 text-[10px] text-salvi-muted">
+          <span>{target.length_m != null ? `${Math.round(target.length_m)} m` : '—'}</span>
+        </div>
+      </div>
     );
   });
 
   return (
     <div className="gis-panel flex max-h-full flex-col overflow-hidden rounded-xl">
-      <div className="border-b border-salvi-line p-3">
-        <h2 className="truncate text-sm font-semibold text-salvi-black">{zone.name}</h2>
-        <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-salvi-muted">
-          <span>{inventory.counts.distinct_name_count ?? inventory.counts.named_street_count} nombres OSM</span>
-          <span>{inventory.counts.segment_count} tramos OSM</span>
-          <span>{inventory.counts.without_osm_name_count ?? inventory.counts.unnamed_segment_count} sin `name` OSM</span>
-          {!!inventory.counts.ref_only_count && <span>{inventory.counts.ref_only_count} solo referencia</span>}
-          {!!inventory.counts.explicit_noname_count && <span>{inventory.counts.explicit_noname_count} declarados sin nombre</span>}
-          <span>{inventory.counts.geometry_unavailable} sin geometría</span>
-          {!!nonCalculableSelectedCount && <span className="text-state-warning">{nonCalculableSelectedCount} no calculables</span>}
-          {buildingStatus === 'computing' && <span className="text-state-info">🏛 Computando anchos catastro…</span>}
-          {buildingStatus === 'unavailable' && <span className="text-state-warning">🏛 Anchos no disponibles</span>}
+      {/* Header — zone + totals + elements */}
+      <div className="border-b border-salvi-line px-4 py-3">
+        <div className="flex items-center justify-between gap-2">
+          <h2 className="truncate text-sm font-semibold text-salvi-black">{zone.name}</h2>
+          <span className="shrink-0 rounded bg-salvi-surface px-2 py-0.5 text-[10px] text-salvi-muted">{t('detail.elements', { n: lums.length })}</span>
+        </div>
+        <div className="mt-1 flex flex-wrap gap-1.5 text-[10px] text-salvi-muted">
+          <span className="rounded bg-salvi-surface px-1.5 py-0.5">{inventory.counts.distinct_name_count ?? inventory.counts.named_street_count} calles</span>
+          <span className="rounded bg-salvi-surface px-1.5 py-0.5">{inventory.counts.segment_count} tramos</span>
+          <span className="rounded bg-salvi-surface px-1.5 py-0.5">{inventory.counts.geometry_available} con geometría</span>
+          {buildingStatus === 'computing' && <span className="rounded bg-salvi-surface px-1.5 py-0.5 text-state-info">🏛 Computando anchos…</span>}
+          {buildingStatus === 'unavailable' && <span className="rounded bg-salvi-surface px-1.5 py-0.5 text-state-warning">🏛 Anchos no disponibles</span>}
         </div>
       </div>
 
-      <div className="flex-1 space-y-2 overflow-y-auto p-3 gis-scroll">
+      <div className="flex-1 space-y-3 overflow-y-auto p-3 gis-scroll">
         {(resource.kind === 'stale' || resource.kind === 'conflict') && (
           <div role="alert" className="rounded border border-state-danger/30 bg-state-danger/10 p-2 text-xs text-state-danger">
             {resource.kind === 'stale' ? 'La red viaria cambió. La planificación anterior no se aplicará.' : 'Otro usuario modificó esta planificación.'}
@@ -770,322 +600,405 @@ const StepVias: React.FC = () => {
           </div>
         )}
         {message && <div role="status" className="rounded bg-salvi-surface p-2 text-xs text-salvi-grey">{message}</div>}
-        <details className="rounded border border-state-info/30 bg-white text-xs text-salvi-grey [&>summary]:open:font-bold">
-          <summary className="cursor-pointer px-2 py-1.5 text-[11px] font-semibold text-salvi-black">Área y recorrido de actuación</summary>
-          <div className="space-y-1.5 px-2 pb-2">
-            {!zone.geometry.boundary && <div className="text-state-warning">La zona necesita un límite real.</div>}
-            {!roadSelection && (
-              <><div className="text-[10px]">El recorrido usará los tipos de vía marcados como visibles.</div><button onClick={startArea} disabled={!zone.geometry.boundary} className="mt-1 w-full rounded bg-state-info px-2 py-1 text-white disabled:opacity-40">Dibujar área límite</button></>
-            )}
-            {roadSelection?.status === 'draw_area' && (
-              <div className="space-y-2">
-                <div>Haz clic en el mapa para añadir vértices ({roadSelection.area_points.length}).</div>
-                <div className="flex gap-2">
-                  <button onClick={closeArea} disabled={roadSelection.area_points.length < 3} className="flex-1 rounded bg-state-info px-2 py-1 text-white disabled:opacity-40">Cerrar área</button>
-                  <button onClick={cancelArea} className="rounded border px-2 py-1">Cancelar</button>
-                </div>
-              </div>
-            )}
-            {roadSelection?.status === 'pick_a' && <div>Área cerrada. Haz clic cerca de una vía para marcar A.</div>}
-            {roadSelection?.status === 'pick_b' && <div>Ahora marca B. Puede estar en otro tramo conectado.</div>}
-            {roadSelection?.status === 'ready' && (
-              <div className="space-y-2">
-                <div>A y B preparados. El servidor calculará la ruta más corta dentro del área.</div>
-                <button onClick={saveScope} disabled={scopeBusy || !roadSelection.allowed_group_refs?.length} className="w-full rounded bg-state-info px-2 py-1 text-white disabled:opacity-40">Calcular y guardar</button>
-              </div>
-            )}
-            {roadSelection?.status === 'saving' && <div>Calculando y guardando recorrido…</div>}
-            {roadSelection?.status === 'complete' && (
-              <div className="space-y-2">
-                <div>Recorrido vigente: {Math.round(roadSelection.length_m || 0)} m · {roadSelection.member_count || 0} partes</div>
-                <div className="flex gap-2"><button onClick={startArea} className="flex-1 rounded border px-2 py-1">Redibujar</button><button onClick={removeScope} disabled={scopeBusy} className="rounded border border-state-danger px-2 py-1 text-state-danger">Eliminar</button></div>
-              </div>
-            )}
-            {roadSelection?.status === 'stale' && (
-              <div className="space-y-2 text-state-warning">
-                <div>La red o el límite cambió. El área se conserva, pero debes volver a marcar A y B.</div>
-                <button onClick={recalculateScope} className="w-full rounded border border-state-warning px-2 py-1">Recalcular recorrido</button>
-              </div>
-            )}
-            {roadSelection?.status === 'invalid' && <div className="text-state-danger">{roadSelection.error || 'El ámbito ya no es válido.'} <button onClick={reload} className="underline">Recargar</button></div>}
-            {roadSelection?.error && roadSelection.status !== 'invalid' && <div role="alert" className="mt-1 text-state-danger">{roadSelection.error}</div>}
-          </div>
-        </details>
 
-        {/* ── Accumulated selection summary ── */}
-        <section className="rounded border border-salvi-line bg-white text-xs">
-          <div className="flex items-center justify-between gap-2 p-2">
-            <span className="font-semibold text-salvi-black">
-              Selección de estudio {selectedCount > 0 && <span className="ml-1 rounded bg-state-info px-1.5 py-0.5 text-[10px] text-white">{selectedCount}/{totalTargetCount}</span>}
-            </span>
-            <div className="flex gap-1">
-              {selectedCount > 0 && (
-                <button onClick={() => { if (selectedZoneId) clearAccumulatedSelection(selectedZoneId); }} className="rounded border border-salvi-line px-1.5 py-0.5 text-[10px] text-salvi-muted hover:bg-salvi-surface">
-                  Limpiar
-                </button>
-              )}
-              {inventory && selectedCount < totalTargetCount && (
-                <button onClick={() => { if (selectedZoneId) setAccumulatedSelection(selectedZoneId, inventory.targets.filter(t => t.geometry).map(t => t.target_ref)); }} className="rounded border border-salvi-line px-1.5 py-0.5 text-[10px] text-salvi-muted hover:bg-salvi-surface">
-                  Todo visible
-                </button>
-              )}
-            </div>
+        {/* ── Cálculo y pintado ── */}
+        <section className="rounded-lg border border-salvi-line bg-[#FCF9F5]/60">
+          <div className="mb-2 flex items-center gap-1.5 px-3 pt-2 text-xs font-semibold text-salvi-black">
+            <PlayCircle className="h-3.5 w-3.5 text-salvi-muted" aria-hidden="true" />
+            Cálculo y pintado
           </div>
-          {selectedCount > 0 && (() => {
-            const byStreet: Record<string, { targets: typeof inventory.targets; selected: typeof inventory.targets; cfg: RoadTypeCfg | undefined }> = {};
-            for (const t of inventory?.targets || []) {
-              const key = targetSelectionKey(t);
-              if (!byStreet[key]) {
-                const grp = inventory!.groups.find(g => g.group_ref === t.group_ref);
-                const rcfg = grp?.road_type ? ROAD_CFG[grp.road_type] : undefined;
-                byStreet[key] = { targets: [], selected: [], cfg: rcfg };
-              }
-              byStreet[key].targets.push(t);
-              if (zoneSelection[t.target_ref]) byStreet[key].selected.push(t);
-            }
-            return (
-              <div className="border-t border-salvi-line/50 max-h-48 overflow-y-auto gis-scroll">
-                {Object.entries(byStreet).filter(([, v]) => v.selected.length).map(([key, { targets, selected, cfg: scfg }]) => {
-                  const selectableTargets = targets.filter(target => target.geometry);
-                  const all = selectableTargets.length > 0 && selected.length === selectableTargets.length;
-                  const open = selectionExpandedStreet === key;
-                  const label = targetDisplayLabel(selected[0]);
-                  return (
-                    <div key={key}>
-                      <div className="flex items-center gap-1.5 border-b border-salvi-line/30 px-2 py-1.5 last:border-0">
-                        <button onClick={() => setSelectionExpandedStreet(open ? null : key)} className="shrink-0 text-[8px] text-salvi-muted transition-transform hover:text-salvi-black">
-                          ▶
-                        </button>
-                        <input type="checkbox" checked={all} ref={el => { if (el) el.indeterminate = !all && selected.length > 0; }}
-                          onChange={() => { if (selectedZoneId) { const refs = selectableTargets.map(t => t.target_ref); if (all) refs.forEach(r => toggleTargetSelection(selectedZoneId, r)); else refs.forEach(r => { if (!zoneSelection[r]) toggleTargetSelection(selectedZoneId, r); }); } }}
-                          className="shrink-0 cursor-pointer"
-                        />
-                        <span className="flex-1 truncate text-[10px] font-semibold text-salvi-black">{label}</span>
-                        <span className="text-[9px] text-salvi-muted">{selected.length}/{targets.length}</span>
-                      </div>
-                      {open && (() => {
-                        const groups: { w: number | null; segs: typeof selected }[] = [];
-                        for (const t of selected) {
-                          const w = t.estWidth ?? scfg?.width ?? null;
-                          const last = groups[groups.length - 1];
-                          if (last && last.w === w) last.segs.push(t);
-                          else groups.push({ w, segs: [t] });
-                        }
-                        return (
-                          <div className="border-b border-salvi-line/20 bg-salvi-surface/30">
-                            {groups.map((g, gi) => {
-                              const t = g.segs[0];
-                              const sw = t.sidewalk;
-                              const sl = t.sidewalkWidthLeft ?? (sw === 'both' || sw === 'left' ? 2.0 : null);
-                              const sr = t.sidewalkWidthRight ?? (sw === 'both' || sw === 'right' ? 2.0 : null);
-                              const est = t.widthSrc !== 'osm_width' ? '⚠' : '';
-                              const totalM = g.segs.reduce((s, x) => s + (x.length_m || 0), 0);
-                              return (
-                                <div key={gi} className="flex items-center gap-2 px-5 py-1 text-[9px] text-salvi-muted">
-                                  <span className="w-16 shrink-0">{g.segs.length} tramos</span>
-                                  <span className="w-14 shrink-0">{Math.round(totalM)}m</span>
-                                  {g.w != null && <span className="w-14 shrink-0">{est}C {g.w}m</span>}
-                                  {sl != null && <span className="w-14 shrink-0">AI {sl}m</span>}
-                                  {sr != null && <span className="w-14 shrink-0">AD {sr}m</span>}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        );
-                      })()}
-                    </div>
-                  );
-                })}
+          <div className="flex gap-2 px-3 pb-2">
+            <select value={luxMode} onChange={e => setLuxMode(e.target.value as 'calculate' | 'optimize')} disabled={luxStarting || jobRunning} className="rounded border border-salvi-line bg-white px-1.5 py-1.5 text-xs">
+              <option value="optimize">Optimizar</option>
+              <option value="calculate">Calcular fijo</option>
+            </select>
+            <button
+              onClick={startLuxJob}
+              disabled={!calculableTargetRefs.length || !activeProjectId || !projectEditable || planningDirty || luxStarting || jobRunning}
+              className="flex-1 rounded bg-salvi-black px-3 py-1.5 text-[11px] font-semibold text-white disabled:opacity-40"
+              title={!calculableTargetRefs.length ? 'Selecciona tramos primero' : planningDirty ? 'Guarda la configuración antes de calcular' : ''}
+            >
+              {luxStarting ? 'Preparando…' : `Pintar ${calculableTargetRefs.length || ''} tramos`}
+            </button>
+          </div>
+          {planningDirty && <p className="px-3 pb-2 text-[10px] text-state-warning">Hay configuración pendiente de guardar. Guárdala antes de calcular.</p>}
+          {!projectEditable && <p className="px-3 pb-2 text-[10px] text-state-warning">Tu membresía solo permite consultar este proyecto.</p>}
+          {luxJobError && <p role="alert" className="px-3 pb-2 text-[10px] text-state-danger">{luxJobError}</p>}
+          {luxJob && (
+            <div className="mx-3 mb-2 mt-1 space-y-1 border-t border-salvi-line/60 pt-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[11px] text-salvi-grey">{luxJob.succeeded}/{luxJob.total} pintados</span>
+                {jobRunning ? (
+                  <button onClick={cancelCurrentLuxJob} className="inline-flex items-center gap-1 text-[10px] text-state-danger">
+                    <Square className="h-3 w-3" aria-hidden="true" /> Cancelar
+                  </button>
+                ) : (
+                  <span className="rounded bg-[#1F7A4D]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[#1F7A4D]">{luxJob.state === 'succeeded' ? 'Completado' : luxJob.state}</span>
+                )}
               </div>
-            );
-          })()}
+            </div>
+          )}
         </section>
 
-        {selectedTargetRef && (
-          <section className="rounded border border-state-info/30 bg-white p-2 text-xs text-salvi-grey">
-            <div className="mb-1 font-semibold text-salvi-black">Tramo seleccionado</div>
-            {selectedStreetName && <div className="mb-1">{selectedStreetName}</div>}
-            <div className="mb-1">Ref: {selectedTargetRef.slice(0, 20)}…</div>
-          </section>
-        )}
-        <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar tipo de vía o nombre…" className="w-full rounded border border-salvi-line px-2 py-1 text-xs" />
-
-        {!groups.length && <div className="rounded bg-salvi-surface p-4 text-center text-xs text-salvi-muted">No hay vías que mostrar.</div>}
-
-        {groups.map(group => {
-          const cfg = group.road_type ? ROAD_CFG[group.road_type] : undefined;
-          const typeMatches = !!normalizedQuery && (group.road_type || 'sin tipo').toLowerCase().includes(normalizedQuery);
-          const allStreets = [...(streetsByGroup.get(group.group_ref)?.entries() || [])]
-            .filter(([key, targets]) => !normalizedQuery || typeMatches || key.toLowerCase().includes(normalizedQuery) || targetGroupLabel(targets[0]).toLowerCase().includes(normalizedQuery));
-          const open = expandedGroup === group.group_ref;
-          return (
-            <section key={group.group_ref} className="rounded-lg border border-salvi-line bg-white/80">
-              {/* Group header */}
-              <div className="flex cursor-pointer items-center gap-2 p-2" onClick={() => setExpandedGroup(open ? null : group.group_ref)}>
-                <span className={`text-[10px] text-salvi-muted transition-transform ${open ? 'rotate-90' : ''}`}>▶</span>
-                <input
-                  type="checkbox" checked={visibility[group.group_ref] !== false}
-                  onChange={e => { e.stopPropagation(); setVisibility(group.group_ref, e.target.checked); }}
-                  aria-label={`Mostrar ${group.road_type || 'sin tipo'} en el mapa`}
-                />
-                <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: cfg?.color || '#999' }} />
-                <span className="min-w-0 flex-1 text-xs font-semibold text-salvi-black">
-                  {cfg ? t(cfg.labelKey) : group.road_type || 'Sin tipo'}
-                </span>
-                <span className="text-[10px] text-salvi-muted">{group.street_count} nombres · {group.target_count} tramos · {(group.length_m / 1000).toFixed(1)} km</span>
+        {/* ── Área de trabajo ── */}
+        <section className="rounded-lg border border-salvi-line bg-white">
+          <div className="flex items-center justify-between gap-2 px-3 py-2">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-salvi-black">
+              <MousePointer className="h-3.5 w-3.5 text-salvi-muted" aria-hidden="true" />
+              Área de trabajo
+            </div>
+            {roadSelection?.status === 'complete' ? (
+              <div className="flex items-center gap-1">
+                <button onClick={startArea} className="rounded border border-salvi-line px-1.5 py-0.5 text-[10px] text-salvi-grey hover:bg-salvi-surface">Redibujar</button>
+                <button onClick={clearAreaDraft} className="rounded border border-state-danger px-1.5 py-0.5 text-[10px] text-state-danger hover:bg-[#FDECEA]">Eliminar</button>
               </div>
-              {open && (
-                <div className="space-y-3 border-t border-salvi-line p-2">
-                  {/* Per-type planning fields */}
-                  <div className="rounded bg-salvi-surface p-2">
-                    <div className="mb-2 text-[11px] font-semibold text-salvi-grey">Configuración del tipo</div>
-                    {editable
-                      ? <PlanningFields patch={payload.group_defaults[group.group_ref] || {}} onChange={patch => setGroupPatch(group.group_ref, patch)} />
-                      : <div className="text-[11px] text-salvi-muted">Edición bloqueada hasta resolver el estado de la planificación.</div>}
-                  </div>
-                  {/* Streets */}
-                  <div className="space-y-1">
-                    {allStreets.map(([streetKeyPart, targets]) => {
-                      const streetKey = `${group.group_ref}:${streetKeyPart}`;
-                      const street = targetGroupLabel(targets[0]);
-                      const selectableStreet = targets.every(target => !!targetName(target));
-                      const { all, some } = streetSelState(targets);
-                      const streetExpanded = expandedStreet === streetKey;
-                      // Get road width from cfg or mark as unknown
-                      const roadWidth = cfg?.width;
+            ) : (
+              <button
+                onClick={startArea}
+                disabled={!haveBoundary || !editable}
+                className="rounded bg-salvi-black px-2.5 py-1 text-[11px] font-medium text-white disabled:opacity-40"
+              >
+                {roadSelection?.status === 'draw_area' ? 'Area en curso…' : 'Dibujar área'}
+              </button>
+            )}
+          </div>
+          {roadSelection?.status === 'draw_area' && (
+            <div className="space-y-1.5 border-t border-salvi-line px-3 py-2 text-[11px] text-salvi-grey">
+              <div>Haz clic para añadir vértices ({roadSelection.area_points.length}).</div>
+              <div>Doble clic o clic sobre el primer punto para cerrar.</div>
+              <div className="flex gap-1.5">
+                <button onClick={clearAreaDraft} className="flex-1 rounded border border-salvi-line px-2 py-1 text-[11px] text-salvi-grey">Cancelar</button>
+              </div>
+            </div>
+          )}
+          {roadSelection?.status === 'complete' && (
+            <div className="space-y-1.5 border-t border-salvi-line px-3 py-2 text-[11px] text-state-success">
+              <div>Área cerrada: {selectedCount > 0 ? `${selectedCount} tramos seleccionados automáticamente.` : 'ningún tramo dentro del área.'}</div>
+              <div className="flex gap-1.5">
+                <button onClick={startArea} className="flex-1 rounded border border-salvi-line px-2 py-1 text-[11px] text-salvi-grey">Redibujar</button>
+                <button onClick={clearAreaDraft} className="flex-1 rounded border border-state-danger px-2 py-1 text-[11px] text-state-danger">Eliminar</button>
+              </div>
+            </div>
+          )}
+          {!haveBoundary && <div className="border-t border-salvi-line px-3 py-2 text-[11px] text-state-warning">La zona necesita un límite real para dibujar el área.</div>}
+        </section>
+
+        {/* ── Selección ── */}
+        <section className="rounded-lg border border-salvi-line bg-white">
+          <div className="flex items-center justify-between gap-2 px-3 py-2">
+            <div className="flex items-center gap-1.5 text-xs font-semibold text-salvi-black">
+              <CheckSquare className="h-3.5 w-3.5 text-salvi-muted" aria-hidden="true" />
+              {selectedCount === 0 ? 'Selección' : `Selección: ${selectedCount} de ${totalTargetCount}`}
+            </div>
+            <div className="flex items-center gap-1">
+              {selectedCount > 0 && (
+                <button onClick={() => { if (selectedZoneId) clearAccumulatedSelection(selectedZoneId); }} className="rounded border border-salvi-line px-1.5 py-0.5 text-[10px] text-salvi-grey hover:bg-salvi-surface" title={t('actions.cancel')}>
+                  <Trash2 className="h-3 w-3" aria-hidden="true" />
+                </button>
+              )}
+              <button
+                onClick={() => { if (selectedZoneId) setAccumulatedSelection(selectedZoneId, inventory.targets.filter(t => t.geometry).map(t => t.target_ref)); }}
+                disabled={!inventory.targets.some(t => t.geometry) || selectedCount >= totalTargetCount}
+                className="rounded bg-salvi-black px-2.5 py-1 text-[11px] font-medium text-white disabled:opacity-40"
+              >
+                Seleccionar todo
+              </button>
+            </div>
+          </div>
+          <div className="border-t border-salvi-line px-3 py-2">
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-salvi-muted" aria-hidden="true" />
+              <input
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder="Buscar calle…"
+                className="w-full rounded border border-salvi-line bg-white py-1.5 pl-7 pr-2 text-xs outline-none focus:border-salvi-black/40"
+              />
+            </div>
+            <p className="mt-1.5 text-[10px] text-salvi-muted">También puedes hacer clic en los tramos del mapa para seleccionarlos.</p>
+          </div>
+          {selectedCount > 0 && (
+            <div className="border-t border-salvi-line px-3 py-2">
+              {hasPendingSelection && (
+                <div role="status" className="mb-2 flex items-center gap-2 rounded border border-state-warning/40 bg-amber-50 px-2 py-1.5">
+                  <span className="flex-1 text-[10px] font-medium text-state-warning">Cambios sin confirmar en la selección</span>
+                  <button
+                    onClick={() => setAccumulatedSelection(selectedZoneId!, Object.keys(savedSelection))}
+                    className="rounded border border-state-warning/40 px-1.5 py-0.5 text-[10px] text-state-warning hover:bg-amber-100"
+                  >
+                    Deshacer
+                  </button>
+                  <button
+                    onClick={() => selectedZoneId && acceptSelection(selectedZoneId)}
+                    className="rounded bg-salvi-black px-1.5 py-0.5 text-[10px] font-medium text-white"
+                  >
+                    Aceptar
+                  </button>
+                </div>
+              )}
+              {showSelectedTramos
+                ? (
+                  <div className="space-y-2">
+                    <button
+                      onClick={() => setShowSelectedTramos(false)}
+                      className="w-full rounded border border-salvi-line px-2 py-1 text-[11px] font-medium text-salvi-grey hover:bg-salvi-surface"
+                    >
+                      Ocultar tramos seleccionados
+                    </button>
+                    {selectedTramosByStreet.map(({ key, street, targets, allTargets }) => {
+                      const all = allTargets.length > 0 && targets.length === allTargets.length;
+                      const missing = allTargets.filter(t => !zoneSelection[t.target_ref]);
                       return (
-                        <div key={streetKey} className="rounded border border-salvi-line/60">
-                          {/* Street row */}
-                          <div className="flex items-center gap-1 px-2 py-1">
-                            {selectableStreet && <input
-                              type="checkbox"
-                              checked={all}
-                              ref={el => { if (el) el.indeterminate = some && !all; }}
-                              onChange={e => { e.stopPropagation(); if (selectedZoneId) toggleStreetSelection(selectedZoneId, targets.filter(target => target.geometry).map(t => t.target_ref)); }}
-                              aria-label={`Seleccionar vía ${street}`}
-                              className="shrink-0 cursor-pointer"
-                            />}
+                        <div key={key} className="overflow-hidden rounded border border-salvi-line/60">
+                          <div className="flex items-center gap-2 bg-salvi-surface/50 px-2.5 py-1.5">
                             <button
-                              onClick={() => flyToStreet(street, targets)}
-                              className="truncate text-left text-[11px] font-medium text-salvi-black hover:underline"
-                              title="Volar a esta vía en el mapa"
+                              onClick={() => { if (selectedZoneId && allTargets.length) { const refs = allTargets.map(t => t.target_ref); if (all) refs.forEach(r => toggleTargetSelection(selectedZoneId, r)); else refs.forEach(r => { if (!zoneSelection[r]) toggleTargetSelection(selectedZoneId, r); }); } }}
+                              className="min-w-0 flex-1 truncate text-left text-[11px] font-semibold text-salvi-black hover:underline"
+                              title={all ? 'Deseleccionar toda la calle' : 'Seleccionar toda la calle'}
                             >
                               {street}
                             </button>
-                            <span className="ml-auto text-[10px] text-salvi-muted">{targets.length} tramos</span>
-                            <button
-                              onClick={() => setExpandedStreet(streetExpanded ? null : streetKey)}
-                              className={`shrink-0 text-[8px] text-salvi-muted transition-transform ${streetExpanded ? 'rotate-90' : ''}`}
-                            >
-                              ▶
-                            </button>
+                            {all
+                              ? <span className="shrink-0 rounded bg-[#1F7A4D]/10 px-1.5 py-0.5 text-[9px] font-semibold text-[#1F7A4D]">Calle completa</span>
+                              : <span className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold text-amber-800">{targets.length}/{allTargets.length} tramos</span>}
                           </div>
-                          {/* Segments */}
-                          {streetExpanded && (
-                            <div className="border-t border-salvi-line/50">
-                              {targets.map(target => {
-                                const override = payload.target_overrides[target.target_ref]?.luxParams;
-                                const groupDefault = payload.group_defaults[target.group_ref]?.luxParams;
-                                const lux = override || groupDefault;
-                                const tgtWidth = target.estWidth ?? roadWidth;
-                                return (
-                                  <div key={target.target_ref} className="border-b border-salvi-line/30 last:border-0">
-                                    <div className="flex items-center gap-1 px-3 py-1 text-[10px] hover:bg-salvi-surface/50">
-                                      <input
-                                        type="checkbox"
-                                        checked={!!zoneSelection[target.target_ref]}
-                                        disabled={!target.geometry && !zoneSelection[target.target_ref]}
-                                        onChange={() => { if (selectedZoneId) toggleTargetSelection(selectedZoneId, target.target_ref); }}
-                                        aria-label={`Seleccionar tramo ${target.source_index + 1}`}
-                                        className="shrink-0 cursor-pointer"
-                                      />
-                                      <button
-                                        onClick={() => { setSelectedTarget(target); setSelectedSegment(target.target_ref, targetName(target)); }}
-                                        className="flex flex-1 items-center gap-2 text-left"
-                                      >
-                                        <span className="font-medium text-salvi-grey">Tramo {target.source_index + 1}</span>
-                                        <span className="text-salvi-muted">{target.length_m == null ? '—' : `${Math.round(target.length_m)} m`}</span>
-                                        {tgtWidth != null && <span className="text-salvi-muted">calzada {tgtWidth} m{target.widthSrc ? ` (${target.widthSrc})` : ''}</span>}
-                                        {target.sidewalk != null && (target.sidewalkWidthLeft != null || target.sidewalkWidthRight != null
-                                          ? <span className="text-salvi-muted">acera I {target.sidewalkWidthLeft ?? '—'}m D {target.sidewalkWidthRight ?? '—'}m</span>
-                                          : <span className="text-salvi-muted">acera: {target.sidewalk}</span>)}
-                                        {lux?.sidewalkL != null && <span className="text-salvi-muted">acera I* {lux.sidewalkL} m</span>}
-                                        {lux?.sidewalkR != null && <span className="text-salvi-muted">acera D* {lux.sidewalkR} m</span>}
-                                      </button>
-                                    </div>
-                                  </div>
-                                );
-                              })}
+                          {targets.map((target, idx) => (
+                            <div key={target.target_ref} className={`flex items-center gap-2 border-t border-salvi-line/40 py-1.5 pl-6 pr-2.5 ${idx > 0 ? '' : ''}`}
+                              onMouseEnter={() => hoverTarget(target.target_ref)}
+                              onMouseLeave={clearHover}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={!!zoneSelection[target.target_ref]}
+                                onChange={() => { if (selectedZoneId) toggleTargetSelection(selectedZoneId, target.target_ref); }}
+                                className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-[#1F7A4D]"
+                                aria-label={`Seleccionar tramo ${target.source_index + 1}`}
+                              />
+                              <button
+                                onClick={() => revealTarget(target.target_ref)}
+                                className="min-w-0 flex-1 truncate text-left text-[11px] font-medium text-salvi-black hover:underline"
+                                title="Ver en el mapa"
+                              >
+                                Tramo {target.source_index + 1}
+                                {target.length_m != null && <span className="ml-1 font-normal text-salvi-muted">· {Math.round(target.length_m)} m</span>}
+                              </button>
+                              <span className="shrink-0 text-[9px] text-salvi-muted">{target.nameState === 'legacy' ? 'legacy' : ''}</span>
+                              <button
+                                onClick={() => { if (selectedZoneId) toggleTargetSelection(selectedZoneId, target.target_ref); }}
+                                className="shrink-0 rounded border border-state-danger/30 px-1.5 py-0.5 text-[10px] text-state-danger hover:bg-[#FDECEA]"
+                                title="Deseleccionar"
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          ))}
+                          {missing.length > 0 && (
+                            <div className="border-t border-salvi-line/30 bg-salvi-surface/20 py-1.5 pl-8 pr-2.5">
+                              <div className="text-[9px] font-semibold uppercase tracking-wide text-salvi-muted">Faltan {missing.length} tramos</div>
+                              <div className="mt-1 flex flex-wrap gap-1">
+                                {missing.map(t => (
+                                  <button
+                                    key={t.target_ref}
+                                    onClick={() => { if (selectedZoneId) toggleTargetSelection(selectedZoneId, t.target_ref); }}
+                                    className="rounded border border-salvi-line bg-white px-1.5 py-0.5 text-[10px] text-salvi-grey hover:bg-[#1F7A4D]/10 hover:text-[#1F7A4D]"
+                                    title={`Tramo ${t.source_index + 1} · ${t.length_m != null ? Math.round(t.length_m) + ' m' : '—'}`}
+                                  >
+                                    + Tramo {t.source_index + 1}{t.length_m != null ? ` (${Math.round(t.length_m)} m)` : ''}
+                                  </button>
+                                ))}
+                              </div>
                             </div>
                           )}
                         </div>
                       );
                     })}
                   </div>
-                </div>
-              )}
-            </section>
-          );
-        })}
-
-        {selectedTarget && editable && (
-          <div className="rounded-lg border border-state-info/30 bg-white p-2">
-            <div className="mb-2 flex justify-between text-[11px] font-semibold">
-              <span>{targetDisplayLabel(selectedTarget)} · tramo {selectedTarget.source_index + 1}</span>
-              <button onClick={() => setSelectedTarget(null)}>×</button>
-            </div>
-            <PlanningFields
-              patch={payload.target_overrides[selectedTarget.target_ref] || {}}
-              inherited={payload.group_defaults[selectedTarget.group_ref] || {}}
-              onChange={patch => setTargetPatch(selectedTarget.target_ref, patch)}
-            />
-          </div>
-        )}
-      </div>
-
-      <div className="border-t border-salvi-line p-3">
-        <section className="mb-3 rounded border border-state-info/30 bg-state-info/5 p-2 text-xs">
-          <div className="font-semibold text-salvi-black">Cálculo y pintado automático</div>
-          <div className="mt-1 text-[10px] text-salvi-muted">Cada tramo conforme se pinta solo. Los no conformes, stale o no soportados quedan sin pintar.</div>
-          <div className="mt-2 flex gap-2">
-            <select value={luxMode} onChange={e => setLuxMode(e.target.value as 'calculate' | 'optimize')} disabled={luxStarting || !!luxJob && !['succeeded', 'partial', 'failed', 'cancelled', 'unknown'].includes(luxJob.state)} className="rounded border border-salvi-line bg-white px-1.5 py-1 text-[10px]">
-              <option value="optimize">Optimizar</option>
-              <option value="calculate">Calcular fijo</option>
-            </select>
-            <button
-              onClick={startLuxJob}
-              disabled={!calculableTargetRefs.length || !activeProjectId || !editable || !projectEditable || dirty || !['absent', 'current'].includes(resource.kind) || luxStarting || !!luxJob && !['succeeded', 'partial', 'failed', 'cancelled', 'unknown'].includes(luxJob.state)}
-              className="flex-1 rounded bg-state-info px-2 py-1.5 text-[10px] font-medium text-white disabled:opacity-40"
-            >
-              {luxStarting ? 'Preparando…' : `Calcular y pintar ${calculableTargetRefs.length || ''} tramos válidos`}
-            </button>
-          </div>
-          {dirty && <div className="mt-1 text-[10px] text-state-warning">Guarda la configuración antes de calcular.</div>}
-          {resource.kind === 'stale' && <div className="mt-1 text-[10px] text-state-warning">El inventario OSM cambió. Recarga y vuelve a seleccionar los tramos.</div>}
-          {!projectEditable && <div className="mt-1 text-[10px] text-state-warning">Tu membresía solo permite consultar este proyecto.</div>}
-          {luxJob && (
-            <div className="mt-2 space-y-1 border-t border-state-info/20 pt-2">
-              <div className="flex items-center justify-between">
-                <span>Estado: <strong>{luxJob.state}</strong> · {luxJob.succeeded}/{luxJob.total} pintados</span>
-                {!['succeeded', 'partial', 'failed', 'cancelled', 'unknown'].includes(luxJob.state) && <button onClick={cancelCurrentLuxJob} className="text-state-danger underline">Cancelar</button>}
-              </div>
-              {luxJob.items.map(item => (
-                <div key={item.id} className="flex items-center justify-between gap-2 text-[10px]">
-                  <span className="truncate">{item.target_ref}</span>
-                  <span className={item.state === 'succeeded' ? 'text-state-success' : item.error_message ? 'text-state-danger' : 'text-salvi-muted'}>{item.state}{item.error_message ? `: ${item.error_message}` : ''}</span>
-                </div>
-              ))}
+                )
+                : (
+                  <button
+                    onClick={() => setShowSelectedTramos(true)}
+                    className="w-full rounded bg-salvi-black px-2 py-1 text-[11px] font-medium text-white"
+                  >
+                    Ver tramos seleccionados ({selectedCount})
+                  </button>
+                )}
             </div>
           )}
-          {luxJobError && <div role="alert" className="mt-1 text-[10px] text-state-danger">{luxJobError}</div>}
         </section>
-        <div className="mb-2 flex gap-2">
-          <button onClick={reload} disabled={saving} className="flex-1 rounded border border-salvi-line py-1 text-xs">Recargar</button>
-          <button onClick={save} disabled={!editable || !dirty || saving} className="flex-1 rounded bg-salvi-black py-1 text-xs text-white disabled:opacity-40">{saving ? 'Guardando…' : t('actions.save')}</button>
-        </div>
-        <div className="flex justify-between">
-          <button onClick={() => navigate('zona')} className="text-xs text-salvi-grey">{'< '} {t('actions.cancel')}</button>
-          <button onClick={() => navigate('luminarias')} className="rounded-md bg-salvi-black px-3 py-1 text-xs text-white">Luminarias {'>'}</button>
+
+        {/* ── Resultados de búsqueda (solo con texto) ── */}
+        {normalizedQuery && (
+          <>
+            {!segmentList.length
+              ? <div className="rounded bg-salvi-surface p-4 text-center text-xs text-salvi-muted">No hay tramos con ese nombre.</div>
+              : <section className="rounded-lg border border-salvi-line bg-white">{resultList}</section>}
+          </>
+        )}
+
+        {/* ── Características de los tramos ── */}
+        {selectedTargetsFlat.length > 0 && (
+          <section className="rounded-lg border border-salvi-line bg-white">
+            <div className="flex items-center justify-between gap-2 px-3 py-2">
+              <div className="flex items-center gap-1.5 text-xs font-semibold text-salvi-black">
+                <PencilRuler className="h-3.5 w-3.5 text-salvi-muted" aria-hidden="true" />
+                Características
+              </div>
+              <span className="shrink-0 rounded bg-[#1F7A4D]/10 px-1.5 py-0.5 text-[10px] font-semibold text-[#1F7A4D]">
+                {charRefs.length ? `Editando ${charRefs.length} tramos` : 'Sin tramos'}
+              </span>
+            </div>
+            <p className="border-t border-salvi-line/50 px-3 py-1.5 text-[10px] text-salvi-muted">
+              Selecciona los tramos a corregir y edita los campos. Se aplica en bloque y se guarda con la planificación.
+            </p>
+
+            {/* Tramo selector (batch) */}
+            <div className="border-t border-salvi-line/50 space-y-1 px-3 py-2">
+              {selectedTramosByStreet.map(({ key, street, targets, allTargets }) => (
+                <details key={key} className="overflow-hidden rounded border border-salvi-line/60">
+                  <summary className="flex cursor-pointer items-center justify-between bg-salvi-surface/50 px-2.5 py-1.5 text-[11px] font-semibold text-salvi-black">
+                    <span className="min-w-0 truncate">{street}</span>
+                    <span className="shrink-0 text-[9px] font-normal text-salvi-muted">{targets.length}/{allTargets.length} tramos</span>
+                  </summary>
+                  <div className="flex flex-wrap gap-1 border-t border-salvi-line/40 px-2.5 py-2">
+                    {targets.map(target => {
+                      const inBatch = !!charBatch[target.target_ref];
+                      return (
+                        <button
+                          key={target.target_ref}
+                          onClick={() => setCharBatch(cur => {
+                            const next = { ...cur };
+                            if (next[target.target_ref]) delete next[target.target_ref];
+                            else next[target.target_ref] = true;
+                            return next;
+                          })}
+                          className={`rounded px-1.5 py-0.5 text-[10px] transition-colors ${inBatch ? 'bg-[#1F7A4D] text-white' : 'border border-salvi-line text-salvi-grey hover:bg-salvi-surface'}`}
+                          title={`Tramo ${target.source_index + 1} · ${target.length_m != null ? Math.round(target.length_m) + ' m' : '—'}`}
+                        >
+                          T{target.source_index + 1}
+                          {target.length_m != null ? ` · ${Math.round(target.length_m)}m` : ''}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </details>
+              ))}
+            </div>
+
+            {/* Batch fields */}
+            {charRefs.length > 0 && (
+              <div className="border-t border-salvi-line/50 px-3 py-2">
+                <div className="grid grid-cols-3 gap-1.5">
+                  {CHAR_FIELDS.map(field => {
+                    const { value, mixed } = charFieldState(field.key);
+                    const isOverride = charRefs.some(ref => {
+                      const t = inventory.targets.find(x => x.target_ref === ref);
+                      return t && (effectivePatch(storePlanningPayload, t) as any)[field.key] !== undefined;
+                    });
+                    return (
+                      <label key={field.key} className={`text-[9px] ${isOverride ? 'font-medium text-[#1F7A4D]' : 'text-salvi-muted'}`}>
+                        <span className="flex items-baseline justify-between">
+                          <span className="truncate">{field.label}{field.unit ? ` (${field.unit})` : ''}</span>
+                          {mixed && <span className="rounded bg-amber-100 px-1 text-[8px] font-semibold text-amber-800">varios</span>}
+                        </span>
+                        <input
+                          type="number" step={field.step} min={0}
+                          value={value}
+                          placeholder={mixed ? 'varios' : ''}
+                          onChange={e => setBatchChar(field.key, e.target.value === '' ? null : Number(e.target.value))}
+                          className={`mt-0.5 w-full rounded border px-1.5 py-1 text-[11px] ${isOverride ? 'border-[#1F7A4D]/50 bg-[#1F7A4D]/5' : 'border-salvi-line'}`}
+                        />
+                      </label>
+                    );
+                  })}
+                </div>
+                <button
+                  onClick={resetBatchChar}
+                  className="mt-2 w-full rounded border border-salvi-line px-2 py-1 text-[10px] text-salvi-grey hover:bg-salvi-surface"
+                >
+                  Restablecer estos tramos
+                </button>
+              </div>
+            )}
+          </section>
+        )}
+
+        {/* ── Luminarias existentes ── */}
+        <section className="rounded-lg border border-salvi-line bg-white">
+          <div className="px-3 py-2 text-xs font-semibold text-salvi-black">Luminarias ({lums.length})</div>
+          <div className="max-h-40 overflow-y-auto gis-scroll border-t border-salvi-line/50">
+            {lums.map(lum => {
+              const isSelected = selectedLumIds.has(`${zoneId}__${lum.id}`);
+              return (
+                <div
+                  key={lum.id}
+                  className={`px-3 py-2 border-b border-salvi-line/30 text-xs cursor-pointer transition-colors ${
+                    isSelected ? 'bg-yellow-50 border-l-2 border-l-yellow-400' : 'hover:bg-salvi-surface'
+                  }`}
+                >
+                  <div className="font-medium text-salvi-black">{lum.street_name || '—'}</div>
+                  <div className="text-salvi-muted">{lum.road_type} · {lum.watts}W · {lum.lighting_class}</div>
+                </div>
+              );
+            })}
+            {!lums.length && (
+              <div className="p-4 text-center text-xs text-salvi-muted">
+                {calculableTargetRefs.length ? 'Pulsa "Pintar tramos" para colocar luminarias.' : 'Selecciona tramos para pintar luminarias.'}
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
+
+      {/* Footer */}
+      <div className="border-t border-salvi-line p-3">
+        {dirty && (
+          <div className="mb-2 flex items-center gap-2">
+            <span className="flex-1 text-[11px] text-state-warning">Hay cambios sin guardar</span>
+            <button onClick={reload} disabled={saving} className="rounded border border-salvi-line px-2 py-1 text-[11px] text-salvi-grey hover:bg-salvi-surface">Recargar</button>
+          </div>
+        )}
+        <button
+          onClick={() => zoneId && openEditor(zoneId)}
+          disabled={selectedCount === 0}
+          className="w-full rounded border border-salvi-line px-2 py-1.5 text-[11px] font-medium text-salvi-black hover:bg-salvi-surface disabled:opacity-40"
+          title={selectedCount === 0 ? 'Selecciona al menos un tramo' : t('editor.open')}
+        >
+          🏙 {t('editor.open')}
+        </button>
+        <button
+          onClick={() => setShowCompliance(!showCompliance)}
+          className={`mt-2 w-full rounded-md py-1.5 text-[11px] border transition-colors ${
+            showCompliance
+              ? 'bg-state-success/10 border-state-success text-state-success'
+              : 'border-salvi-line text-salvi-grey hover:bg-salvi-surface'
+          }`}
+        >
+          {showCompliance ? t('detail.compliance.hide') : t('detail.compliance.show')}
+        </button>
+        <div className="mt-2 flex gap-2">
+          <button
+            onClick={() => navigate('zona')}
+            className="rounded-lg border border-salvi-line px-3 py-2 text-xs text-salvi-grey hover:bg-salvi-surface"
+          >
+            {'< '}{t('actions.cancel')}
+          </button>
+          {dirty && (
+            <button
+              onClick={save}
+              disabled={!editable || saving}
+              className="flex-1 rounded-lg bg-salvi-black px-3 py-2 text-xs font-semibold text-white disabled:opacity-40"
+            >
+              {saving ? 'Guardando…' : t('actions.save')}
+            </button>
+          )}
+          <button
+            onClick={() => navigate('informe')}
+            disabled={selectedCount === 0}
+            className="flex-1 rounded-lg bg-salvi-black px-3 py-2 text-xs font-semibold text-white disabled:opacity-40"
+            title={selectedCount === 0 ? 'Selecciona al menos un tramo' : ''}
+          >
+            Informe {'>'}
+          </button>
         </div>
       </div>
     </div>

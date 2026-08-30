@@ -18,6 +18,8 @@ export interface ViasSlice {
   selectedStreetName: string | null;
   /** Accumulated segment selection per zone — target_ref → true */
   accumulatedSelection: Record<string, Record<string, true>>;
+  /** Last user-confirmed selection per zone (Aceptar/Deseleccionar) */
+  savedSelectionByZone: Record<string, Record<string, true>>;
 
   setActivePlanningInventory: (data: GisPlanningInventory | null) => void;
   setPlanningPayload: (payload: GisPlanningPayload) => void;
@@ -36,10 +38,16 @@ export interface ViasSlice {
   clearAccumulatedSelection: (zoneId: string) => void;
   /** Replace selection with a set of target refs */
   setAccumulatedSelection: (zoneId: string, targetRefs: string[]) => void;
+  /** Confirm current selection as saved baseline */
+  commitSelection: (zoneId: string) => void;
+  /** Replace selection from server-saved state (Aceptar persisted) */
+  restoreSelection: (zoneId: string, targetRefs: string[]) => void;
   /** Set or clear planning patch override for a specific target */
   setTargetPatch: (targetRef: string, patch: GisPlanningPatch) => void;
   /** Set the same patch on multiple targets at once (e.g. entire street) */
   setBatchTargetPatches: (targetRefs: string[], patch: GisPlanningPatch) => void;
+  /** Merge a partial char patch into existing overrides of multiple targets (preserves lighting). */
+  setMergeTargetPatches: (targetRefs: string[], patch: GisPlanningPatch) => void;
 }
 
 export const createViasSlice: StateCreator<ViasSlice, [], [], ViasSlice> = (set, get) => ({
@@ -54,6 +62,7 @@ export const createViasSlice: StateCreator<ViasSlice, [], [], ViasSlice> = (set,
   selectedTargetRef: null,
   selectedStreetName: null,
   accumulatedSelection: {},
+  savedSelectionByZone: {},
   zoneTrees: {},
 
   setActivePlanningInventory: (data) => set((state) => {
@@ -123,6 +132,17 @@ export const createViasSlice: StateCreator<ViasSlice, [], [], ViasSlice> = (set,
     for (const ref of targetRefs) sel[ref] = true;
     return { accumulatedSelection: { ...state.accumulatedSelection, [zoneId]: sel } };
   }),
+  commitSelection: (zoneId) => set((state) => ({
+    savedSelectionByZone: { ...state.savedSelectionByZone, [zoneId]: { ...(state.accumulatedSelection[zoneId] || {}) } },
+  })),
+  restoreSelection: (zoneId, targetRefs) => set((state) => {
+    const sel: Record<string, true> = {};
+    for (const ref of targetRefs) sel[ref] = true;
+    return {
+      accumulatedSelection: { ...state.accumulatedSelection, [zoneId]: sel },
+      savedSelectionByZone: { ...state.savedSelectionByZone, [zoneId]: { ...sel } },
+    };
+  }),
   setTargetPatch: (targetRef, patch) => set((state) => {
     const targets = { ...(state.planningPayload.target_overrides || {}) };
     if (Object.keys(patch).length) targets[targetRef] = patch;
@@ -133,6 +153,20 @@ export const createViasSlice: StateCreator<ViasSlice, [], [], ViasSlice> = (set,
     const targets = { ...(state.planningPayload.target_overrides || {}) };
     for (const ref of targetRefs) {
       if (Object.keys(patch).length) targets[ref] = { ...patch };
+      else delete targets[ref];
+    }
+    return { planningPayload: { ...state.planningPayload, target_overrides: targets } };
+  }),
+  setMergeTargetPatches: (targetRefs, patch) => set((state) => {
+    const targets = { ...(state.planningPayload.target_overrides || {}) };
+    for (const ref of targetRefs) {
+      const merged = { ...(targets[ref] || {}) };
+      for (const [key, value] of Object.entries(patch)) {
+        const k = key as keyof GisPlanningPatch;
+        if (value === undefined || value === null) delete merged[k];
+        else (merged as any)[k] = value;
+      }
+      if (Object.keys(merged).length) targets[ref] = merged;
       else delete targets[ref];
     }
     return { planningPayload: { ...state.planningPayload, target_overrides: targets } };

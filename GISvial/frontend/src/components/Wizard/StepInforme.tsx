@@ -131,7 +131,7 @@ const StepInforme: React.FC = () => {
 
       {/* Nav */}
       <div className="p-3 border-t border-salvi-line">
-        <button onClick={() => setStepWizard('luminarias')} className="text-xs text-salvi-grey">{'< '} Luminarias</button>
+        <button onClick={() => setStepWizard('vias')} className="text-xs text-salvi-grey">{'< '} Vías</button>
       </div>
     </div>
   );

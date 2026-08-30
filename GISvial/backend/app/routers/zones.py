@@ -9,19 +9,23 @@ logger = logging.getLogger(__name__)
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Response
 from fastapi.responses import JSONResponse
+from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..core.database import get_db, SessionLocal
 from ..core.helpers import fval
 from ..models import (
+    GisLuminaire, GisLuxJob, GisLuxMaterialization,
     GisPlanningDraft, GisProjectMembership, GisRoadWorkScope, GisZone, GisZoneConfig,
-    GisZoneOsmData, GisZoneTrees, Project,
+    GisZoneOsmData, GisZoneSelection, GisZoneTrees, Project,
 )
-from ..schemas.zones import GisCreateZoneBody, GisPlanningDraftPut, GisRoadScopePut, GisRoutePreview
-from ..services.planning import compact_payload, normalize_inventory
+from ..schemas.zones import GisCreateZoneBody, GisPlanningDraftPut, GisRoadScopePut, GisRoutePreview, GisZoneSelectionPut
+from ..services.planning import compact_payload, inventory_counts, normalize_inventory
 from ..services.overpass import fetch_roads, filter_ways_to_polygon
 from ..services.building_width import enrich_widths, fetch_buildings
+from ..services.editor_features import fetch_editor_features
+from ..services.ign_rt import enrich_ign_rt
 from ..services.nominatim import search as _nom_search, reverse as _nom_reverse
 from ..services.zone_geometry import normalize_zone_geometry
 from ..services.road_scope import calculate_route, geometry_hash, normalize_scope_boundary
@@ -30,8 +34,10 @@ from ..services.access import project_for, zone_for
 
 router = APIRouter()
 
-# Tracks background building enrichment tasks per zone
+# Tracks background enrichment tasks per zone
 _building_tasks: dict[str, asyncio.Task] = {}
+_ign_tasks: dict[str, asyncio.Task] = {}
+_overture_tasks: dict[str, asyncio.Task] = {}
 
 DEFAULT_COLORS = [
     '#4caf82', '#e67e22', '#3498db', '#9b59b6', '#e74c3c',
@@ -212,13 +218,18 @@ async def gis_zone_osm_save(zone_id: str, body: dict, principal: Principal = Dep
         "ways": body.get("ways", []),
         "source": body.get("source", "osm"),
     }
+    try:
+        summary = inventory_counts(data["ways"]) if isinstance(data["ways"], list) else None
+    except (TypeError, ValueError):
+        summary = None
     if existing:
         existing.km_by_type = data["km_by_type"]
         existing.ways = data["ways"]
         existing.source = data["source"]
         existing.loaded_at = datetime.now(timezone.utc)
+        existing.inventory_summary = summary
     else:
-        db.add(GisZoneOsmData(zone_id=zone_id, **data))
+        db.add(GisZoneOsmData(zone_id=zone_id, **data, inventory_summary=summary))
     db.commit()
     return {"ok": True}
 
@@ -238,6 +249,7 @@ async def gis_zone_osm_load(
     cached_row = db.get(GisZoneOsmData, zone_id)
     if cached_row and cached_row.ways and not force:
         logger.info("Using cached OSM data for zone %s (force=False)", zone_id)
+        _ensure_ign_enrichment(zone_id, bbox, cached_row.ways)
         if not cached_row.buildings:
             # Trigger background enrichment without blocking response
             task = _building_tasks.get(zone_id)
@@ -245,6 +257,12 @@ async def gis_zone_osm_load(
                 _building_tasks[zone_id] = asyncio.create_task(
                     _enrich_buildings_background(zone_id, bbox, cached_row.ways)
                 )
+        if not cached_row.inventory_summary:
+            try:
+                cached_row.inventory_summary = inventory_counts(cached_row.ways)
+                db.commit()
+            except (TypeError, ValueError):
+                pass
         return normalize_inventory(zone_id, cached_row.ways)
 
     try:
@@ -280,36 +298,122 @@ async def gis_zone_osm_load(
     row = db.get(GisZoneOsmData, zone_id)
     if row and row.ways and not ways:
         raise HTTPException(status_code=502, detail="Overpass returned no roads; existing data was preserved")
+    summary = None
+    try:
+        summary = inventory_counts(ways)
+    except (TypeError, ValueError):
+        summary = None
     if row:
         row.ways = ways
         row.km_by_type = km_by_type
         row.source = source
         row.loaded_at = datetime.now(timezone.utc)
+        row.inventory_summary = summary
     else:
         db.add(GisZoneOsmData(
             zone_id=zone_id, ways=ways,
             km_by_type=km_by_type, source=source,
             loaded_at=datetime.now(timezone.utc),
+            inventory_summary=summary,
         ))
     db.commit()
 
-    # Fire background enrichment (Catastro WFS) — non-blocking
+    # Fire background enrichment (building footprints) — non-blocking
     _building_tasks[zone_id] = asyncio.create_task(
         _enrich_buildings_background(zone_id, bbox, ways)
     )
+    _ensure_ign_enrichment(zone_id, bbox, ways)
+    _ensure_overture_enrichment(zone_id, bbox, ways)
 
     return normalize_inventory(zone_id, ways)
 
 
+def _ensure_ign_enrichment(zone_id: str, bbox: str, ways: list) -> None:
+    """Kick off a non-blocking IGN IGR-RT enrichment if ways lack it."""
+    from ..services.ign_rt import enrich_ign_rt, has_ign_profiles
+    if has_ign_profiles(ways):
+        return
+    task = _ign_tasks.get(zone_id)
+    if task is None or task.done():
+        _ign_tasks[zone_id] = asyncio.create_task(
+            _enrich_ign_background(zone_id, bbox, ways)
+        )
+
+
+async def _enrich_ign_background(zone_id: str, bbox: str, ways: list) -> None:
+    """Attach IGN IGR-RT profiles (lanes, dual, class) and persist."""
+    from ..services.ign_rt import enrich_ign_rt
+    try:
+        enriched = await enrich_ign_rt(ways, bbox)
+        if not enriched:
+            return
+        db = SessionLocal()
+        try:
+            row = db.get(GisZoneOsmData, zone_id)
+            if row:
+                row.ways = ways
+                db.commit()
+                logger.info(
+                    "IGN IGR-RT enrichment completed for zone %s (%d ways)",
+                    zone_id, enriched,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("IGN enrichment DB update failed for zone %s: %s", zone_id, exc)
+        finally:
+            db.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("IGN enrichment failed for zone %s: %s", zone_id, exc)
+
+
+def _ensure_overture_enrichment(zone_id: str, bbox: str, ways: list) -> None:
+    """Kick off a non-blocking Overture enrichment if ways lack it."""
+    from ..services.overture_source import enrich_overture, has_overture_profiles
+    if has_overture_profiles(ways):
+        return
+    task = _overture_tasks.get(zone_id)
+    if task is None or task.done():
+        _overture_tasks[zone_id] = asyncio.create_task(
+            _enrich_overture_background(zone_id, bbox, ways)
+        )
+
+
+async def _enrich_overture_background(zone_id: str, bbox: str, ways: list) -> None:
+    """Attach Overture profiles (width, class, surface, maxspeed) and persist."""
+    from ..services.overture_source import enrich_overture
+    try:
+        enriched = await enrich_overture(ways, bbox)
+        if not enriched:
+            return
+        db = SessionLocal()
+        try:
+            row = db.get(GisZoneOsmData, zone_id)
+            if row:
+                row.ways = ways
+                db.commit()
+                logger.info(
+                    "Overture enrichment completed for zone %s (%d ways)",
+                    zone_id, enriched,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Overture enrichment DB update failed for zone %s: %s", zone_id, exc)
+        finally:
+            db.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Overture enrichment failed for zone %s: %s", zone_id, exc)
+    finally:
+        _overture_tasks.pop(zone_id, None)
+
+
 async def _enrich_buildings_background(zone_id: str, bbox: str, ways: list) -> None:
-    """Fetch Catastro WFS and enrich road widths in the background."""
+    """Fetch building footprints and enrich street section widths in the
+    background (OSM Overpass — the retired Catastro WFS source removed)."""
     try:
         buildings = await fetch_buildings(bbox)
         ways = enrich_widths(ways, buildings)
         # Count enriched ways
-        enriched = sum(1 for w in ways if w.get("widthSrc") == "catastro")
+        enriched = sum(1 for w in ways if w.get("sectionWidth"))
         logger.info(
-            "Catastro enrichment: %d buildings, %d/%d ways enriched for zone %s",
+            "Building enrichment: %d footprints, %d/%d ways enriched for zone %s",
             len(buildings) if buildings else 0, enriched, len(ways), zone_id,
         )
         db = SessionLocal()
@@ -321,7 +425,7 @@ async def _enrich_buildings_background(zone_id: str, bbox: str, ways: list) -> N
                 db.commit()
                 logger.info(
                     "Background building enrichment completed for zone %s: "
-                    "%d ways enriched with Catastro data out of %d total",
+                    "%d ways enriched with section widths out of %d total",
                     zone_id, enriched, len(ways),
                 )
         except Exception as exc:
@@ -370,6 +474,23 @@ async def gis_building_widths_status(
         "computed_at": None,
         "message": "No building data available",
     }
+
+
+@router.get("/api/zones/{zone_id}/editor-features")
+async def gis_zone_editor_features(
+    zone_id: str,
+    bbox: str = Query(...),
+    principal: Principal = Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    """Edificios (con altura), parques y agua de la sección vía Overpass."""
+    zone_for(principal, db, zone_id)
+    try:
+        features = await fetch_editor_features(bbox)
+        return {"features": features}
+    except Exception as exc:
+        logger.warning("editor-features falló para la zona %s: %s", zone_id, exc)
+        return {"features": [], "error": str(exc)}
 
 
 # ── Road planning ──────────────────────────────────────────────────────
@@ -674,6 +795,207 @@ async def gis_route_preview(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"path": route["path"], "length_m": route["length_m"], "members": route["members"]}
+
+
+# ── Zone street selection (Aceptar en Vías OSM) ─────────────────────────
+def _selection_dict(row: GisZoneSelection, current_hash: str | None) -> dict:
+    current = row.base_inventory_hash == current_hash if current_hash else False
+    return {
+        "zone_id": row.zone_id,
+        "revision": row.revision,
+        "schema_version": row.schema_version,
+        "base_inventory_hash": row.base_inventory_hash,
+        "selected_target_refs": row.selected_target_refs or [],
+        "current": current,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "updated_by": row.updated_by,
+    }
+
+
+def _selection_response(row: GisZoneSelection, current_hash: str | None, status_code: int = 200) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code,
+        content=_selection_dict(row, current_hash),
+        headers={"ETag": f'"selection:{row.revision}"'},
+    )
+
+
+@router.get("/api/zones/{zone_id}/selection")
+async def gis_zone_selection_get(zone_id: str, principal: Principal = Depends(current_principal), db: Session = Depends(get_db)):
+    zone_for(principal, db, zone_id)
+    row = db.get(GisZoneSelection, zone_id)
+    if not row:
+        return Response(status_code=204)
+    inventory = _planning_inventory(zone_id, db, allow_missing=True)
+    current_hash = inventory["base_inventory_hash"] if inventory else None
+    return _selection_response(row, current_hash)
+
+
+@router.put("/api/zones/{zone_id}/selection")
+async def gis_zone_selection_put(
+    zone_id: str,
+    body: GisZoneSelectionPut,
+    principal: Principal = Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    zone_for(principal, db, zone_id, write=True)
+    inventory = _planning_inventory(zone_id, db, allow_missing=True)
+    if inventory is None:
+        raise HTTPException(status_code=409, detail="INVENTORY_UNAVAILABLE")
+    current_hash = inventory["base_inventory_hash"]
+    if body.base_inventory_hash != current_hash:
+        raise HTTPException(status_code=409, detail="INVENTORY_STALE")
+    valid_targets = {target["target_ref"] for target in inventory["targets"]}
+    unknown = set(body.selected_target_refs) - valid_targets
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"Unknown target reference(s): {sorted(unknown)}")
+
+    row = db.get(GisZoneSelection, zone_id)
+    now = datetime.now(timezone.utc)
+    if row is None:
+        row = GisZoneSelection(
+            zone_id=zone_id,
+            revision=1,
+            schema_version=body.schema_version,
+            base_inventory_hash=current_hash,
+            selected_target_refs=body.selected_target_refs,
+            updated_at=now,
+            updated_by=principal.user.id,
+        )
+        db.add(row)
+        status_code = 201
+    else:
+        row.revision += 1
+        row.schema_version = body.schema_version
+        row.base_inventory_hash = current_hash
+        row.selected_target_refs = body.selected_target_refs
+        row.updated_at = now
+        row.updated_by = principal.user.id
+        status_code = 200
+    db.commit()
+    db.refresh(row)
+    return _selection_response(row, current_hash, status_code)
+
+
+@router.get("/api/projects/{project_id}/zones-summary")
+async def gis_project_zones_summary(
+    project_id: int,
+    principal: Principal = Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    """Per-zone summary for a project: storage counts, planning state, scope, Lux status.
+
+    Lightweight counterpart of the full planning-inventory payload so the
+    project board can render stats without loading geometries per zone.
+    """
+    project_for(principal, db, project_id)
+    zones = db.query(GisZone).filter(GisZone.project_id == project_id).order_by(GisZone.created_at.desc()).all()
+    if not zones:
+        return []
+    zone_ids = [z.id for z in zones]
+
+    osm_rows = {
+        row.zone_id: row
+        for row in db.query(GisZoneOsmData).filter(GisZoneOsmData.zone_id.in_(zone_ids)).all()
+    }
+    drafts = {
+        row.zone_id: row
+        for row in db.query(GisPlanningDraft).filter(GisPlanningDraft.zone_id.in_(zone_ids)).all()
+    }
+    scopes = {
+        row.zone_id: row
+        for row in db.query(GisRoadWorkScope).filter(GisRoadWorkScope.zone_id.in_(zone_ids)).all()
+    }
+    selections = {
+        row.zone_id: row
+        for row in db.query(GisZoneSelection).filter(GisZoneSelection.zone_id.in_(zone_ids)).all()
+    }
+    # Latest job per zone (last-written wins within the group).
+    latest_jobs: dict[str, GisLuxJob] = {}
+    for row in db.query(GisLuxJob).filter(GisLuxJob.zone_id.in_(zone_ids)).all():
+        current = latest_jobs.get(row.zone_id)
+        current_ts = current.updated_at if current else None
+        row_ts = row.updated_at
+        if current is None or (row_ts or row.id) > (current_ts or current.id):
+            latest_jobs[row.zone_id] = row
+    materialized = dict(
+        db.query(GisLuxMaterialization.zone_id, func.count(GisLuxMaterialization.id))
+        .filter(
+            GisLuxMaterialization.zone_id.in_(zone_ids),
+            GisLuxMaterialization.state == "current",
+        )
+        .group_by(GisLuxMaterialization.zone_id)
+        .all()
+    )
+    luminaire_counts = dict(
+        db.query(GisLuminaire.zone_id, func.count(GisLuminaire.id))
+        .filter(GisLuminaire.zone_id.in_(zone_ids))
+        .group_by(GisLuminaire.zone_id)
+        .all()
+    )
+
+    result = []
+    backfilled = False
+    for zone in zones:
+        osm = osm_rows.get(zone.id)
+        counts = {}
+        if osm is not None:
+            if isinstance(osm.inventory_summary, dict) and osm.inventory_summary.get("counts"):
+                counts = osm.inventory_summary["counts"]
+            elif isinstance(osm.ways, list):
+                # Fallback for zones loaded before the persisted summary existed;
+                # recompute the lightweight counts on the fly and backfill.
+                try:
+                    saved = inventory_counts(osm.ways)
+                    counts = saved["counts"]
+                    osm.inventory_summary = saved
+                    backfilled = True
+                except (TypeError, ValueError):
+                    counts = {}
+        draft = drafts.get(zone.id)
+        scope = scopes.get(zone.id)
+        sel = selections.get(zone.id)
+        job = latest_jobs.get(zone.id)
+        payload = (draft.payload if draft else {}) or {}
+        result.append({
+            "zone": _zone_to_dict(zone),
+            "osm": {
+                "loaded": osm is not None,
+                "loaded_at": osm.loaded_at.isoformat() if osm and osm.loaded_at else None,
+                "segment_count": counts.get("segment_count", 0),
+                "named_street_count": counts.get("named_street_count", 0),
+                "distinct_name_count": counts.get("distinct_name_count", 0),
+                "geometry_available": counts.get("geometry_available", 0),
+                "length_km": round(sum((osm.km_by_type or {}).values()), 2) if osm else 0,
+            },
+            "planning": {
+                "revision": draft.revision if draft else None,
+                "target_overrides": len(payload.get("target_overrides") or {}),
+                "group_defaults": len(payload.get("group_defaults") or {}),
+                "updated_at": draft.updated_at.isoformat() if draft and draft.updated_at else None,
+            },
+            "scope": {
+                "current": bool((scope.payload or {}).get("current")) if scope else False,
+                "length_m": (scope.payload or {}).get("length_m") if scope else None,
+                "member_count": len((scope.payload or {}).get("members") or []) if scope else 0,
+            },
+            "selection": {
+                "count": len(sel.selected_target_refs) if sel else 0,
+                "current": bool(sel),
+            },
+            "study": {
+                "job_state": job.state if job else None,
+                "job_total": job.total if job else 0,
+                "job_succeeded": job.succeeded if job else 0,
+                "job_failed": job.failed if job else 0,
+                "job_updated_at": job.updated_at.isoformat() if job and job.updated_at else None,
+                "materialized_targets": materialized.get(zone.id, 0),
+            },
+            "luminaires": luminaire_counts.get(zone.id, 0),
+        })
+    if backfilled:
+        db.commit()
+    return result
 
 
 # ── Zone config ─────────────────────────────────────────────────────────

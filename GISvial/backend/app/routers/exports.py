@@ -7,6 +7,7 @@ from ..core.database import get_db
 from ..core.helpers import parse_json
 from ..models import GisZoneOsmData, GisZoneTrees, GisLuminaire, GisInventoryLuminaire
 from ..schemas.luminaires import GisPlantillaRequest
+from ..schemas.exports import GisDxfExportRequest
 from ..services.dxf import build_dxf
 from ..services.plantilla import build_plantilla
 from ..services.access import zone_for
@@ -33,6 +34,21 @@ async def gis_export_dxf(zone_id: str = Query(...), principal: Principal = Depen
         content=dxf_bytes,
         media_type="application/dxf",
         headers={"Content-Disposition": f'attachment; filename="zone_{zone_id}.dxf"'},
+    )
+
+
+@router.post("/api/export/dxf")
+async def gis_export_dxf_objects(body: GisDxfExportRequest, principal: Principal = Depends(current_principal), db: Session = Depends(get_db)):
+    """DXF del plano del editor: carreteras del plano + objetos añadidos."""
+    zone_for(principal, db, body.zone_id)
+    ways = [r.model_dump() for r in body.roads]
+    objects = [o.model_dump() for o in body.objects]
+
+    dxf_bytes = build_dxf(ways, [], [], [], body.boundary, objects)
+    return Response(
+        content=dxf_bytes,
+        media_type="application/dxf",
+        headers={"Content-Disposition": f'attachment; filename="plano_{body.zone_id}.dxf"'},
     )
 
 

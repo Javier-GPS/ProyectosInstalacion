@@ -19,6 +19,29 @@ def _dxf_ldef(name: str, color: int, lw: int = 18, lt: str = 'CONTINUOUS') -> li
     return ["0", "LAYER", "2", name, "70", "0", "62", str(color), "6", lt, "370", str(lw)]
 
 
+def _object_ring(obj: dict) -> list[tuple[float, float]]:
+    """Footprint corners (lon, lat) of a rotated rectangle, matching the frontend editor."""
+    lng, lat = obj.get('lng'), obj.get('lat')
+    if lng is None or lat is None:
+        return []
+    w = float(obj.get('width') or 1)
+    l = float(obj.get('length') or 1)
+    deg = float(obj.get('rotation') or 0)
+    lat_rad = math.radians(float(lat))
+    d_lat = 1 / 111320
+    d_lng = 1 / (111320 * math.cos(lat_rad) if math.cos(lat_rad) else 111320 * 0.001)
+    hw, hl = w / 2, l / 2
+    rad = math.radians(deg)
+    cos, sin = math.cos(rad), math.sin(rad)
+    corners = [(-hw, -hl), (hw, -hl), (hw, hl), (-hw, hl)]
+    ring = []
+    for x, y in corners:
+        rx = x * cos - y * sin
+        ry = x * sin + y * cos
+        ring.append((lng + rx * d_lng, lat + ry * d_lat))
+    return ring
+
+
 def _perp_off(lon1: float, lat1: float, lon2: float, lat2: float, half_m: float):
     mid = math.radians((lat1 + lat2) / 2)
     cos_mid = math.cos(mid) or 0.001
@@ -37,8 +60,10 @@ def build_dxf(
     inventory: list[Any],
     tree_data: list[dict],
     boundary: list,
+    objects: list[dict] | None = None,
 ) -> bytes:
     """Build a DXF file from GIS data. Returns raw bytes."""
+    objects = objects or []
     rtypes = sorted({w.get('type', 'road') for w in ways})
 
     # Build layer list
@@ -63,6 +88,8 @@ def build_dxf(
         layers.append(("ZONE_BOUNDARY", 7, 25, "CONTINUOUS"))
     if tree_data:
         layers.append(("TREES", 82, 18, "CONTINUOUS"))
+    if objects:
+        layers.append(("OBJECTS", 30, 18, "CONTINUOUS"))
 
     # Build DXF
     L: list[str] = []
@@ -153,6 +180,25 @@ def build_dxf(
     for t in tree_data:
         L += ["0", "POINT", "8", "TREES", "62", "82",
               "10", f"{t.get('lon', 0):.6f}", "20", f"{t.get('lat', 0):.6f}", "30", "0.0"]
+
+    # Editor objects: rotated footprint + center point + label
+    for obj in objects:
+        ring = _object_ring(obj)
+        if len(ring) < 3:
+            continue
+        for i in range(len(ring)):
+            p0 = ring[i]
+            p1 = ring[(i + 1) % len(ring)]
+            L += ["0", "LINE", "8", "OBJECTS", "62", "30", "370", "18",
+                  "10", f"{p0[0]:.6f}", "20", f"{p0[1]:.6f}", "30", "0.0",
+                  "11", f"{p1[0]:.6f}", "21", f"{p1[1]:.6f}", "31", "0.0"]
+        L += ["0", "POINT", "8", "OBJECTS", "62", "30",
+              "10", f"{obj.get('lng', 0):.6f}", "20", f"{obj.get('lat', 0):.6f}", "30", "0.0"]
+        lbl = obj.get('label') or obj.get('type')
+        if lbl:
+            L += ["0", "TEXT", "8", "OBJECTS", "62", "30",
+                  "10", f"{obj.get('lng', 0):.6f}", "20", f"{obj.get('lat', 0):.6f}", "30", "0.0",
+                  "40", "0.000045", "1", str(lbl)[:63]]
 
     L += ["0", "ENDSEC", "0", "EOF"]
     return "\n".join(L).encode("utf-8")

@@ -70,6 +70,7 @@ class GisZoneOsmData(Base):
     km_by_type: Mapped[dict] = mapped_column(JSONB, default=dict)
     ways: Mapped[list] = mapped_column(JSONB, default=list)
     buildings: Mapped[list | None] = mapped_column(JSONB, nullable=True, default=None)
+    inventory_summary: Mapped[dict | None] = mapped_column(JSONB, nullable=True, default=None)
     source: Mapped[str] = mapped_column(String(50), default="estimated")
     loaded_at: Mapped[datetime] = mapped_column(DateTime, default=_utcnow)
     zone: Mapped[GisZone] = relationship("GisZone", back_populates="osm_data")
@@ -185,17 +186,63 @@ class GisRoadWorkScope(Base):
     updated_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
 
+class GisZoneSelection(Base):
+    """Confirmed street selection for a zone (Aceptar in Vías OSM).
+
+    Persists which ``target_ref`` values the user approved so the selection
+    survives closing/reopening the zone. Mirrors :class:`GisRoadWorkScope`
+    (revision, base_inventory_hash, ETag) but stores a flat target_ref list.
+    """
+    __tablename__ = "gis_zone_selection"
+
+    zone_id: Mapped[str] = mapped_column(String(50), ForeignKey("gis_zones.id", ondelete="CASCADE"), primary_key=True)
+    revision: Mapped[int] = mapped_column(BigInteger, nullable=False, default=1)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    base_inventory_hash: Mapped[str] = mapped_column(String(71), nullable=False)
+    selected_target_refs: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+    updated_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+
+
 def _ensure_gis_columns() -> None:
-    """Add columns that may be missing after a CREATE TABLE IF NOT EXISTS."""
-    import sqlalchemy as sa
-    from sqlalchemy import inspect, text
-    inspector = inspect(engine)
-    cols = {c["name"] for c in inspector.get_columns("gis_zone_osm_data")}
-    if "buildings" not in cols:
-        with engine.begin() as conn:
-            conn.execute(sa.text(
-                "ALTER TABLE gis_zone_osm_data ADD COLUMN buildings JSONB DEFAULT NULL"
-            ))
+  """Add columns that may be missing after a CREATE TABLE IF NOT EXISTS."""
+  import sqlalchemy as sa
+  from sqlalchemy import inspect, text
+  inspector = inspect(engine)
+  cols = {c["name"] for c in inspector.get_columns("gis_zone_osm_data")}
+  if "buildings" not in cols:
+    with engine.begin() as conn:
+      conn.execute(sa.text(
+        "ALTER TABLE gis_zone_osm_data ADD COLUMN buildings JSONB DEFAULT NULL"
+      ))
+  if "inventory_summary" not in cols:
+    with engine.begin() as conn:
+      conn.execute(sa.text(
+        "ALTER TABLE gis_zone_osm_data ADD COLUMN inventory_summary JSONB DEFAULT NULL"
+      ))
+
+
+def _ensure_projects_columns() -> None:
+  """Create the shared ``projects`` table and add columns used by GISvial."""
+  from .project import Project
+  from sqlalchemy import inspect, text
+  Project.__table__.create(bind=engine, checkfirst=True)
+  with engine.begin() as conn:
+    existing = {c["name"] for c in inspect(engine).get_columns("projects")}
+    columns = {
+      "owner_user_id": "INTEGER",
+      "status": "TEXT DEFAULT 'draft'",
+      "config_json": "TEXT",
+      "result_json": "TEXT",
+      "last_opened_at": "TIMESTAMP",
+      "t_amb_c": "REAL DEFAULT 25.0",
+      "margen_lavg": "REAL DEFAULT 0.0",
+      "i_op_ma": "REAL",
+      "lm_w_min": "REAL",
+    }
+    for name, ddl in columns.items():
+      if name not in existing:
+        conn.execute(text(f"ALTER TABLE projects ADD COLUMN {name} {ddl}"))
 
 
 # ── Helper ─────────────────────────────────────────────────────────────────
@@ -248,4 +295,6 @@ def ensure_gis_tables() -> None:
     GisProjectUiConfig.__table__.create(bind=engine, checkfirst=True)
     GisPlanningDraft.__table__.create(bind=engine, checkfirst=True)
     GisRoadWorkScope.__table__.create(bind=engine, checkfirst=True)
+    GisZoneSelection.__table__.create(bind=engine, checkfirst=True)
+    _ensure_projects_columns()
     _ensure_gis_columns()

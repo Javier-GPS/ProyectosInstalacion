@@ -1,24 +1,25 @@
 import React from 'react';
+import { ArrowLeft } from 'lucide-react';
 import { useI18n } from '../../i18n';
 import type { WizardStep } from '../../store/types';
 
 interface WizardNavProps {
   currentStep: WizardStep;
   onStepChange: (step: WizardStep) => void;
+  onBackToZones: () => void;
   stepLabels?: Partial<Record<WizardStep, string>>;
 }
 
-const STEPS: WizardStep[] = ['proyecto', 'zona', 'vias', 'luminarias', 'informe'];
+const STEPS: WizardStep[] = ['zona', 'vias', 'informe'];
 
 const STEP_ICONS: Record<WizardStep, string> = {
   proyecto: '📁',
   zona: '📍',
   vias: '🛣️',
-  luminarias: '💡',
   informe: '📊',
 };
 
-const WizardNav: React.FC<WizardNavProps> = ({ currentStep, onStepChange }) => {
+const WizardNav: React.FC<WizardNavProps> = ({ currentStep, onStepChange, onBackToZones }) => {
   const { t } = useI18n();
 
   const stepLabel = (step: WizardStep): string => {
@@ -26,7 +27,6 @@ const WizardNav: React.FC<WizardNavProps> = ({ currentStep, onStepChange }) => {
       proyecto: t('nav.projects'),
       zona: t('zone.name'),
       vias: 'Vías OSM',
-      luminarias: t('detail.elements', { n: '' }).replace(' ()', ''),
       informe: 'Informe',
     };
     return labels[step];
@@ -34,14 +34,21 @@ const WizardNav: React.FC<WizardNavProps> = ({ currentStep, onStepChange }) => {
 
   return (
     <nav className="flex items-center gap-0.5" aria-label="Wizard steps">
+      <button
+        onClick={onBackToZones}
+        className="flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors text-salvi-grey hover:bg-salvi-surface"
+        title={t('header.backToZones')}
+        aria-label={t('header.backToZones')}
+      >
+        <ArrowLeft className="h-3.5 w-3.5" aria-hidden="true" />
+        <span className="hidden sm:inline">{t('zones.list')}</span>
+      </button>
       {STEPS.map((step, idx) => {
         const isActive = step === currentStep;
         const isPast = STEPS.indexOf(currentStep) > idx;
         return (
           <React.Fragment key={step}>
-            {idx > 0 && (
-              <div className={`h-px w-4 ${isPast || isActive ? 'bg-salvi-black' : 'bg-salvi-line'}`} />
-            )}
+            <div className={`h-px w-4 ${isPast || isActive ? 'bg-salvi-black' : 'bg-salvi-line'}`} />
             <button
               onClick={() => onStepChange(step)}
               className={`flex items-center gap-1 px-2.5 py-1.5 text-xs font-medium rounded-md transition-colors ${

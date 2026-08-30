@@ -4,6 +4,9 @@ import { useGisStore } from '../../store/useGisStore';
 import { createZone, deleteZone, nominatimSearch, updateZone } from '../../lib/api';
 import { useApi } from '../../hooks/useApi';
 import type { StatusGranular } from '../../store/types';
+import Panel from '../ui/Panel';
+import Button from '../ui/Button';
+import { TextInput } from '../ui/Field';
 
 const StepZona: React.FC<{ status: StatusGranular; error: string; onRetry: () => void }> = ({ status, error, onRetry }) => {
   const { t } = useI18n();
@@ -101,55 +104,51 @@ const StepZona: React.FC<{ status: StatusGranular; error: string; onRetry: () =>
   }, [searchQ]);
 
   return (
-    <div className="gis-panel rounded-xl overflow-hidden flex flex-col max-h-full">
-      <div className="p-3 border-b border-salvi-line flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-salvi-black">
+    <Panel>
+      <div className="flex items-center justify-between border-b border-salvi-line p-4">
+        <h2 className="text-base font-semibold text-salvi-black">
           Zonas ({projectZones.length})
         </h2>
-        <button
+        <Button
+          variant="primary"
           onClick={() => {
             if (creating && !boundaryZoneId) { setCreating(false); return; }
             setBoundaryZoneId(null); setNewName(''); setSearchQ(''); setSearchResults([]); setSearchCoords(null); setFormError(''); setCreating(true);
           }}
-          className="text-xs bg-salvi-black text-white rounded-md px-2.5 py-1 hover:opacity-90 transition-opacity"
         >
           + {t('zone.create')}
-        </button>
+        </Button>
       </div>
 
       {/* Create zone form */}
       {creating && (
-        <div className="p-3 border-b border-salvi-line space-y-2 bg-salvi-surface">
+        <div className="space-y-3 border-b border-salvi-line bg-[#FCF9F5]/40 p-4">
           <div className="text-xs font-medium text-salvi-grey">{boundaryZoneId ? 'Actualizar límite real' : 'Nueva zona con límite real'}</div>
-          <input
+          <TextInput
             value={newName}
             onChange={e => setNewName(e.target.value)}
             placeholder={t('zone.name')}
-            className="w-full border border-salvi-line rounded-md px-2.5 py-1.5 text-sm"
             autoFocus
           />
           <div className="flex gap-1">
-            <input
+            <TextInput
               value={searchQ}
               onChange={e => setSearchQ(e.target.value)}
               placeholder={t('zone.search')}
-              className="flex-1 border border-salvi-line rounded-md px-2.5 py-1.5 text-sm"
               onKeyDown={e => e.key === 'Enter' && handleSearch()}
             />
-            <button onClick={handleSearch} disabled={searching} className="text-xs bg-salvi-grey text-white rounded-md px-2 py-1">
-              🔍
-            </button>
+            <Button variant="secondary" onClick={handleSearch} disabled={searching}>🔍</Button>
           </div>
           {searching && <div className="text-xs text-salvi-muted">{t('actions.loading')}</div>}
           {searchResults.length > 0 && (
-            <div className="max-h-32 overflow-y-auto space-y-1">
+            <div className="max-h-32 space-y-1 overflow-y-auto">
               {searchResults.map((r, i) => {
                 const hasBoundary = ['Polygon', 'MultiPolygon'].includes(r.geojson?.type);
                 return (
                 <button
                   key={i}
                   disabled={!hasBoundary}
-                  className="w-full text-left text-xs p-1.5 rounded hover:bg-salvi-line/50 disabled:cursor-not-allowed disabled:opacity-45"
+                  className="w-full rounded p-1.5 text-left text-xs hover:bg-salvi-line/50 disabled:cursor-not-allowed disabled:opacity-45"
                   onClick={() => handleSearchResult(r)}
                 >
                   {r.display_name} · {hasBoundary ? 'límite disponible' : 'sin límite'}
@@ -159,19 +158,19 @@ const StepZona: React.FC<{ status: StatusGranular; error: string; onRetry: () =>
           )}
           {formError && <p role="alert" className="text-xs text-state-danger">{formError}</p>}
           <div className="flex gap-2 pt-1">
-            <button onClick={handleCreate} className="flex-1 text-xs bg-salvi-black text-white rounded-md py-1.5">{boundaryZoneId ? 'Actualizar límite' : t('actions.save')}</button>
-            <button onClick={() => { setCreating(false); setBoundaryZoneId(null); setSearchResults([]); setSearchCoords(null); setFormError(''); }} className="text-xs text-salvi-grey py-1.5">{t('actions.cancel')}</button>
+            <Button variant="primary" className="flex-1" onClick={handleCreate}>{boundaryZoneId ? 'Actualizar límite' : t('actions.save')}</Button>
+            <Button variant="ghost" onClick={() => { setCreating(false); setBoundaryZoneId(null); setSearchResults([]); setSearchCoords(null); setFormError(''); }}>{t('actions.cancel')}</Button>
           </div>
         </div>
       )}
 
       {/* Zone list */}
-      <div className="overflow-y-auto flex-1 gis-scroll">
+      <div className="flex-1 overflow-y-auto gis-scroll">
         {status === 'loading' && <div className="p-6 text-center text-xs text-salvi-muted">Cargando zonas…</div>}
         {status === 'error' && (
           <div role="alert" className="p-4 text-center text-xs text-state-danger">
             <p>{error || 'No se pudieron cargar las zonas'}</p>
-            <button onClick={onRetry} className="mt-2 rounded bg-salvi-black px-3 py-1 text-white">Reintentar</button>
+            <Button variant="primary" className="mt-2" onClick={onRetry}>Reintentar</Button>
           </div>
         )}
         {status === 'loaded' && !projectZones.length && <div className="p-6 text-center text-xs text-salvi-muted">Este proyecto no tiene zonas</div>}
@@ -181,18 +180,18 @@ const StepZona: React.FC<{ status: StatusGranular; error: string; onRetry: () =>
             onClick={() => {
               setSelectedZone(zone.id);
             }}
-            className={`flex items-center gap-2 px-3 py-2.5 cursor-pointer border-b border-salvi-line/50 transition-colors ${
+            className={`flex cursor-pointer items-center gap-2 border-b border-salvi-line/50 px-4 py-3 transition-colors ${
               selectedZoneId === zone.id ? 'bg-salvi-black/5' : 'hover:bg-salvi-surface'
             }`}
           >
-            <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: zone.color }} />
-            <div className="flex-1 min-w-0">
-              <div className="text-sm font-medium text-salvi-black truncate">{zone.name}</div>
+            <div className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: zone.color }} />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm font-medium text-salvi-black">{zone.name}</div>
               <div className="text-xs text-salvi-muted">{zone.type || '—'}</div>
             </div>
             <button
               onClick={e => { e.stopPropagation(); handleDelete(zone.id, zone.name); }}
-              className="text-salvi-muted hover:text-state-danger text-xs p-1"
+              className="p-1 text-xs text-salvi-muted hover:text-state-danger"
               title={t('zone.delete')}
             >
               ✕
@@ -201,7 +200,7 @@ const StepZona: React.FC<{ status: StatusGranular; error: string; onRetry: () =>
         ))}
       </div>
 
-      <div className="border-t border-salvi-line p-3">
+      <div className="border-t border-salvi-line p-4">
         {selectedZone && !selectedZone.geometry.boundary && (
           <div role="status" className="mb-2 text-xs text-state-warning">
             <p>Límite real pendiente; el bbox solo se usa para encuadrar el mapa.</p>
@@ -211,15 +210,16 @@ const StepZona: React.FC<{ status: StatusGranular; error: string; onRetry: () =>
             >Buscar límite real</button>
           </div>
         )}
-        <button
+        <Button
+          variant="primary"
+          className="w-full"
           onClick={() => selectedZone && setStepWizard('vias')}
           disabled={!selectedZone || status !== 'loaded'}
-          className="w-full rounded-md bg-salvi-black py-2 text-xs text-white disabled:opacity-40"
         >
-              Revisar vías
-        </button>
+          Revisar vías
+        </Button>
       </div>
-    </div>
+    </Panel>
   );
 };
 

@@ -1,4 +1,4 @@
-import { ChangeEvent, CSSProperties, FormEvent, PointerEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { ChangeEvent, CSSProperties, FormEvent, PointerEvent, WheelEvent, useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 
@@ -25,7 +25,7 @@ type ReferenceRoad = { metrics: Metrics; visual_grid?: VisualGrid };
 type MapMetric = 'luminance' | 'illuminance' | 'reference-luminance' | 'reference-illuminance';
 type OptimizationMode = 'independent' | 'symmetric';
 type LuminaireMode = 'modular' | 'fixed';
-type ActiveCalculation = 'trace' | 'evaluate' | 'optimize' | null;
+type ActiveCalculation = 'trace' | 'evaluate' | 'optimize' | 'autonomous' | null;
 type LdtPair = { c_deg: number; mirror_c_deg: number; max_difference_pct: number; worst_gamma_deg: number; symmetric: boolean };
 type LdtDiagnostic = { name: string; company: string; flux_lm: number; power_w: number; c_angles_deg: number[]; gamma_angles_deg: number[]; intensities_cd_per_klm: number[][]; max_intensity_cd_per_klm: number; peak_c_deg?: number; peak_gamma_deg?: number; symmetry_tolerance_pct: number; pairs: LdtPair[]; symmetric: boolean; directional_c0_c180?: boolean; group_c_rotation_deg?: number };
 type PreviewRayStatus = 'transmitted' | 'missed' | 'untransmitted';
@@ -34,17 +34,21 @@ type PreviewRay = { led_index: number; status: PreviewRayStatus; origin_xyz: num
 type SurfaceEnergy = { surface_index: number; entry_flux_lm: number; tir_flux_lm: number; exit_flux_lm: number; entry_pct: number; tir_pct: number; exit_pct: number; entry_incidence_mean_deg?: number; entry_incidence_max_deg?: number };
 type ViewAxis = 'x' | 'y' | 'z';
 type ViewAnimation = { startedAt: number; duration: number; startPosition: THREE.Vector3; targetPosition: THREE.Vector3; startQuaternion: THREE.Quaternion; targetQuaternion: THREE.Quaternion; startUp: THREE.Vector3; targetUp: THREE.Vector3 };
-type SurfaceCollimation = { surfaceIndex: number; label: string; rayCount: number; meanC: number; meanGamma: number; meanTargetDeg: number; targetRmsDeg: number; targetP95Deg: number };
+type SurfaceCollimation = { surfaceIndex: number; label: string; rayCount: number; meanC: number; meanGamma: number; meanTargetDeg: number; targetRmsDeg: number; targetP95Deg: number; energy: SurfaceEnergy | null };
+type LedSurfaceEnergy = { led_index: number; input_flux_lm: number; surface_energy: SurfaceEnergy[] };
 type GeometryMeshPart = { vertices: number[][]; faces: number[][]; surface_ids?: number[]; surface_labels?: string[] };
 type GeometryMesh = { units: string; coordinate_system: string; coordinate_frame: string; lens: GeometryMeshPart; leds: Array<GeometryMeshPart & { led_index: number }> };
+type CadMeshPreview = { geometry: GeometryTraceData['geometry']; preview_geometry_mesh: GeometryMesh; parameters: CadParameter[] };
+type AutonomousCadRun = { objective: { target_direction_xyz: number[]; baseline_score: number; best_score: number; baseline_transmission_pct: number; best_transmission_pct: number; improved: boolean }; history: Array<{ parameter?: string; feature?: string; display_value?: number; unit?: string; score?: number; transmission_pct?: number; error?: string; accepted: boolean }>; baseline_geometry_trace: GeometryTraceData; geometry_trace: GeometryTraceData; save_warning?: string | null; solidworks_session_id?: string | null };
 type RayAngleConfig = { c_mirror: boolean; c_offset_deg: number; gamma_flip: boolean; c_convention: string; gamma_convention: string };
-type GeometryTraceData = { geometry: { solid_count: number; led_count: number; lens_volume: number; lens_faces: number; lens_triangles?: number; lens_bbox_mm: { xmin: number; xmax: number; ymin: number; ymax: number; zmin: number; zmax: number }; led_origins_mm: number[][]; led_emission_normals?: number[][]; led_emission_faces?: number[] }; trace: { source_ray_count: number; led_count: number; traced_ray_count: number; input_flux_lm: number; missed_ray_count: number; missed_flux_lm: number; intercepted_ray_count: number; intercepted_flux_lm: number; transmitted_ray_count: number; transmitted_flux_lm: number; total_internal_reflection_count: number; untransmitted_flux_lm: number; transmission_pct: number; surface_energy?: SurfaceEnergy[]; preview_ray_count?: number; preview_status_counts?: Record<string, number> }; ldt: LdtDiagnostic; ldt_base64: string; preview_rays: number[][]; preview_rays_detail?: PreviewRay[]; preview_geometry_mesh?: GeometryMesh; ray_angle_config?: RayAngleConfig; saved_cad_files?: string[] };
+type GeometryTraceData = { geometry: { solid_count: number; led_count: number; lens_volume: number; lens_faces: number; lens_triangles?: number; lens_bbox_mm: { xmin: number; xmax: number; ymin: number; ymax: number; zmin: number; zmax: number }; led_origins_mm: number[][]; led_emission_normals?: number[][]; led_emission_faces?: number[] }; trace: { source_ray_count: number; led_count: number; traced_ray_count: number; input_flux_lm: number; missed_ray_count: number; missed_flux_lm: number; intercepted_ray_count: number; intercepted_flux_lm: number; transmitted_ray_count: number; transmitted_flux_lm: number; total_internal_reflection_count: number; untransmitted_flux_lm: number; transmission_pct: number; surface_energy?: SurfaceEnergy[]; surface_energy_by_led?: LedSurfaceEnergy[]; preview_ray_count?: number; preview_status_counts?: Record<string, number> }; ldt: LdtDiagnostic; ldt_base64: string; preview_rays: number[][]; preview_rays_detail?: PreviewRay[]; preview_geometry_mesh?: GeometryMesh; ray_angle_config?: RayAngleConfig; saved_cad_files?: string[] };
 type CadParameter = { name: string; feature: string; feature_type: string; value: number; display_value: number; unit: 'mm' | 'deg'; dimension_type: number };
 type CadSession = { session_id: string; title: string; document_type?: 'part' | 'assembly'; features: Array<{ name: string; type: string; type2: string }>; parameters: CadParameter[] };
-type DialogueMessage = { role: 'user' | 'assistant'; content: string };
+type DialogueImage = { name: string; base64: string; dataUrl: string };
+type DialogueMessage = { role: 'user' | 'assistant'; content: string; image?: DialogueImage };
 type AssistantProposal = { id: string; title: string; strategy: string; summary: string; rationale: string; steps: string[]; requires_new_file: boolean; approval: string };
-type AssistantContext = { cad_filename?: string; trace?: GeometryTraceData['trace']; surface_energy?: SurfaceEnergy[]; cad_parameters?: CadParameter[]; saved_cad_files?: string[] };
-type Result = { feasible?: boolean; currents_ma: number[]; tilt_deg?: number; operating_point: OperatingPoint; metrics?: Metrics; reference_road?: ReferenceRoad | null; photometric_profile?: PhotometricProfile; visual_grid?: VisualGrid; group_ldt?: LdtDiagnostic; luminaire_ldt?: LdtDiagnostic; reference_luminaire_ldt?: LdtDiagnostic | null; message?: string };
+type AssistantContext = { cad_filename?: string; trace?: GeometryTraceData['trace']; surface_energy?: SurfaceEnergy[]; selected_surface_index?: number; cad_parameters?: CadParameter[]; saved_cad_files?: string[] };
+type Result = { feasible?: boolean; currents_ma: number[]; tilt_deg?: number; operating_point: OperatingPoint; metrics?: Metrics; reference_road?: ReferenceRoad | null; photometric_profile?: PhotometricProfile; visual_grid?: VisualGrid; group_ldt?: LdtDiagnostic; luminaire_ldt?: LdtDiagnostic; luminaire_ldt_base64?: string; luminaire_ldt_metadata?: { name: string; flux_lm: number; power_w: number; group_angles_deg: number[] }; reference_luminaire_ldt?: LdtDiagnostic | null; message?: string };
 type DefaultResources = { cad: { name: string }; rayset: { name: string }; rtable: { name: string; base64: string } };
 
 const encodeFile = (file: File): Promise<FilePayload> => new Promise((resolve, reject) => {
@@ -70,19 +74,49 @@ function FileDrop({ label, hint, file, accept, onFile, defaultName }: { label: s
   </label>;
 }
 
-function OptimizerDialogue({ context }: { context: AssistantContext }) {
-  const [messages, setMessages] = useState<DialogueMessage[]>([{ role: 'assistant', content: 'Puedo ayudarte a discutir la estrategia óptica antes de modificar el CAD. El modelo original queda protegido.' }]);
+function OptimizerDialogue({ context, onExecuteProposal, executionState }: { context: AssistantContext; onExecuteProposal: (proposal: AssistantProposal) => Promise<string>; executionState: ActiveCalculation }) {
+  const [messages, setMessages] = useState<DialogueMessage[]>(() => {
+    const restored = restoreDialogueMessages();
+    return restored.length ? restored : [{ role: 'assistant', content: 'Selecciona una cara en el visor y usa una acción rápida para iniciar una prueba concreta. La geometría original queda protegida.' }];
+  });
   const [draft, setDraft] = useState('');
   const [proposal, setProposal] = useState<AssistantProposal | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [image, setImage] = useState<DialogueImage | null>(null);
+  const [workflowState, setWorkflowState] = useState<'ready' | 'proposal' | 'completed' | 'blocked'>('ready');
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const container = document.querySelector<HTMLElement>('.optimizer-dialogue .dialogue-messages');
+    if (container) container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
+  }, [messages.length, busy]);
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(DIALOGUE_STORAGE_KEY, JSON.stringify(messages.map(({ role, content }) => ({ role, content }))));
+    } catch {
+      // Conversation text remains available for the current session if storage is full or disabled.
+    }
+  }, [messages]);
+  const attachImage = (file: File) => {
+    if (!file.type.startsWith('image/')) { setError('El copiloto solo admite imágenes de croquis.'); return; }
+    if (file.size > 5 * 1024 * 1024) { setError('El croquis no puede superar 5 MB.'); return; }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const dataUrl = String(reader.result);
+      setImage({ name: file.name || 'croquis pegado.png', base64: dataUrl.split(',')[1] || '', dataUrl });
+      setError('');
+    };
+    reader.readAsDataURL(file);
+  };
 
   const sendMessage = async (value = draft) => {
-    const content = value.trim();
+    const attachedImage = image;
+    const content = value.trim() || (attachedImage ? `Croquis adjunto: ${attachedImage.name}` : '');
     if (!content || busy) return;
     setDraft('');
+    setImage(null);
     setError('');
-    setMessages(previous => [...previous, { role: 'user', content }]);
+    setMessages(previous => [...previous, { role: 'user', content, image: attachedImage || undefined }]);
     setBusy(true);
     try {
       const response = await fetch(`${API_URL}/api/optimizer/chat`, {
@@ -90,14 +124,17 @@ function OptimizerDialogue({ context }: { context: AssistantContext }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: content,
-          history: messages.slice(-20),
+          history: messages.slice(-20).map(item => ({ role: item.role, content: item.content })),
           context,
+          image_base64: attachedImage?.base64,
+          image_name: attachedImage?.name,
         }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || 'El diálogo no está disponible.');
       setMessages(previous => [...previous, { role: 'assistant', content: String(data.message || '') }]);
       setProposal(data.proposal || null);
+      setWorkflowState(data.proposal ? 'proposal' : 'ready');
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'No se pudo enviar el mensaje.');
     } finally {
@@ -105,17 +142,33 @@ function OptimizerDialogue({ context }: { context: AssistantContext }) {
     }
   };
 
+  const execute = async (approved: AssistantProposal) => {
+    setProposal(null);
+    setWorkflowState('ready');
+    setError('');
+    setMessages(previous => [...previous, { role: 'user', content: `Apruebo ejecutar: ${approved.title}.` }]);
+    setBusy(true);
+    try {
+      const completion = await onExecuteProposal(approved);
+      setMessages(previous => [...previous, { role: 'assistant', content: completion }]);
+      setWorkflowState('completed');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'No se pudo ejecutar la propuesta CAD.');
+      setWorkflowState('blocked');
+    } finally { setBusy(false); }
+  };
   const approve = () => {
     if (!proposal) return;
-    void sendMessage(`Apruebo la estrategia: ${proposal.title}.`);
-    setProposal(null);
+    void execute(proposal);
   };
 
   return <section className="optimizer-dialogue">
-    <div className="dialogue-head"><div><span className="eyebrow">COPILOTO ÓPTICO / DIÁLOGO</span><h3>Discutir la siguiente mejora</h3></div><small>sin cambios CAD automáticos</small></div>
-    <div className="dialogue-messages" aria-live="polite">{messages.map((item, index) => <div className={`dialogue-message ${item.role}`} key={`${item.role}-${index}`}><span>{item.role === 'assistant' ? 'OPTIMIZADOR' : 'TÚ'}</span><p>{item.content}</p></div>)}{busy && <div className="dialogue-message assistant"><span>OPTIMIZADOR</span><p className="dialogue-thinking">Analizando estrategia…</p></div>}</div>
-    {proposal && <div className="dialogue-proposal"><div className="dialogue-proposal-head"><span>PROPUESTA</span><b>{proposal.requires_new_file ? 'NUEVA CANDIDATA CAD' : 'SOLO DIAGNÓSTICO'}</b></div><h4>{proposal.title}</h4><p>{proposal.summary}</p><small>{proposal.rationale}</small><ol>{proposal.steps.map(step => <li key={step}>{step}</li>)}</ol><div className="dialogue-proposal-actions"><button type="button" onClick={approve}>APROBAR ESTRATEGIA</button><button type="button" onClick={() => setProposal(null)}>DESCARTAR</button></div></div>}
-    <div className="dialogue-composer"><textarea value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} placeholder="Ej.: quiero corregir la dirección de salida de la cara 7…" rows={2} /><button type="button" disabled={busy || !draft.trim()} onClick={() => void sendMessage()}>ENVIAR <span>→</span></button></div>
+    <div className="dialogue-head"><div><span className="eyebrow">COPILOTO ÓPTICO / DIÁLOGO</span><h3>Discutir la siguiente mejora</h3></div><small>aprobar ejecuta una candidata</small></div>
+    <div className={`dialogue-workflow ${executionState === 'autonomous' ? 'running' : workflowState}`}><div><strong>{executionState === 'autonomous' ? 'EJECUTANDO CANDIDATA CAD' : workflowState === 'proposal' ? 'PROPUESTA LISTA PARA EJECUTAR' : workflowState === 'completed' ? 'ÚLTIMA PRUEBA COMPLETADA' : workflowState === 'blocked' ? 'EJECUCIÓN BLOQUEADA' : 'EN ESPERA DE INSTRUCCIÓN'}</strong><span>{executionState === 'autonomous' ? 'SolidWorks está reconstruyendo, trazando rayos y optimizando la calzada.' : workflowState === 'proposal' ? 'La aplicación no calcula hasta ejecutar esta propuesta.' : workflowState === 'completed' ? 'Revisa ANTES/DESPUÉS o indica el siguiente cambio.' : workflowState === 'blocked' ? 'Revisa el aviso de error antes de proponer otra prueba.' : context.selected_surface_index == null ? 'Selecciona una cara en el visor o escribe una instrucción.' : `Cara ${context.selected_surface_index + 1} seleccionada. Esperando una acción.`}</span></div><button type="button" className="dialogue-run-proposal" disabled={busy || !proposal} title={proposal ? 'Ejecutar la propuesta actual' : 'Primero genera una propuesta con el copiloto'} onClick={() => void approve()}>{proposal ? 'EJECUTAR PRUEBA' : 'SIN PROPUESTA'} <span>→</span></button></div>
+    <div className="dialogue-messages" aria-live="polite">{messages.map((item, index) => <div className={`dialogue-message ${item.role}`} key={`${item.role}-${index}`}><span>{item.role === 'assistant' ? 'OPTIMIZADOR' : 'TÚ'}</span><p>{item.content}</p>{item.image && <img className="dialogue-image" src={item.image.dataUrl} alt={`Croquis adjunto: ${item.image.name}`} />}</div>)}{busy && <div className="dialogue-message assistant"><span>OPTIMIZADOR</span><p className="dialogue-thinking">Analizando estrategia…</p></div>}</div>
+    <div className="dialogue-quick-actions"><button type="button" disabled={busy} onClick={() => void sendMessage('¿Qué estás haciendo?')}>VER ESTADO</button><button type="button" disabled={busy} onClick={() => void sendMessage('Analiza la cara seleccionada')}>ANALIZAR CARA</button><button type="button" disabled={busy} onClick={() => void sendMessage('Prueba la cuña del croquis nuevo')}>PROBAR CUÑA</button><button type="button" disabled={busy} onClick={() => void sendMessage('Corregir salida hacia calzada')}>CORREGIR SALIDA</button></div>
+    {proposal && <div className="dialogue-proposal"><div className="dialogue-proposal-head"><span>PROPUESTA</span><b>{proposal.requires_new_file ? 'NUEVA CANDIDATA CAD' : 'SOLO DIAGNÓSTICO'}</b></div><h4>{proposal.title}</h4><p>{proposal.summary}</p><small>{proposal.rationale}</small><ol>{proposal.steps.map(step => <li key={step}>{step}</li>)}</ol><div className="dialogue-proposal-actions"><button type="button" disabled={busy} onClick={() => void approve()}>EJECUTAR PRUEBA</button><button type="button" disabled={busy} onClick={() => setProposal(null)}>DESCARTAR</button></div></div>}
+    <div className="dialogue-composer">{image && <div className="dialogue-image-preview"><img src={image.dataUrl} alt={`Croquis pendiente: ${image.name}`} /><span>{image.name}</span><button type="button" onClick={() => setImage(null)} aria-label="Quitar croquis">×</button></div>}<textarea value={draft} onPaste={event => { const file = Array.from(event.clipboardData.files).find(item => item.type.startsWith('image/')); if (file) { event.preventDefault(); attachImage(file); } }} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} placeholder="Ej.: prueba una cuña verde en la cara 7…" rows={2} /><input ref={imageInputRef} className="dialogue-image-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; if (file) attachImage(file); event.currentTarget.value = ''; }} /><button type="button" className="dialogue-attach" onClick={() => imageInputRef.current?.click()} disabled={busy}>ADJUNTAR CROQUIS</button><button type="button" disabled={busy || (!draft.trim() && !image)} onClick={() => void sendMessage()}>ENVIAR <span>→</span></button></div>
     {error && <p className="dialogue-error">{error}</p>}
   </section>;
 }
@@ -123,7 +176,7 @@ function OptimizerDialogue({ context }: { context: AssistantContext }) {
 function App() {
   const [ldt, setLdt] = useState<FilePayload>(null);
   const [luminaireMode, setLuminaireMode] = useState<LuminaireMode>('modular');
-  const [modelMode, setModelMode] = useState<'ldt' | 'geometry'>('ldt');
+  const [modelMode, setModelMode] = useState<'ldt' | 'geometry'>('geometry');
   const [stepFile, setStepFile] = useState<FilePayload>(null);
   const [raysetFile, setRaysetFile] = useState<FilePayload>(null);
   const [rayCount, setRayCount] = useState(10000);
@@ -160,6 +213,14 @@ function App() {
   const [cadSession, setCadSession] = useState<CadSession | null>(null);
   const [cadParameters, setCadParameters] = useState<CadParameter[]>([]);
   const [cadParameterValues, setCadParameterValues] = useState<Record<string, number>>({});
+  const [tracedCadParameterValues, setTracedCadParameterValues] = useState<Record<string, number>>({});
+  const [cadMeshPreview, setCadMeshPreview] = useState<CadMeshPreview | null>(null);
+  const [previousGeometryTrace, setPreviousGeometryTrace] = useState<GeometryTraceData | null>(null);
+  const [traceView, setTraceView] = useState<'current' | 'previous'>('current');
+  const [showMeshOverlay, setShowMeshOverlay] = useState(false);
+  const [copilotSurfaceIndex, setCopilotSurfaceIndex] = useState<number | null>(null);
+  const [autonomousRun, setAutonomousRun] = useState<AutonomousCadRun | null>(null);
+  const [solidworksSessionId, setSolidworksSessionId] = useState<string | null>(null);
   const [activePanel, setActivePanel] = useState<'model' | 'road' | 'groups'>('model');
   const [groupLdtDiagnostic, setGroupLdtDiagnostic] = useState<LdtDiagnostic | null>(null);
   const [referenceLdtDiagnostic, setReferenceLdtDiagnostic] = useState<LdtDiagnostic | null>(null);
@@ -174,6 +235,7 @@ function App() {
   const totalPower = result?.operating_point.total_driver_power_w;
   const groupFluxes = result?.operating_point.groups.map(group => group.group_flux_lm) ?? [];
   const maxGroupFlux = Math.max(...groupFluxes, 1);
+  const hasPendingCadChanges = cadParameters.some(parameter => (cadParameterValues[parameter.name] ?? parameter.display_value) !== (tracedCadParameterValues[parameter.name] ?? parameter.display_value));
 
   useEffect(() => {
     setCurrents(previous => Array.from({ length: moduleCount }, (_, index) => previous[index] ?? globalCurrent));
@@ -225,7 +287,42 @@ function App() {
     setStepFile(file);
     setCadParameters([]);
     setCadParameterValues({});
+    setTracedCadParameterValues({});
     setGeometryTrace(null);
+    setCadMeshPreview(null);
+    setPreviousGeometryTrace(null);
+    setTraceView('current');
+  };
+  const cadParameterPayload = (parameters: CadParameter[]) => Object.fromEntries(parameters.map(parameter => {
+    const displayValue = cadParameterValues[parameter.name] ?? parameter.display_value;
+    return [parameter.name, parameter.unit === 'mm' ? displayValue / 1000 : displayValue * Math.PI / 180];
+  }));
+  const previewCadGeometry = async () => {
+    if (!stepFile || !cadParameters.length) return;
+    setError('');
+    setActiveCalculation('trace');
+    let sessionId = '';
+    try {
+      const openResponse = await fetch(`${API_URL}/api/cad/open`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cad_base64: stepFile.base64, cad_filename: stepFile.name }),
+      });
+      const opened = await openResponse.json().catch(() => ({}));
+      if (!openResponse.ok) throw new Error(opened.detail || 'SolidWorks no pudo abrir el documento CAD.');
+      sessionId = opened.session_id;
+      const response = await fetch(`${API_URL}/api/cad/mesh`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId, parameter_values: cadParameterPayload(cadParameters) }),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.detail || 'No se pudo actualizar la geometría CAD en el visor.');
+      setCadMeshPreview(data);
+      setCadParameters(data.parameters || cadParameters);
+      setTraceView('current');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'No se pudo actualizar la geometría CAD.');
+    } finally {
+      if (sessionId) await fetch(`${API_URL}/api/cad/close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId, parameter_values: {} }) }).catch(() => undefined);
+      setActiveCalculation(null);
+    }
   };
   const runGeometryTrace = async () => {
     if (!stepFile) {
@@ -233,8 +330,16 @@ function App() {
       return;
     }
     setError(''); setActiveCalculation('trace');
+    const compareWithPreviousTrace = Boolean(geometryTrace && hasPendingCadChanges);
     let sessionId = '';
+    let keepSession = false;
     try {
+      const previousSessionIds = Array.from(new Set([solidworksSessionId, cadSession?.session_id].filter((value): value is string => Boolean(value))));
+      for (const previousSessionId of previousSessionIds) {
+        await fetch(`${API_URL}/api/cad/close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: previousSessionId, parameter_values: {} }) }).catch(() => undefined);
+      }
+      setSolidworksSessionId(null);
+      setCadSession(null);
       const openResponse = await fetch(`${API_URL}/api/cad/open`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -247,10 +352,8 @@ function App() {
        const openedParameters: CadParameter[] = opened.parameters || [];
        setCadParameters(openedParameters);
        if (!Object.keys(cadParameterValues).length) setCadParameterValues(Object.fromEntries(openedParameters.map(parameter => [parameter.name, parameter.display_value])));
-       const parameterValues = Object.fromEntries(openedParameters.map(parameter => {
-         const displayValue = cadParameterValues[parameter.name] ?? parameter.display_value;
-         return [parameter.name, parameter.unit === 'mm' ? displayValue / 1000 : displayValue * Math.PI / 180];
-       }));
+        const parameterValues = cadParameterPayload(openedParameters);
+        const appliedDisplayValues = Object.fromEntries(openedParameters.map(parameter => [parameter.name, cadParameterValues[parameter.name] ?? parameter.display_value]));
        const response = await fetch(`${API_URL}/api/cad/preview`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -268,7 +371,13 @@ function App() {
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || 'El trazado geométrico ha fallado.');
       if (!data.preview_geometry_mesh || !Array.isArray(data.preview_rays_detail)) throw new Error('El backend está desactualizado. Cierra y vuelve a arrancar luminaria_optimizer.');
-      setGeometryTrace(data);
+       if (compareWithPreviousTrace && geometryTrace) setPreviousGeometryTrace(geometryTrace);
+        setGeometryTrace(data);
+        setCadMeshPreview(null);
+        setTracedCadParameterValues(appliedDisplayValues);
+        setTraceView('current');
+        keepSession = true;
+        setSolidworksSessionId(sessionId);
       if (typeof data.trace?.led_count === 'number' && data.trace.led_count >= 1) {
         setLedsPerModule(data.trace.led_count);
         if (data.trace.led_count === 1) setLuminaireMode('fixed');
@@ -279,32 +388,35 @@ function App() {
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'No se pudo calcular la lente.');
     } finally {
-      if (sessionId) {
+      if (sessionId && !keepSession) {
         await fetch(`${API_URL}/api/cad/close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: sessionId, parameter_values: {} }) }).catch(() => undefined);
+        setSolidworksSessionId(null);
+        setCadSession(null);
       }
-      setCadSession(null);
       setActiveCalculation(null);
     }
   };
-  const requestBody = () => {
-    if (!ldt || !rtable) throw new Error('Carga el LDT del grupo y una tabla R/C2 antes de calcular.');
-    if (luminaireMode === 'modular' && ledsPerModule !== 3) throw new Error('La optimización angular de grupos requiere la lente de grupo con 3 LED. F2M2 corresponde a la luminaria clásica.');
+  const requestBody = (groupLdtBase64 = ldt?.base64, activeRtable = rtable, detected?: { luminaireMode: LuminaireMode; ledsPerModule: number }) => {
+    if (!groupLdtBase64 || !activeRtable) throw new Error('Carga el LDT del grupo y una tabla R/C2 antes de calcular.');
+    const effectiveLuminaireMode = detected?.luminaireMode ?? luminaireMode;
+    const effectiveLedsPerModule = detected?.ledsPerModule ?? ledsPerModule;
+    if (effectiveLuminaireMode === 'modular' && effectiveLedsPerModule !== 3) throw new Error('La optimización angular de grupos requiere la lente de grupo con 3 LED. F2M2 corresponde a la luminaria clásica.');
     return {
-      group_ldt_base64: ldt.base64,
+      group_ldt_base64: groupLdtBase64,
       reference_luminaire_ldt_base64: referenceLdt?.base64 || null,
-      rtable_base64: rtable.base64,
+      rtable_base64: activeRtable.base64,
       rtable_name: rtableName,
       reference_group_flux_lm: groupLdtDiagnostic?.flux_lm || 897.81,
       reference_cct_k: 4000,
       reference_cri: 70,
       cct_k: cct,
       cri,
-      luminaire_mode: luminaireMode,
+      luminaire_mode: effectiveLuminaireMode,
       global_current_ma: globalCurrent,
-      leds_per_group: ledsPerModule,
-      module_count: luminaireMode === 'fixed' ? 1 : moduleCount,
-      module_angle_step_deg: luminaireMode === 'fixed' ? 180 : moduleAngleStep,
-      currents_ma: luminaireMode === 'fixed' ? [globalCurrent] : currents,
+      leds_per_group: effectiveLedsPerModule,
+      module_count: effectiveLuminaireMode === 'fixed' ? 1 : moduleCount,
+      module_angle_step_deg: effectiveLuminaireMode === 'fixed' ? 180 : moduleAngleStep,
+      currents_ma: effectiveLuminaireMode === 'fixed' ? [globalCurrent] : currents,
       ambient_temperature_c: ambient,
       ts_coefficient_c_per_w: tsCoefficient,
       driver_efficiency: driverEfficiency,
@@ -318,10 +430,88 @@ function App() {
       lane_widths_m: laneWidths,
       arrangement,
       optimization_mode: optimizationMode,
-      photometry_symmetry: 'asymmetric',
+      photometry_symmetry: optimizationMode === 'symmetric' && effectiveLuminaireMode === 'modular' ? 'symmetric' : 'asymmetric',
       maintenance_factor: maintenance,
       lighting_class: lightingClass,
     };
+  };
+  const runAutonomousDesign = async (proposal?: AssistantProposal): Promise<string> => {
+    if (!stepFile) throw new Error('Carga el CAD antes de iniciar la optimización autogestionada.');
+    setError(''); setActiveCalculation('autonomous');
+    try {
+      if (solidworksSessionId) {
+        await fetch(`${API_URL}/api/cad/close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: solidworksSessionId, parameter_values: {} }) }).catch(() => undefined);
+        setSolidworksSessionId(null);
+      }
+      let activeRtable = rtable;
+      if (!activeRtable) {
+        const defaults = await fetch(`${API_URL}/api/default-resources`);
+        const resources = await defaults.json().catch(() => ({}));
+        if (!defaults.ok || !resources.rtable?.base64) throw new Error('No se pudo cargar automáticamente la tabla C2 necesaria para optimizar la calzada.');
+        activeRtable = { name: resources.rtable.name, base64: resources.rtable.base64 };
+        setRtable(activeRtable);
+        setRtableName('C2');
+      }
+      const exploration = await fetch(`${API_URL}/api/cad/optimize-road-target`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+          cad_base64: stepFile.base64,
+          cad_filename: stepFile.name,
+          lens_index: lensIndex,
+          height_m: height,
+          carriageway_width_m: width * lanes,
+           edge_offset_m: edgeOffset,
+           focus_recent_feature: proposal?.strategy === 'wedge_surface_trial' || proposal?.strategy === 'face_alignment',
+           show_in_solidworks: true,
+           keep_solidworks_open: true,
+         }),
+      });
+      const data = await exploration.json().catch(() => ({}));
+      if (!exploration.ok) throw new Error(data.detail || 'No se pudo completar la exploración autónoma del CAD.');
+      const autonomous = data as AutonomousCadRun;
+      setSolidworksSessionId(autonomous.solidworks_session_id ?? null);
+      const detectedLedCount = autonomous.geometry_trace.trace.led_count;
+      const detectedLuminaireMode: LuminaireMode = detectedLedCount === 1 ? 'fixed' : detectedLedCount === 3 ? 'modular' : luminaireMode;
+      setPreviousGeometryTrace(geometryTrace || autonomous.baseline_geometry_trace);
+      setGeometryTrace(autonomous.geometry_trace);
+      if (detectedLedCount >= 1) setLedsPerModule(detectedLedCount);
+      setLuminaireMode(detectedLuminaireMode);
+      setLdt({ name: 'LDT generado por optimización autogestionada', base64: autonomous.geometry_trace.ldt_base64 });
+      setGroupLdtDiagnostic(autonomous.geometry_trace.ldt);
+      setAutonomousRun(autonomous);
+      setCadMeshPreview(null);
+      setTraceView('current');
+      setShowMeshOverlay(false);
+      const calculationBody = requestBody(autonomous.geometry_trace.ldt_base64, activeRtable, { luminaireMode: detectedLuminaireMode, ledsPerModule: detectedLedCount });
+      const optimization = await fetch(`${API_URL}/api/optimize`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(calculationBody),
+      });
+      const optimized = await optimization.json().catch(() => ({}));
+      if (!optimization.ok) {
+        const fallback = await fetch(`${API_URL}/api/road/calculate`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(calculationBody),
+        });
+        const evaluated = await fallback.json().catch(() => ({}));
+        if (!fallback.ok) throw new Error(`${optimized.detail || 'No se pudo optimizar la calzada.'} Tampoco se pudo evaluar la candidata: ${evaluated.detail || 'error desconocido'}.`);
+        setResult(evaluated);
+        setActivePanel('road');
+        return `${autonomous.objective.improved ? 'La candidata CAD se calculó correctamente.' : 'La lente base se calculó correctamente.'} La optimización de corrientes no terminó (${optimized.detail || 'error no especificado'}), pero muestro el LDT de luminaria y los mapas con las corrientes actuales.`;
+      }
+      setResult(optimized);
+      if (optimized.currents_ma) setCurrents(optimized.currents_ma);
+      if (typeof optimized.tilt_deg === 'number') setTilt(optimized.tilt_deg);
+      setActivePanel('road');
+      const change = autonomous.objective.improved
+        ? `Acepté una candidata con dirección hacia calzada de ${(autonomous.objective.baseline_score * 100).toFixed(1)} a ${(autonomous.objective.best_score * 100).toFixed(1)} puntos.`
+        : 'Ninguna candidata superó la lente base; mantengo el diseño original.';
+      const wedgeLimit = proposal?.strategy === 'wedge_surface_trial'
+        ? ' La prueba ha priorizado las cotas del feature más reciente del SLDPRT, donde está definida la cuña añadida.'
+        : '';
+      return `${change} SolidWorks permanece abierto con la mejor candidata aplicada. He recalculado el LDT y optimizado Uo/Ul y la escala de corrientes. Revisa ANTES/DESPUÉS en el visor.${wedgeLimit}`;
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'No se pudo completar la optimización autogestionada.';
+      setError(message);
+      throw new Error(message);
+    } finally { setActiveCalculation(null); }
   };
 
   const run = async (endpoint: string, event?: FormEvent) => {
@@ -357,12 +547,12 @@ function App() {
 
   return <main className="app-shell" style={{ '--module-count': moduleCount } as CSSProperties}>
     <header className="topbar">
-      <div className="brand"><span className="brand-mark">S</span><span><strong>SALVI</strong><small>LUMINAIRE OPTIMIZER</small></span></div>
+      <div className="brand"><span className="brand-mark" aria-hidden="true">S</span><span><strong>SALVI</strong><small>LIGHTING / LUMINAIRE OPTIMIZER</small></span></div>
        <div className="topbar-meta"><span className="status-dot" /> MODELO HL2X / {moduleCount} MÓDULOS <i>v0.1</i></div>
     </header>
     <div className="page-grid">
       <section className="hero">
-        <p className="eyebrow">OPTICAL CONTROL SYSTEM / 01</p>
+        <p className="eyebrow">SALVI ENGINEERING TOOLS / 01</p>
         <h1>Diseña la luminaria<br /><em>desde la calzada.</em></h1>
          <p className="hero-copy">Optimización fotométrica de módulos HL2X repetibles con corriente independiente, para geometrías viarias de baja altura.</p>
          <div className="hero-stats"><div><strong>{moduleCount}</strong><span>módulos ópticos</span></div><div><strong>50</strong><span>mA por paso</span></div><div><strong>2.0</strong><span>A máximo</span></div></div>
@@ -373,15 +563,20 @@ function App() {
           <button type="button" className={activePanel === 'road' ? 'active' : ''} onClick={() => setActivePanel('road')}><b>02</b> Calzada</button>
           <button type="button" className={activePanel === 'groups' ? 'active' : ''} onClick={() => setActivePanel('groups')}><b>03</b> Corrientes</button>
         </nav>
+        <div className={`calculation-state${busy ? ' running' : result ? ' complete' : ''}`}><strong>{busy ? 'CÁLCULO EN CURSO' : result ? 'RESULTADO VIAL DISPONIBLE' : 'SIN RESULTADO VIAL'}</strong><span>{busy ? 'La aplicación está procesando CAD, LDT o calzada. No cierres esta pantalla.' : result ? `Lavg ${format(result.metrics?.lavg_cd_m2, 2)} cd/m² · Uo ${format(result.metrics?.uo, 2)} · Ul ${format(result.metrics?.ul, 2)}` : 'Calcula un LDT desde la lente y después evalúa el perfil u optimiza lente y calzada.'}</span></div>
+        {error && <div className="error-banner calculation-error" role="alert">{error}</div>}
             {activePanel === 'model' && <section className="panel-content">
              <div className="section-heading"><div><p className="eyebrow">BASE FOTOMÉTRICA</p><h2>Modelo de referencia</h2></div><span className="tag">HL2X / 3535</span></div>
              <div className="model-mode" role="group" aria-label="Modo de entrada del modelo"><button type="button" className={modelMode === 'geometry' ? 'active' : ''} onClick={() => setModelMode('geometry')}>Calcular desde CAD nativo</button><button type="button" className={modelMode === 'ldt' ? 'active' : ''} onClick={() => setModelMode('ldt')}>Usar LDT</button></div>
            {modelMode === 'ldt' ? <div className="file-grid"><FileDrop label="LDT del grupo" hint="LED(s) + lente / EULUMDAT" file={ldt} accept=".ldt" onFile={handleLdt} /><FileDrop label="LDT completo de referencia" hint="Luminaria completa / DIALux" file={referenceLdt} accept=".ldt" onFile={handleReferenceLdt} /></div> : <>
             <div className="file-grid"><FileDrop label="CAD nativo: lente + LED(s)" hint="SLDPRT, SLDASM o ZIP/RAR" file={stepFile} accept=".sldprt,.sldasm,.zip,.rar" onFile={handleStepFile} /><FileDrop label="Ray file TM-25" hint="fuente LED / .tm25ray" file={raysetFile} defaultName={DEFAULT_RAYSET_NAME} accept=".tm25ray,.tm25,.ray" onFile={setRaysetFile} /></div>
                 <div className="geometry-controls"><label className="field"><span>Rayos calculados por LED</span><select value={rayCount} onChange={event => setRayCount(Number(event.target.value))}><option value={10000}>10.000 · rápido</option><option value={100000}>100.000 · validación</option><option value={1000000}>1.000.000 · LDT final</option><option value={5000000}>5.000.000 · máxima precisión</option></select></label><NumberField label="Índice de refracción" value={lensIndex} onChange={setLensIndex} suffix="n" step={0.001} min={1.0} max={3.0} /><div><p className="geometry-note">Teselación nativa SolidWorks · Embree · sin STEP intermedio · visor hasta {MAX_PREVIEW_RAYS.toLocaleString('es-ES')}</p><button type="button" className="geometry-run" onClick={runGeometryTrace} disabled={busy}>{activeCalculation === 'trace' ? 'Abriendo CAD y trazando…' : 'Calcular LDT desde la lente'} <span>→</span></button></div></div>
-               {cadParameters.length > 0 && <div className="cad-parameter-editor"><div className="cad-parameter-heading"><span>PARÁMETROS CAD DETECTADOS</span><small>los valores se introducen en {cadParameters[0]?.unit === 'deg' ? 'grados o mm según cada campo' : 'mm y grados según cada campo'} · el original no se sobrescribe</small></div><div className="cad-parameter-grid">{cadParameters.map(parameter => <label key={parameter.name}><span>{parameter.name}</span><small>{parameter.feature}</small><div><input type="number" step="any" value={cadParameterValues[parameter.name] ?? parameter.display_value} onChange={event => setCadParameterValues(previous => ({ ...previous, [parameter.name]: Number(event.target.value) }))} /><b>{parameter.unit}</b></div></label>)}</div><p className="geometry-note">Modifica un parámetro y vuelve a calcular. Cada geometría trazada se guardará como una nueva candidata histórica.</p></div>}
-              {geometryTrace && <GeometryTraceView data={geometryTrace} />}
-              <OptimizerDialogue context={{ cad_filename: stepFile?.name, trace: geometryTrace?.trace, surface_energy: geometryTrace?.trace.surface_energy, cad_parameters: cadParameters, saved_cad_files: geometryTrace?.saved_cad_files }} />
+                <section className="autonomous-design"><div><span>OPTIMIZACIÓN AUTOGESTIONADA</span><h3>Forma óptica → LDT → calzada</h3><p>Analiza variaciones CAD, conserva la mejor distribución hacia la calzada y después maximiza Uo y Ul antes de escalar corrientes para alcanzar la luminancia requerida.</p></div><div className="autonomous-actions"><button type="button" onClick={() => void runAutonomousDesign().catch(() => undefined)} disabled={busy}>{activeCalculation === 'autonomous' ? 'Analizando candidatas…' : 'Optimizar lente y calzada'} <span>→</span></button><small>Exploración interactiva: hasta 8 candidatas de 500 rayos · validación: 20.000 rayos</small></div></section>
+                {autonomousRun && <div className={`autonomous-history${autonomousRun.objective.improved ? '' : ' unchanged'}`}><div><strong>{autonomousRun.objective.improved ? 'CANDIDATA MEJORADA ACEPTADA' : 'LA LENTE BASE SIGUE SIENDO LA MEJOR'}</strong><small>Dirección hacia calzada: {(autonomousRun.objective.baseline_score * 100).toFixed(1)} → {(autonomousRun.objective.best_score * 100).toFixed(1)} · transmisión: {autonomousRun.objective.baseline_transmission_pct.toFixed(1)}% → {autonomousRun.objective.best_transmission_pct.toFixed(1)}%</small></div><span>{autonomousRun.history.filter(item => item.accepted).length} mejoras en {autonomousRun.history.length} pruebas</span></div>}
+                {autonomousRun && result?.luminaire_ldt_metadata && <div className="autonomous-luminaire-ldt"><strong>LDT DE LUMINARIA CALCULADO</strong><span>{result.luminaire_ldt_metadata.name} · {result.luminaire_ldt_metadata.flux_lm.toFixed(0)} lm · {result.luminaire_ldt_metadata.power_w.toFixed(1)} W · {result.currents_ma.length} corrientes optimizadas</span></div>}
+                {autonomousRun?.save_warning && <p className="autonomous-save-warning">La candidata se calculó y se muestra en el visor, pero SolidWorks no pudo guardar su copia nativa: {autonomousRun.save_warning}</p>}
+                {geometryTrace && <GeometryTraceView data={traceView === 'previous' && previousGeometryTrace ? previousGeometryTrace : geometryTrace} meshPreview={cadMeshPreview} comparisonData={showMeshOverlay && traceView === 'current' ? previousGeometryTrace : null} comparisonRayLimit={previousGeometryTrace ? Math.min(previousGeometryTrace.preview_rays_detail?.length || 0, geometryTrace.preview_rays_detail?.length || 0) : undefined} rayComparisonTone={previousGeometryTrace ? traceView === 'previous' ? 'before' : autonomousRun?.objective.improved ? 'after' : 'default' : 'default'} comparisonView={previousGeometryTrace && !cadMeshPreview ? traceView : undefined} showMeshOverlay={showMeshOverlay} onComparisonViewChange={view => { setTraceView(view); if (view === 'previous') setShowMeshOverlay(false); }} onMeshOverlayChange={() => { setTraceView('current'); setShowMeshOverlay(value => !value); }} onSurfaceChange={setCopilotSurfaceIndex} />}
+               <OptimizerDialogue context={{ cad_filename: stepFile?.name, trace: geometryTrace?.trace, surface_energy: geometryTrace?.trace.surface_energy, selected_surface_index: copilotSurfaceIndex ?? undefined, cad_parameters: cadParameters, saved_cad_files: geometryTrace?.saved_cad_files }} onExecuteProposal={runAutonomousDesign} executionState={activeCalculation} />
               {geometryTrace?.saved_cad_files && <div className="cad-save-log"><span>HISTORIAL CAD GUARDADO</span>{geometryTrace.saved_cad_files.map(path => <small key={path}>{path.split('\\').pop()}</small>)}</div>}
                {geometryTrace && <LdtDiagnostics title="LDT CALCULADO / LED(S) + LENTE" diagnostic={geometryTrace.ldt} showPlaneProfiles />}
            </>}
@@ -394,23 +589,24 @@ function App() {
         {activePanel === 'road' && <section className="panel-content">
           <div className="section-heading"><div><p className="eyebrow">ESCENARIO VIAL</p><h2>Geometría de cálculo</h2></div><span className="tag">EN 13201 / M</span></div>
           <div className="field-grid three"><NumberField label="Altura fotométrica" value={height} onChange={setHeight} suffix="m" step={0.05} min={0.5} max={5} /><NumberField label="Interdistancia" value={spacing} onChange={setSpacing} suffix="m" step={0.5} min={1} max={40} /><NumberField label="Anchura de carril" value={width} onChange={setWidth} suffix="m" step={0.1} min={2} max={8} /></div>
-           <div className="field-grid three"><NumberField label="Offset desde el canto" value={edgeOffset} onChange={setEdgeOffset} suffix="m" step={0.1} min={0} max={5} /><NumberField label="Tilt LDT luminaria" value={tilt} onChange={setTilt} suffix="°" step={0.5} min={-10} max={10} /><div className="mode-field road-mode-field"><span>Distribución de corrientes</span><div className="mode-toggle" role="group" aria-label="Modo de optimización"><button type="button" className={optimizationMode === 'independent' ? 'active' : ''} onClick={() => setOptimizationMode('independent')}>Independiente</button><button type="button" className={optimizationMode === 'symmetric' ? 'active' : ''} onClick={() => setOptimizationMode('symmetric')}>Simétrico</button></div><small>Simétrico impone G1=G8, G2=G7, G3=G6 y G4=G5.</small></div></div>
+           <div className="field-grid three"><NumberField label="Offset desde el canto" value={edgeOffset} onChange={setEdgeOffset} suffix="m" step={0.1} min={0} max={5} /><NumberField label="Tilt LDT luminaria" value={tilt} onChange={setTilt} suffix="°" step={0.5} min={-10} max={10} /><div className="mode-field road-mode-field"><span>Distribución de grupos</span><div className="mode-toggle" role="group" aria-label="Modo de optimización"><button type="button" className={optimizationMode === 'independent' ? 'active' : ''} onClick={() => setOptimizationMode('independent')}>Independiente</button><button type="button" className={optimizationMode === 'symmetric' ? 'active' : ''} onClick={() => setOptimizationMode('symmetric')}>Simétrico</button></div><small>Simétrico impone G1=G8, G2=G7, G3=G6 y G4=G5 y refleja la fotometría calculada.</small></div></div>
           <div className="file-grid"><FileDrop label="Tabla de reflexión" hint="R1, R2, R3, R4 o C2" file={rtable} accept=".rtb,.txt" onFile={setRtable} /></div>
           <div className="field-grid three"><label className="field"><span>Tabla activa</span><select value={rtableName} onChange={event => setRtableName(event.target.value)}><option value="C2">C2 rasante</option><option value="R1">R1</option><option value="R2">R2</option><option value="R3">R3</option><option value="R4">R4</option></select></label><label className="field"><span>Carriles</span><select value={lanes} onChange={event => setLanes(Number(event.target.value))}>{[1, 2, 3, 4].map(value => <option key={value} value={value}>{value}</option>)}</select></label><label className="field"><span>Disposición</span><select value={arrangement} onChange={event => setArrangement(event.target.value)}><option value="unilateral">Unilateral</option><option value="bilateral_paired">Bilateral pareada</option><option value="bilateral_staggered">Bilateral tresbolillo</option></select></label></div>
-          <div className="field-grid three"><label className="field"><span>Clase luminotécnica</span><select value={lightingClass} onChange={event => setLightingClass(event.target.value)}>{['M1', 'M2', 'M3', 'M4', 'M5', 'M6'].map(value => <option key={value}>{value}</option>)}</select></label></div>
-          <RoadAnimation width={width * lanes} height={height} spacing={spacing} edgeOffset={edgeOffset} arrangement={arrangement} />
-           <p className="note"><span>i</span> Las luminarias opuestas se giran 180° y utilizan el mismo perfil de {moduleCount} corrientes.</p>
+           <div className="field-grid three"><label className="field"><span>Clase luminotécnica</span><select value={lightingClass} onChange={event => setLightingClass(event.target.value)}>{['M1', 'M2', 'M3', 'M4', 'M5', 'M6'].map(value => <option key={value}>{value}</option>)}</select></label></div>
+           <RoadAnimation width={width * lanes} height={height} spacing={spacing} edgeOffset={edgeOffset} arrangement={arrangement} />
+           {result?.metrics && <section className="road-optimization-summary"><div><strong>ÚLTIMO CÁLCULO VIAL</strong><small>{result.metrics.compliant ? 'CONFORME' : 'REVISAR CRITERIOS'} · clase {lightingClass}</small></div><div className="road-summary-metrics"><span>Lavg <b>{format(result.metrics.lavg_cd_m2, 2)} cd/m²</b></span><span>Uo <b>{format(result.metrics.uo, 2)}</b></span><span>Ul <b>{format(result.metrics.ul, 2)}</b></span><span>TI <b>{format(result.metrics.ti_pct, 1)}%</b></span></div><small>Calculado con {result.currents_ma.length} corrientes y LDT de luminaria {result.luminaire_ldt_metadata ? 'compuesto' : 'disponible en diagnóstico'}.</small></section>}
+            <p className="note"><span>i</span> Las luminarias opuestas se giran 180° y utilizan el mismo perfil de {moduleCount} corrientes.</p>
         </section>}
           {activePanel === 'groups' && <section className="panel-content">
             <div className="section-heading"><div><p className="eyebrow">PERFIL DE CONTROL</p><h2>Corriente por grupo</h2></div><span className="tag">0 — 2000 mA</span></div>
              <div className="model-mode" role="group" aria-label="Modo de luminaria"><button type="button" className={luminaireMode === 'modular' ? 'active' : ''} onClick={() => setLuminaireMode('modular')}>Lentes orientadas</button><button type="button" className={luminaireMode === 'fixed' ? 'active' : ''} onClick={() => setLuminaireMode('fixed')}>Luminaria clásica</button></div>
-             {luminaireMode === 'modular' ? <>
-               <div className="field-grid three module-controls"><NumberField label="Número de módulos" value={moduleCount} onChange={setModuleCount} suffix="uds" step={1} min={1} max={32} /><NumberField label="Separación angular" value={moduleAngleStep} onChange={setModuleAngleStep} suffix="°" step={0.1} min={0.1} max={180 / moduleCount} /><div className="module-summary"><span>Último centro</span><strong>{moduleAngles[moduleAngles.length - 1]?.toFixed(2) ?? '—'}° C</strong><small>rango útil C0 — C180</small></div></div>
-               <div className="group-list">{moduleAngles.map((angle, index) => <div className="group-row" key={`group-${index}`}><div className="group-index">G{String(index + 1).padStart(2, '0')}</div><div className="group-angle"><strong>{angle.toFixed(2)}°</strong><small>azimut C</small></div><input className="range" type="range" min={0} max={2000} step={1} value={currents[index] ?? 700} onChange={event => updateCurrent(index, Number(event.target.value))} /><input className="current-select" type="number" min={0} max={2000} step={1} value={currents[index] ?? 700} onChange={event => updateCurrent(index, Number(event.target.value))} /><span className="group-flow">{result ? `${format(result.operating_point.groups[index]?.group_flux_lm, 0)} lm` : '—'}</span></div>)}</div>
+              {luminaireMode === 'modular' ? <>
+                <div className="field-grid three module-controls"><NumberField label="Número de módulos" value={moduleCount} onChange={setModuleCount} suffix="uds" step={1} min={1} max={32} /><NumberField label="Separación angular" value={moduleAngleStep} onChange={setModuleAngleStep} suffix="°" step={0.1} min={0.1} max={180 / moduleCount} /><div className="module-summary"><span>Último centro</span><strong>{moduleAngles[moduleAngles.length - 1]?.toFixed(2) ?? '—'}° C</strong><small>rango útil C0 — C180</small></div></div>
+                {result && <div className="current-optimization-summary"><strong>CORRIENTES OPTIMIZADAS APLICADAS</strong><span>{result.currents_ma.map((current, index) => `G${index + 1} ${format(current, 0)} mA`).join(' · ')}</span><small>Perfil elegido para maximizar Uo/Ul y escalado después para Lavg.</small></div>}
+                <div className="group-list">{moduleAngles.map((angle, index) => <div className="group-row" key={`group-${index}`}><div className="group-index">G{String(index + 1).padStart(2, '0')}</div><div className="group-angle"><strong>{angle.toFixed(2)}°</strong><small>azimut C</small></div><input className="range" type="range" min={0} max={2000} step={1} value={currents[index] ?? 700} onChange={event => updateCurrent(index, Number(event.target.value))} /><input className="current-select" type="number" min={0} max={2000} step={1} value={currents[index] ?? 700} onChange={event => updateCurrent(index, Number(event.target.value))} /><span className="group-flow">{result ? `${format(result.operating_point.groups[index]?.group_flux_lm, 0)} lm` : '—'}</span></div>)}</div>
                <button className="equalize" type="button" onClick={() => setCurrents(Array(moduleCount).fill(currents[0] ?? 700))}>Igualar los {moduleCount} módulos</button>
              </> : <div className="fixed-current"><NumberField label="Corriente global" value={globalCurrent} onChange={setGlobalCurrent} suffix="mA" step={1} min={0} max={2000} /><p className="note"><span>i</span> La luminaria fija usa una única orientación y una corriente común. Su fotometría normalizada se conserva sin recomponer grupos.</p></div>}
         </section>}
-        {error && <div className="error-banner" role="alert">{error}</div>}
         <div className="action-bar"><button className="secondary-button" type="button" onClick={() => run('/api/road/calculate')} disabled={busy}>{activeCalculation === 'evaluate' ? 'Calculando…' : 'Evaluar perfil'}</button><button className="primary-button" type="button" onClick={() => run('/api/optimize')} disabled={busy}>{activeCalculation === 'optimize' ? 'Optimizando…' : 'Optimizar corrientes'} <span>→</span></button></div>
       </form>
     </div>
@@ -434,6 +630,20 @@ function Metric({ label, value }: { label: string; value: string }) { return <di
 const RAY_STATUS_LABELS: Record<PreviewRayStatus, string> = { transmitted: 'Transmitido', missed: 'No interceptado', untransmitted: 'No transmitido' };
 const RAY_STATUS_COLORS: Record<PreviewRayStatus, string> = { transmitted: '#b9e77a', missed: '#879a91', untransmitted: '#ef7348' };
 const LED_COLORS = ['#68d8ff', '#f4c95d', '#d995ff'];
+const DIALOGUE_STORAGE_KEY = 'salvi-luminaria-optimizer-dialogue-v1';
+
+function restoreDialogueMessages(): DialogueMessage[] {
+  try {
+    const stored = window.localStorage.getItem(DIALOGUE_STORAGE_KEY);
+    const parsed = stored ? JSON.parse(stored) : null;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((item): item is DialogueMessage => (
+      item && (item.role === 'user' || item.role === 'assistant') && typeof item.content === 'string'
+    ));
+  } catch {
+    return [];
+  }
+}
 
 function disposeThreeObject(object: THREE.Object3D) {
   object.traverse(child => {
@@ -545,14 +755,44 @@ function GeometryPhotometricPanel({ data, selectedRay, onSelectRay }: { data: Ge
   </section>;
 }
 
-function calculateSurfaceCollimation(details: PreviewRay[], surfaceLabels: string[], targetDirection: THREE.Vector3): SurfaceCollimation[] {
-  const surfaceIndices = [...new Set(details.map(ray => ray.entry_surface_index).filter((index): index is number => index != null))].sort((a, b) => a - b);
+function surfaceEnergyForLedSelection(trace: GeometryTraceData['trace'], ledSelection: LedSelection): { inputFluxLm: number; records: SurfaceEnergy[] } {
+  const byLed = trace.surface_energy_by_led;
+  if (!byLed?.length) return { inputFluxLm: trace.input_flux_lm, records: trace.surface_energy ?? [] };
+  const selected = ledSelection === 'all' ? byLed : byLed.filter(item => item.led_index === ledSelection);
+  const inputFluxLm = selected.reduce((sum, item) => sum + item.input_flux_lm, 0);
+  const totals = new Map<number, { entry: number; tir: number; exit: number }>();
+  selected.forEach(item => item.surface_energy.forEach(record => {
+    const total = totals.get(record.surface_index) || { entry: 0, tir: 0, exit: 0 };
+    total.entry += record.entry_flux_lm;
+    total.tir += record.tir_flux_lm;
+    total.exit += record.exit_flux_lm;
+    totals.set(record.surface_index, total);
+  }));
+  return {
+    inputFluxLm,
+    records: [...totals.entries()].map(([surface_index, total]) => ({
+      surface_index,
+      entry_flux_lm: total.entry,
+      tir_flux_lm: total.tir,
+      exit_flux_lm: total.exit,
+      entry_pct: inputFluxLm ? total.entry / inputFluxLm * 100 : 0,
+      tir_pct: inputFluxLm ? total.tir / inputFluxLm * 100 : 0,
+      exit_pct: inputFluxLm ? total.exit / inputFluxLm * 100 : 0,
+    })),
+  };
+}
+
+function calculateSurfaceCollimation(details: PreviewRay[], surfaceLabels: string[], targetDirection: THREE.Vector3, surfaceCount = 0, surfaceEnergy: SurfaceEnergy[] = []): SurfaceCollimation[] {
+  const detectedSurfaceCount = details.reduce((count, ray) => Math.max(count, ray.entry_surface_index == null ? 0 : ray.entry_surface_index + 1), 0);
+  const totalSurfaceCount = Math.max(surfaceCount, surfaceLabels.length, detectedSurfaceCount);
+  const surfaceIndices = Array.from({ length: totalSurfaceCount }, (_, index) => index);
   return surfaceIndices.map(surfaceIndex => {
     const samples = details.filter(ray => ray.status === 'transmitted' && ray.entry_surface_index === surfaceIndex && ray.direction_xyz?.length === 3).map(ray => {
       const direction = new THREE.Vector3(...(ray.direction_xyz as number[])).normalize();
       return { direction, weight: Math.max(ray.transmitted_power_lm, 1e-9) };
     });
-    if (!samples.length) return { surfaceIndex, label: surfaceLabels[surfaceIndex] || `Superficie ${surfaceIndex + 1}`, rayCount: 0, meanC: 0, meanGamma: 0, meanTargetDeg: 0, targetRmsDeg: 0, targetP95Deg: 0 };
+    const energy = surfaceEnergy.find(item => item.surface_index === surfaceIndex) || null;
+    if (!samples.length) return { surfaceIndex, label: surfaceLabels[surfaceIndex] || `Superficie ${surfaceIndex + 1}`, rayCount: 0, meanC: 0, meanGamma: 0, meanTargetDeg: 0, targetRmsDeg: 0, targetP95Deg: 0, energy };
     const mean = samples.reduce((sum, sample) => sum.addScaledVector(sample.direction, sample.weight), new THREE.Vector3()).normalize();
     const totalWeight = samples.reduce((sum, sample) => sum + sample.weight, 0);
     const deviations = samples.map(sample => ({ angle: Math.acos(THREE.MathUtils.clamp(sample.direction.dot(targetDirection), -1, 1)) * 180 / Math.PI, weight: sample.weight })).sort((a, b) => a.angle - b.angle);
@@ -569,16 +809,19 @@ function calculateSurfaceCollimation(details: PreviewRay[], surfaceLabels: strin
       meanTargetDeg,
       targetRmsDeg,
       targetP95Deg,
+      energy,
     };
   });
 }
 
-function GeometryTraceView({ data }: { data: GeometryTraceData }) {
+function GeometryTraceView({ data, meshPreview, comparisonData, comparisonRayLimit, rayComparisonTone = 'default', comparisonView, showMeshOverlay, onComparisonViewChange, onMeshOverlayChange, onSurfaceChange }: { data: GeometryTraceData; meshPreview?: CadMeshPreview | null; comparisonData?: GeometryTraceData | null; comparisonRayLimit?: number; rayComparisonTone?: 'before' | 'after' | 'default'; comparisonView?: 'current' | 'previous'; showMeshOverlay?: boolean; onComparisonViewChange?: (view: 'current' | 'previous') => void; onMeshOverlayChange?: () => void; onSurfaceChange?: (surfaceIndex: number | null) => void }) {
   const details = data.preview_rays_detail ?? [];
-  const [rayLimit, setRayLimit] = useState(Math.min(5000, details.length || 5000));
+  const isCadPreview = Boolean(meshPreview);
+  const [rayLimit, setRayLimit] = useState(Math.min(100, details.length || 100));
   const [colorMode, setColorMode] = useState<'status' | 'led'>('status');
   const [ledSelection, setLedSelection] = useState<LedSelection>('all');
   const [selectedSurfaceIndex, setSelectedSurfaceIndex] = useState<number | null>(null);
+  const [selectedSurfaceIndices, setSelectedSurfaceIndices] = useState<number[]>([]);
   const [statusVisibility, setStatusVisibility] = useState<Record<PreviewRayStatus, boolean>>({ transmitted: true, missed: true, untransmitted: true });
   const [showRays, setShowRays] = useState(true);
   const [showLens, setShowLens] = useState(true);
@@ -605,22 +848,27 @@ function GeometryTraceView({ data }: { data: GeometryTraceData }) {
   const selectedGroupRef = useRef<THREE.Group | null>(null);
   const selectedRayIndexRef = useRef<number | null>(null);
   const selectedSurfaceIndexRef = useRef<number | null>(null);
+  const selectedSurfaceIndicesRef = useRef<number[]>([]);
   const rebuildRaysRef = useRef<() => void>(() => undefined);
   const rebuildSurfaceRef = useRef<() => void>(() => undefined);
   const rebuildSelectedRef = useRef<() => void>(() => undefined);
   const resetViewRef = useRef<() => void>(() => undefined);
-  const settingsRef = useRef({ rayLimit, colorMode, ledSelection, surfaceIndex: selectedSurfaceIndex, statusVisibility, showRays });
+  const cameraPoseRef = useRef<{ position: THREE.Vector3; target: THREE.Vector3; up: THREE.Vector3 } | null>(null);
+  const settingsRef = useRef({ rayLimit, colorMode, ledSelection, surfaceIndices: selectedSurfaceIndices, statusVisibility, showRays });
   const selectedRay = selectedRayIndex == null ? null : details[selectedRayIndex] || null;
-  const maxRayCount = details.length;
+  const maxRayCount = Math.min(details.length, comparisonRayLimit ?? details.length);
   const rayOptions = [...new Set([100, 500, 1000, 2500, 5000, 10000, 20000].filter(value => value < maxRayCount).concat(maxRayCount > 0 ? [maxRayCount] : []))].sort((a, b) => a - b);
   selectedRayIndexRef.current = selectedRayIndex;
   selectedSurfaceIndexRef.current = selectedSurfaceIndex;
+  selectedSurfaceIndicesRef.current = selectedSurfaceIndices;
 
   useEffect(() => {
-    setRayLimit(Math.min(5000, details.length || 5000));
     setSelectedRayIndex(null);
-    setSelectedSurfaceIndex(null);
   }, [data]);
+
+  useEffect(() => {
+    if (isCadPreview) setShowRays(false);
+  }, [isCadPreview]);
 
   useEffect(() => {
     const handleFullscreen = () => setIsFullscreen(document.fullscreenElement === viewerSectionRef.current);
@@ -630,11 +878,11 @@ function GeometryTraceView({ data }: { data: GeometryTraceData }) {
 
   useEffect(() => {
     const container = canvasRef.current;
-    const meshPayload = data.preview_geometry_mesh;
+     const meshPayload = meshPreview?.preview_geometry_mesh ?? data.preview_geometry_mesh;
     if (!container || !meshPayload) return undefined;
     const scene = new THREE.Scene();
     scene.background = new THREE.Color('#102d28');
-    const camera = new THREE.PerspectiveCamera(42, 1, 0.01, 1000);
+     const camera = new THREE.PerspectiveCamera(30, 1, 0.01, 1000);
     camera.up.set(0, 0, 1);
     const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -678,8 +926,18 @@ function GeometryTraceView({ data }: { data: GeometryTraceData }) {
     lensGroup.add(lensMesh);
     lensMesh.userData.surfaceIds = meshPayload.lens.surface_ids || [];
     lensMeshRef.current = lensMesh;
-    const lensEdges = new THREE.LineSegments(new THREE.EdgesGeometry(lensMesh.geometry, 24), new THREE.LineBasicMaterial({ color: '#dcebd7', transparent: true, opacity: .34 }));
-    lensGroup.add(lensEdges);
+     const lensEdges = new THREE.LineSegments(new THREE.EdgesGeometry(lensMesh.geometry, 24), new THREE.LineBasicMaterial({ color: '#dcebd7', transparent: true, opacity: .34 }));
+     lensGroup.add(lensEdges);
+     const comparisonLens = comparisonData?.preview_geometry_mesh?.lens;
+     if (comparisonLens?.vertices.length && comparisonLens.faces.length) {
+       const comparisonGeometry = new THREE.BufferGeometry();
+       comparisonGeometry.setAttribute('position', new THREE.Float32BufferAttribute(comparisonLens.vertices.flat(), 3));
+       comparisonGeometry.setIndex(comparisonLens.faces.flat());
+       const comparisonEdges = new THREE.LineSegments(new THREE.EdgesGeometry(comparisonGeometry, 24), new THREE.LineBasicMaterial({ color: '#d84638', transparent: true, opacity: .92, depthTest: false }));
+       comparisonEdges.renderOrder = 15;
+       scene.add(comparisonEdges);
+       comparisonGeometry.dispose();
+     }
     const surfaceHighlight = new THREE.Group();
     scene.add(surfaceHighlight);
     surfaceHighlightRef.current = surfaceHighlight;
@@ -728,7 +986,7 @@ function GeometryTraceView({ data }: { data: GeometryTraceData }) {
        const radius = Math.max(size.x, size.y, size.z, 1);
        modelCenter.copy(center);
        modelRadius = radius;
-      camera.position.copy(center).add(new THREE.Vector3(radius * 1.65, -radius * 1.75, radius * 1.2));
+       camera.position.copy(center).add(new THREE.Vector3(radius * 2.4, -radius * 2.55, radius * 1.75));
        camera.near = radius / 100;
        camera.far = radius * 30;
        camera.updateProjectionMatrix();
@@ -737,12 +995,21 @@ function GeometryTraceView({ data }: { data: GeometryTraceData }) {
        controls.update();
        controls.saveState();
      };
-     resetViewRef.current = fitView;
-     fitView();
+      resetViewRef.current = fitView;
+      fitView();
+      const savedPose = cameraPoseRef.current;
+      if (savedPose) {
+        camera.position.copy(savedPose.position);
+        camera.up.copy(savedPose.up);
+        controls.target.copy(savedPose.target);
+        camera.lookAt(controls.target);
+        controls.update();
+        controls.saveState();
+      }
      viewAxisRef.current = (axis: ViewAxis) => {
        const direction = axis === 'x' ? new THREE.Vector3(1, 0, 0) : axis === 'y' ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, 1);
        const targetUp = axis === 'z' ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, 1);
-        const targetPosition = modelCenter.clone().add(direction.multiplyScalar(modelRadius * 2.8));
+         const targetPosition = modelCenter.clone().add(direction.multiplyScalar(modelRadius * 4.0));
         const targetCamera = new THREE.Object3D();
         targetCamera.position.copy(targetPosition);
         targetCamera.up.copy(targetUp);
@@ -780,9 +1047,10 @@ function GeometryTraceView({ data }: { data: GeometryTraceData }) {
         const exit = ray.exit_xyz ? new THREE.Vector3(...ray.exit_xyz) : null;
         const reflections = (ray.reflection_points_xyz || []).map(point => new THREE.Vector3(...point));
         const activeColorMode = settingsRef.current.colorMode;
-        const base = highlight ? new THREE.Color('#ffffff') : new THREE.Color(activeColorMode === 'led' ? LED_COLORS[ray.led_index % LED_COLORS.length] : (RAY_STATUS_COLORS[ray.status] || '#879a91'));
-        const incoming = highlight ? base : new THREE.Color(activeColorMode === 'led' ? LED_COLORS[ray.led_index % LED_COLORS.length] : '#68d8ff');
-        const internal = highlight ? base : new THREE.Color(ray.tir && activeColorMode === 'status' ? '#f4c95d' : base);
+         const comparisonColor = rayComparisonTone === 'before' ? '#d84638' : rayComparisonTone === 'after' ? '#f4c95d' : null;
+         const base = highlight ? new THREE.Color('#ffffff') : new THREE.Color(comparisonColor || (activeColorMode === 'led' ? LED_COLORS[ray.led_index % LED_COLORS.length] : (RAY_STATUS_COLORS[ray.status] || '#879a91')));
+         const incoming = highlight || comparisonColor ? base : new THREE.Color(activeColorMode === 'led' ? LED_COLORS[ray.led_index % LED_COLORS.length] : '#68d8ff');
+         const internal = highlight || comparisonColor ? base : new THREE.Color(ray.tir && activeColorMode === 'status' ? '#f4c95d' : base);
         if (!entry) {
            addSegment(origin, origin.clone().add(inputDirection.clone().multiplyScalar(rayLength)), base, index);
            return;
@@ -812,10 +1080,10 @@ function GeometryTraceView({ data }: { data: GeometryTraceData }) {
     };
     const rebuildSurface = () => {
       clearGroup(surfaceHighlight);
-      const surfaceIndex = selectedSurfaceIndexRef.current;
+      const surfaceIndices = selectedSurfaceIndicesRef.current;
       const surfaceIds = meshPayload.lens.surface_ids || [];
-      if (surfaceIndex == null || !surfaceIds.length) return;
-      const faces = meshPayload.lens.faces.filter((_, index) => surfaceIds[index] === surfaceIndex);
+      if (!surfaceIndices.length || !surfaceIds.length) return;
+      const faces = meshPayload.lens.faces.filter((_, index) => surfaceIndices.includes(surfaceIds[index]));
       if (!faces.length) return;
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.Float32BufferAttribute(meshPayload.lens.vertices.flat(), 3));
@@ -826,8 +1094,8 @@ function GeometryTraceView({ data }: { data: GeometryTraceData }) {
     const rebuildRays = () => {
       clearGroup(rayGroup);
       if (!settingsRef.current.showRays) return;
-      const surfaceIndex = settingsRef.current.surfaceIndex;
-      const records = details.map((ray, index) => ({ ray, index })).filter(({ ray }) => (settingsRef.current.ledSelection === 'all' || ray.led_index === settingsRef.current.ledSelection) && (surfaceIndex == null || ray.entry_surface_index === surfaceIndex || ray.exit_surface_index === surfaceIndex || ray.reflection_surface_indices.includes(surfaceIndex)) && settingsRef.current.statusVisibility[ray.status]).slice(0, settingsRef.current.rayLimit);
+       const surfaceIndices = settingsRef.current.surfaceIndices;
+        const records = details.map((ray, index) => ({ ray, index })).filter(({ ray }) => (settingsRef.current.ledSelection === 'all' || ray.led_index === settingsRef.current.ledSelection) && (!surfaceIndices.length || surfaceIndices.some(surfaceIndex => ray.entry_surface_index === surfaceIndex || ray.exit_surface_index === surfaceIndex || ray.reflection_surface_indices.includes(surfaceIndex))) && settingsRef.current.statusVisibility[ray.status]).slice(0, Math.min(settingsRef.current.rayLimit, comparisonRayLimit ?? settingsRef.current.rayLimit));
       if (records.length) rayGroup.add(buildLine(records));
     };
     const rebuildSelected = () => {
@@ -857,12 +1125,24 @@ function GeometryTraceView({ data }: { data: GeometryTraceData }) {
        const surfaceFaceIndex = surfaceHit?.faceIndex;
        const surfaceId = surfaceFaceIndex == null ? null : surfaceIds?.[surfaceFaceIndex] ?? null;
        const surfaceIsUnderCursor = surfaceId != null && (!hit || surfaceHit.distance <= hit.distance || event.shiftKey);
-       if (surfaceIsUnderCursor) {
-         setSelectedSurfaceIndex(surfaceId);
-         setSelectedRayIndex(null);
-         return;
-       }
-       if (selectedSurfaceIndexRef.current != null) setSelectedSurfaceIndex(null);
+        if (surfaceIsUnderCursor) {
+           const current = selectedSurfaceIndicesRef.current;
+           const next = event.ctrlKey || event.metaKey
+             ? current.includes(surfaceId) ? current.filter(index => index !== surfaceId) : [...current, surfaceId]
+             : [surfaceId];
+           selectedSurfaceIndicesRef.current = next;
+           setSelectedSurfaceIndices(next);
+           setSelectedSurfaceIndex(next[0] ?? null);
+            onSurfaceChange?.(next[0] ?? null);
+          setSelectedRayIndex(null);
+          return;
+        }
+        if (selectedSurfaceIndicesRef.current.length) {
+          selectedSurfaceIndicesRef.current = [];
+          setSelectedSurfaceIndices([]);
+          setSelectedSurfaceIndex(null);
+          onSurfaceChange?.(null);
+        }
        if (!hit || hit.index == null) {
          setSelectedRayIndex(null);
          return;
@@ -910,6 +1190,7 @@ function GeometryTraceView({ data }: { data: GeometryTraceData }) {
     };
     animate();
     return () => {
+      cameraPoseRef.current = { position: camera.position.clone(), target: controls.target.clone(), up: camera.up.clone() };
       window.cancelAnimationFrame(animationFrame);
        observer.disconnect();
        renderer.domElement.removeEventListener('pointerdown', handleControlPointerDown, true);
@@ -931,32 +1212,92 @@ function GeometryTraceView({ data }: { data: GeometryTraceData }) {
        viewAxisRef.current = () => undefined;
        viewAnimationRef.current = null;
      };
-  }, [data]);
+   }, [data, meshPreview, comparisonData, comparisonRayLimit, rayComparisonTone]);
 
   useEffect(() => {
-    settingsRef.current = { rayLimit, colorMode, ledSelection, surfaceIndex: selectedSurfaceIndex, statusVisibility, showRays };
+      settingsRef.current = { rayLimit, colorMode, ledSelection, surfaceIndices: selectedSurfaceIndices, statusVisibility, showRays: showRays && !isCadPreview };
     if (lensGroupRef.current) lensGroupRef.current.visible = showLens;
     if (ledGroupRef.current) ledGroupRef.current.visible = showLeds;
     if (gridRef.current) gridRef.current.visible = showGrid;
     if (axesRef.current) axesRef.current.visible = showAxes;
     const surfaceIndex = selectedSurfaceIndex;
-    const selectedSurfaceMatches = surfaceIndex == null || Boolean(selectedRay && (selectedRay.entry_surface_index === surfaceIndex || selectedRay.exit_surface_index === surfaceIndex || selectedRay.reflection_surface_indices.includes(surfaceIndex)));
+     const selectedSurfaceMatches = !selectedSurfaceIndices.length || Boolean(selectedRay && selectedSurfaceIndices.some(index => selectedRay.entry_surface_index === index || selectedRay.exit_surface_index === index || selectedRay.reflection_surface_indices.includes(index)));
     if (selectedGroupRef.current) selectedGroupRef.current.visible = showRays && Boolean(selectedRay) && (ledSelection === 'all' || selectedRay?.led_index === ledSelection) && selectedSurfaceMatches && Boolean(selectedRay && statusVisibility[selectedRay.status]);
     rebuildRaysRef.current();
     rebuildSurfaceRef.current();
-  }, [rayLimit, colorMode, ledSelection, selectedSurfaceIndex, statusVisibility, showRays, showLens, showLeds, showGrid, showAxes, selectedRay]);
+    }, [rayLimit, colorMode, ledSelection, selectedSurfaceIndex, selectedSurfaceIndices, statusVisibility, showRays, showLens, showLeds, showGrid, showAxes, selectedRay, isCadPreview]);
 
   useEffect(() => { rebuildSelectedRef.current(); }, [selectedRayIndex]);
 
   const toggleStatus = (status: PreviewRayStatus) => setStatusVisibility(previous => ({ ...previous, [status]: !previous[status] }));
-  const selectedCount = details.filter(ray => (ledSelection === 'all' || ray.led_index === ledSelection) && (selectedSurfaceIndex == null || ray.entry_surface_index === selectedSurfaceIndex || ray.exit_surface_index === selectedSurfaceIndex || ray.reflection_surface_indices.includes(selectedSurfaceIndex)) && statusVisibility[ray.status]).length;
+  const selectedCount = details.filter(ray => (ledSelection === 'all' || ray.led_index === ledSelection) && (!selectedSurfaceIndices.length || selectedSurfaceIndices.some(surfaceIndex => ray.entry_surface_index === surfaceIndex || ray.exit_surface_index === surfaceIndex || ray.reflection_surface_indices.includes(surfaceIndex))) && statusVisibility[ray.status]).length;
   const ledCounts = [0, 1, 2].map(index => details.filter(ray => ray.led_index === index).length);
   const surfaceLabels = data.preview_geometry_mesh?.lens.surface_labels ?? [];
-  const surfaceCollimation = useMemo(() => calculateSurfaceCollimation(details, surfaceLabels, OUTPUT_TARGET_DIRECTION), [details, surfaceLabels]);
-  const selectedSurfaceLabel = selectedSurfaceIndex == null ? '' : surfaceLabels[selectedSurfaceIndex] || `Superficie ${selectedSurfaceIndex + 1}`;
+  const activeSurfaceEnergy = useMemo(() => surfaceEnergyForLedSelection(data.trace, ledSelection), [data.trace, ledSelection]);
+  const surfaceCollimation = useMemo(() => calculateSurfaceCollimation(details, surfaceLabels, OUTPUT_TARGET_DIRECTION, data.geometry.lens_faces, activeSurfaceEnergy.records), [details, surfaceLabels, data.geometry.lens_faces, activeSurfaceEnergy.records]);
+  const selectedSurfaceLabel = selectedSurfaceIndices.length ? selectedSurfaceIndices.map(index => surfaceLabels[index] || `Superficie ${index + 1}`).join(' + ') : '';
   const selectedSurfaceEnergy = selectedSurfaceIndex == null ? null : data.trace.surface_energy?.find(item => item.surface_index === selectedSurfaceIndex) || null;
-  const selectedSurfaceRayCount = selectedSurfaceIndex == null ? 0 : details.filter(ray => ray.entry_surface_index === selectedSurfaceIndex || ray.exit_surface_index === selectedSurfaceIndex || ray.reflection_surface_indices.includes(selectedSurfaceIndex)).length;
-  const clearSurfaceFilter = () => { setSelectedSurfaceIndex(null); setSelectedRayIndex(null); };
+  const selectedSurfaceRayCount = selectedSurfaceIndices.length ? details.filter(ray => selectedSurfaceIndices.some(surfaceIndex => ray.entry_surface_index === surfaceIndex || ray.exit_surface_index === surfaceIndex || ray.reflection_surface_indices.includes(surfaceIndex))).length : 0;
+  useEffect(() => {
+    if (selectedSurfaceIndex == null && selectedSurfaceIndices.length) {
+      selectedSurfaceIndicesRef.current = [];
+      setSelectedSurfaceIndices([]);
+    }
+  }, [selectedSurfaceIndex, selectedSurfaceIndices.length]);
+  useEffect(() => {
+    const viewer = viewerSectionRef.current;
+    if (!viewer) return undefined;
+    const cards = () => Array.from(viewer.querySelectorAll<HTMLElement>('.geometry-collimation-card'));
+    const selectCardSurface = (card: HTMLElement, additive: boolean) => {
+      const surface = surfaceCollimation[cards().indexOf(card)];
+      if (!surface) return;
+      const current = selectedSurfaceIndicesRef.current;
+      const next = additive
+        ? current.includes(surface.surfaceIndex) ? current.filter(index => index !== surface.surfaceIndex) : [...current, surface.surfaceIndex]
+        : [surface.surfaceIndex];
+      selectedSurfaceIndicesRef.current = next;
+      setSelectedSurfaceIndices(next);
+      setSelectedSurfaceIndex(next[0] ?? null);
+      setSelectedRayIndex(null);
+      onSurfaceChange?.(next[0] ?? null);
+    };
+    const handleCardClick = (event: MouseEvent) => {
+      const target = event.target instanceof Element ? event.target.closest<HTMLElement>('.geometry-collimation-card') : null;
+      if (target) selectCardSurface(target, event.ctrlKey || event.metaKey);
+    };
+    const handleCardKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      const target = event.target instanceof Element ? event.target.closest<HTMLElement>('.geometry-collimation-card') : null;
+      if (!target) return;
+      event.preventDefault();
+      selectCardSurface(target, event.ctrlKey || event.metaKey);
+    };
+    cards().forEach(card => {
+      const surface = surfaceCollimation[cards().indexOf(card)];
+      card.setAttribute('role', 'button');
+      card.setAttribute('tabindex', '0');
+      card.setAttribute('aria-pressed', String(surface != null && selectedSurfaceIndices.includes(surface.surfaceIndex)));
+      card.classList.toggle('selected', surface != null && selectedSurfaceIndices.includes(surface.surfaceIndex));
+      let flow = card.querySelector<HTMLElement>('.geometry-surface-flow');
+      if (!flow) {
+        flow = document.createElement('small');
+        flow.className = 'geometry-surface-flow';
+        card.appendChild(flow);
+      }
+      const energy = surface?.energy;
+      const incoming = energy?.entry_flux_lm || 0;
+      flow.textContent = energy && incoming > 0
+        ? `Entrada ${incoming.toFixed(1)} lm · ${energy.entry_pct.toFixed(1)}% total · TIR ${((energy.tir_flux_lm / incoming) * 100).toFixed(1)}% · salida ${((energy.exit_flux_lm / incoming) * 100).toFixed(1)}% de entrada`
+        : 'Sin flujo incidente registrado en esta cara';
+    });
+    viewer.addEventListener('click', handleCardClick);
+    viewer.addEventListener('keydown', handleCardKeyDown);
+    return () => {
+      viewer.removeEventListener('click', handleCardClick);
+      viewer.removeEventListener('keydown', handleCardKeyDown);
+    };
+  }, [surfaceCollimation, selectedSurfaceIndex, selectedSurfaceIndices, onSurfaceChange]);
+   const clearSurfaceFilter = () => { selectedSurfaceIndicesRef.current = []; setSelectedSurfaceIndices([]); setSelectedSurfaceIndex(null); setSelectedRayIndex(null); onSurfaceChange?.(null); };
   const startPanelResize = (event: PointerEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -978,15 +1319,13 @@ function GeometryTraceView({ data }: { data: GeometryTraceData }) {
   };
   return <section ref={viewerSectionRef} className={`geometry-preview${expanded ? ' geometry-preview-expanded' : ''}`}>
      <div className="geometry-emission-frame"><span>MARCO EMISOR DETECTADO</span>{data.geometry.led_emission_faces?.map((face, index) => <small key={index}>LED {index + 1} · cara {face + 1} · normal ({data.geometry.led_emission_normals?.[index]?.map(value => value.toFixed(2)).join(', ') || '—'})</small>)}</div>
-     <div className="geometry-entry-diagnostic"><span>INCIDENCIA EN LA ENTRADA</span>{data.trace.surface_energy?.filter(item => item.entry_flux_lm > 0).map(item => <small key={item.surface_index}>cara {item.surface_index + 1} · media {item.entry_incidence_mean_deg?.toFixed(1) ?? '—'}° · máximo {item.entry_incidence_max_deg?.toFixed(1) ?? '—'}°</small>)}</div>
-     <div className="geometry-preview-head"><div><span>VISOR 3D / GEOMETRÍA + RAYOS</span><small>{data.trace.traced_ray_count.toLocaleString('es-ES')} trazados · {details.length.toLocaleString('es-ES')} cargados · coordenadas mm{selectedSurfaceLabel ? ` · cara: ${selectedSurfaceLabel}` : ''}</small></div><div className="geometry-head-actions">{selectedSurfaceIndex != null && <button type="button" className="geometry-reset geometry-show-all" onClick={clearSurfaceFilter}>VER TODOS LOS RAYOS</button>}<button type="button" className="geometry-reset" onClick={() => setShowAnglePanel(value => !value)}>{showAnglePanel ? 'OCULTAR INFO' : 'MOSTRAR INFO'}</button><button type="button" className="geometry-reset" onClick={() => setExpanded(value => !value)}>{expanded ? 'CERRAR VISOR GRANDE' : 'VISOR GRANDE'}</button><button type="button" className="geometry-reset" onClick={toggleFullscreen}>{isFullscreen ? 'SALIR PANTALLA' : 'PANTALLA COMPLETA'}</button><button type="button" className="geometry-reset" onClick={() => resetViewRef.current()}>VISTA INICIAL</button></div></div>
-      <div className={`geometry-view-layout${showAnglePanel ? '' : ' geometry-view-layout-no-panel'}`} style={{ '--geometry-side-width': `${sidePanelWidth}px` } as CSSProperties}><div ref={canvasRef} className="geometry-canvas" role="img" aria-label="Visor 3D de lente, LED y rayos"><div className="geometry-axis-actions"><span>VISTAS</span><button type="button" onClick={() => viewAxisRef.current('x')} title="Vista sobre el eje X">X</button><button type="button" onClick={() => viewAxisRef.current('y')} title="Vista sobre el eje Y">Y</button><button type="button" onClick={() => viewAxisRef.current('z')} title="Vista sobre el eje Z">Z</button></div><div className="geometry-canvas-help"><strong>NAVEGACIÓN CAD</strong> · BOTÓN CENTRAL: ORBITAR · CTRL + CENTRAL: DESPLAZAR · RUEDA: ZOOM · CLIC IZQUIERDO: SELECCIONAR · DOBLE CLIC: ENFOCAR</div></div>{showAnglePanel && <button type="button" className="geometry-panel-resizer" aria-label="Redimensionar panel de información" onPointerDown={startPanelResize} onPointerMove={movePanelResize} onPointerUp={stopPanelResize}><span /></button>}{showAnglePanel && <GeometryAnglePanel data={data} ray={selectedRay} rayIndex={selectedRayIndex} onSelectRay={index => { const ray = details[index]; if (!ray) return; setStatusVisibility(previous => ({ ...previous, [ray.status]: true })); setLedSelection('all'); setShowRays(true); setSelectedSurfaceIndex(null); setSelectedRayIndex(index); }} />}</div>
-     <div className="geometry-view-controls"><label><span>LED visible</span><select value={ledSelection} onChange={event => setLedSelection(event.target.value === 'all' ? 'all' : Number(event.target.value) as 0 | 1 | 2)}><option value="all">Todos los LED ({details.length.toLocaleString('es-ES')})</option><option value="0">LED 1 ({ledCounts[0].toLocaleString('es-ES')})</option><option value="1">LED 2 ({ledCounts[1].toLocaleString('es-ES')})</option><option value="2">LED 3 ({ledCounts[2].toLocaleString('es-ES')})</option></select></label><label><span>Rayos visibles</span><select value={Math.min(rayLimit, maxRayCount || rayLimit)} disabled={!maxRayCount} onChange={event => setRayLimit(Number(event.target.value))}>{rayOptions.map(value => <option key={value} value={value}>{value.toLocaleString('es-ES')}</option>)}</select></label><label><span>Color por</span><select value={colorMode} onChange={event => setColorMode(event.target.value as 'status' | 'led')}><option value="status">Estado óptico</option><option value="led">LED de origen</option></select></label><label className="geometry-check"><input type="checkbox" checked={showRays} onChange={event => setShowRays(event.target.checked)} /> rayos</label><label className="geometry-check"><input type="checkbox" checked={showLens} onChange={event => setShowLens(event.target.checked)} /> lente</label><label className="geometry-check"><input type="checkbox" checked={showLeds} onChange={event => setShowLeds(event.target.checked)} /> LED</label><label className="geometry-check"><input type="checkbox" checked={showGrid} onChange={event => setShowGrid(event.target.checked)} /> rejilla</label><label className="geometry-check"><input type="checkbox" checked={showAxes} onChange={event => setShowAxes(event.target.checked)} /> ejes</label></div>
-     <div className="geometry-collimation"><div className="geometry-collimation-heading"><span>PARALELISMO DE SALIDA POR CARA DE ENTRADA</span><small>objetivo: +Y y {OUTPUT_TILT_DEG.toFixed(1)}° hacia +Z · muestra transmitida</small></div>{surfaceCollimation.length ? <div className="geometry-collimation-grid">{surfaceCollimation.map(surface => <div className={`geometry-collimation-card${surface.meanTargetDeg <= 2 ? ' good' : surface.meanTargetDeg <= 5 ? ' caution' : ''}`} key={surface.surfaceIndex}><strong>{surface.label}</strong><small>{surface.rayCount.toLocaleString('es-ES')} rayos · C medio {surface.meanC.toFixed(1)}° · gamma {surface.meanGamma.toFixed(1)}°</small><b>Error medio {surface.meanTargetDeg.toFixed(2)}° · RMS {surface.targetRmsDeg.toFixed(2)}° · P95 {surface.targetP95Deg.toFixed(2)}°</b></div>)}</div> : <p>Sin rayos transmitidos con cara de entrada identificada.</p>}</div>
-     <div className={`geometry-inspection${selectedSurfaceIndex == null ? ' geometry-inspection-empty' : ''}`}><div className="geometry-inspection-title"><span>INSPECCIÓN DE SUPERFICIE</span><strong>{selectedSurfaceLabel || 'Ninguna cara seleccionada'}</strong><small>{selectedSurfaceLabel ? 'Rayos que entran, salen o rebotan por TIR en esta cara' : 'Haz clic sobre una cara de la lente para ver su flujo'}</small></div>{selectedSurfaceEnergy ? <div className="geometry-energy-grid"><div><span>ENTRADA</span><strong>{selectedSurfaceEnergy.entry_pct.toFixed(2)}%</strong><small>{selectedSurfaceEnergy.entry_flux_lm.toFixed(2)} lm · flujo que llega a la cara</small></div><div><span>TIR</span><strong>{selectedSurfaceEnergy.tir_pct.toFixed(2)}%</strong><small>{selectedSurfaceEnergy.tir_flux_lm.toFixed(2)} lm · rebote interno</small></div><div><span>SALIDA</span><strong>{selectedSurfaceEnergy.exit_pct.toFixed(2)}%</strong><small>{selectedSurfaceEnergy.exit_flux_lm.toFixed(2)} lm · flujo que sale</small></div></div> : selectedSurfaceLabel ? <div className="geometry-energy-empty">Sin interacción energética registrada en esta cara.</div> : null}<div className="geometry-inspection-actions">{selectedSurfaceIndex != null && <span>{selectedSurfaceRayCount.toLocaleString('es-ES')} rayos de la muestra tocan esta cara</span>}<button type="button" disabled={selectedSurfaceIndex == null} onClick={clearSurfaceFilter}>LIMPIAR SELECCIÓN</button></div></div>
-      <div className="geometry-color-legend"><span>Color: {colorMode === 'status' ? 'estado óptico' : 'LED de origen'}</span>{colorMode === 'status' ? (Object.keys(RAY_STATUS_LABELS) as PreviewRayStatus[]).map(status => <span key={status}><i style={{ background: RAY_STATUS_COLORS[status] }} />{RAY_STATUS_LABELS[status]}</span>) : LED_COLORS.map((color, index) => <span key={color}><i style={{ background: color }} />LED {index + 1}</span>)}</div>
-      <div className="geometry-status-filters">{(Object.keys(RAY_STATUS_LABELS) as PreviewRayStatus[]).map(status => <label key={status}><input type="checkbox" checked={statusVisibility[status]} onChange={() => toggleStatus(status)} /><i style={{ background: RAY_STATUS_COLORS[status] }} />{RAY_STATUS_LABELS[status]} <small>{data.trace.preview_status_counts?.[status] ?? 0}</small></label>)}<span>{Math.min(rayLimit, selectedCount).toLocaleString('es-ES')} visibles activos</span></div>
-    <div className="geometry-stats"><span><b>{data.geometry.lens_triangles?.toLocaleString('es-ES') || '—'}</b> triángulos lente</span><span><b>{data.trace.transmission_pct.toFixed(2)}%</b> transmisión</span><span><b>{data.trace.total_internal_reflection_count.toLocaleString('es-ES')}</b> TIR</span><span><b>{data.ldt.peak_c_deg?.toFixed(0) ?? '—'}° / {data.ldt.peak_gamma_deg?.toFixed(0) ?? '—'}°</b> pico C / gamma</span></div>
+     {!isCadPreview && <div className="geometry-entry-diagnostic"><span>INCIDENCIA EN LA ENTRADA</span>{data.trace.surface_energy?.filter(item => item.entry_flux_lm > 0).map(item => <small key={item.surface_index}>cara {item.surface_index + 1} · media {item.entry_incidence_mean_deg?.toFixed(1) ?? '—'}° · máximo {item.entry_incidence_max_deg?.toFixed(1) ?? '—'}°</small>)}</div>}
+     <div className="geometry-preview-head"><div><span>{isCadPreview ? 'VISOR 3D / CANDIDATO CAD' : 'VISOR 3D / GEOMETRÍA + RAYOS'}</span><small>{isCadPreview ? 'Malla CAD actualizada con las nuevas cotas · los rayos se ocultaron hasta ejecutar el ray tracing.' : `${data.trace.traced_ray_count.toLocaleString('es-ES')} trazados · ${details.length.toLocaleString('es-ES')} cargados · coordenadas mm${selectedSurfaceLabel ? ` · cara: ${selectedSurfaceLabel}` : ''}`}</small></div><div className="geometry-head-actions">{!isCadPreview && selectedSurfaceIndex != null && <button type="button" className="geometry-reset geometry-show-all" onClick={clearSurfaceFilter}>VER TODOS LOS RAYOS</button>}<button type="button" className="geometry-reset" onClick={() => setShowAnglePanel(value => !value)}>{showAnglePanel ? 'OCULTAR INFO' : 'MOSTRAR INFO'}</button><button type="button" className="geometry-reset" onClick={() => setExpanded(value => !value)}>{expanded ? 'CERRAR VISOR GRANDE' : 'VISOR GRANDE'}</button><button type="button" className="geometry-reset" onClick={toggleFullscreen}>{isFullscreen ? 'SALIR PANTALLA' : 'PANTALLA COMPLETA'}</button><button type="button" className="geometry-reset" onClick={() => resetViewRef.current()}>VISTA INICIAL</button></div></div>
+     {comparisonView && <div className="geometry-comparison-toolbar"><span>COMPARAR TRAZADOS</span><button type="button" className={comparisonView === 'previous' ? 'active' : ''} onClick={() => onComparisonViewChange?.('previous')}>ANTES / ROJO</button><button type="button" className={comparisonView === 'current' ? 'active' : ''} onClick={() => onComparisonViewChange?.('current')}>DESPUÉS / AMARILLO</button><button type="button" className={showMeshOverlay ? 'active overlay' : ''} onClick={onMeshOverlayChange}>SUPERPONER MALLAS</button></div>}
+       <div className={`geometry-view-layout${showAnglePanel ? '' : ' geometry-view-layout-no-panel'}`} style={{ '--geometry-side-width': `${sidePanelWidth}px` } as CSSProperties}><div ref={canvasRef} className="geometry-canvas" role="img" aria-label="Visor 3D de lente, LED y rayos"><div className="geometry-axis-actions"><span>VISTAS</span><button type="button" onClick={() => viewAxisRef.current('x')} title="Vista sobre el eje X">X</button><button type="button" onClick={() => viewAxisRef.current('y')} title="Vista sobre el eje Y">Y</button><button type="button" onClick={() => viewAxisRef.current('z')} title="Vista sobre el eje Z">Z</button></div>{selectedSurfaceIndex != null && <div className="geometry-selected-face"><span>CARA SELECCIONADA</span><strong>{selectedSurfaceIndex + 1}</strong><small>{selectedSurfaceLabel}</small></div>}<div className="geometry-canvas-help"><strong>NAVEGACIÓN CAD</strong> · BOTÓN CENTRAL: ORBITAR · CTRL + CENTRAL: DESPLAZAR · RUEDA: ZOOM · CLIC IZQUIERDO: SELECCIONAR · DOBLE CLIC: ENFOCAR</div></div>{showAnglePanel && <button type="button" className="geometry-panel-resizer" aria-label="Redimensionar panel de información" onPointerDown={startPanelResize} onPointerMove={movePanelResize} onPointerUp={stopPanelResize}><span /></button>}{showAnglePanel && <GeometryAnglePanel data={data} ray={selectedRay} rayIndex={selectedRayIndex} onSelectRay={index => { const ray = details[index]; if (!ray) return; setStatusVisibility(previous => ({ ...previous, [ray.status]: true })); setLedSelection('all'); setShowRays(true); setSelectedSurfaceIndex(null); onSurfaceChange?.(null); setSelectedRayIndex(index); }} />}</div>
+     <div className="geometry-view-controls"><label><span>LED visible</span><select value={ledSelection} onChange={event => setLedSelection(event.target.value === 'all' ? 'all' : Number(event.target.value) as 0 | 1 | 2)}><option value="all">Todos los LED ({details.length.toLocaleString('es-ES')})</option><option value="0">LED 1 ({ledCounts[0].toLocaleString('es-ES')})</option><option value="1">LED 2 ({ledCounts[1].toLocaleString('es-ES')})</option><option value="2">LED 3 ({ledCounts[2].toLocaleString('es-ES')})</option></select></label>{!isCadPreview && <><label><span>Rayos visibles</span><select value={Math.min(rayLimit, maxRayCount || rayLimit)} disabled={!maxRayCount} onChange={event => setRayLimit(Number(event.target.value))}>{rayOptions.map(value => <option key={value} value={value}>{value.toLocaleString('es-ES')}</option>)}</select></label><label><span>Color por</span><select value={colorMode} onChange={event => setColorMode(event.target.value as 'status' | 'led')}><option value="status">Estado óptico</option><option value="led">LED de origen</option></select></label><label className="geometry-check"><input type="checkbox" checked={showRays} onChange={event => setShowRays(event.target.checked)} /> rayos</label></>}<label className="geometry-check"><input type="checkbox" checked={showLens} onChange={event => setShowLens(event.target.checked)} /> lente</label><label className="geometry-check"><input type="checkbox" checked={showLeds} onChange={event => setShowLeds(event.target.checked)} /> LED</label><label className="geometry-check"><input type="checkbox" checked={showGrid} onChange={event => setShowGrid(event.target.checked)} /> rejilla</label><label className="geometry-check"><input type="checkbox" checked={showAxes} onChange={event => setShowAxes(event.target.checked)} /> ejes</label></div>
+     {!isCadPreview && <><div className="geometry-collimation"><div className="geometry-collimation-heading"><span>PARALELISMO DE SALIDA POR CARA DE ENTRADA</span><small>objetivo: +Y y {OUTPUT_TILT_DEG.toFixed(1)}° hacia +Z · muestra transmitida</small></div>{surfaceCollimation.length ? <div className="geometry-collimation-grid">{surfaceCollimation.map(surface => <div className={`geometry-collimation-card${surface.meanTargetDeg <= 2 ? ' good' : surface.meanTargetDeg <= 5 ? ' caution' : ''}`} key={surface.surfaceIndex}><strong>{surface.label}</strong><small>{surface.rayCount.toLocaleString('es-ES')} rayos · C medio {surface.meanC.toFixed(1)}° · gamma {surface.meanGamma.toFixed(1)}°</small><b>Error medio {surface.meanTargetDeg.toFixed(2)}° · RMS {surface.targetRmsDeg.toFixed(2)}° · P95 {surface.targetP95Deg.toFixed(2)}°</b></div>)}</div> : <p>Sin rayos transmitidos con cara de entrada identificada.</p>}</div><div className={`geometry-inspection${selectedSurfaceIndex == null ? ' geometry-inspection-empty' : ''}`}><div className="geometry-inspection-title"><span>INSPECCIÓN DE SUPERFICIE</span><strong>{selectedSurfaceLabel || 'Ninguna cara seleccionada'}</strong><small>{selectedSurfaceLabel ? 'Rayos que entran, salen o rebotan por TIR en esta cara' : 'Haz clic sobre una cara de la lente para ver su flujo'}</small></div>{selectedSurfaceEnergy ? <div className="geometry-energy-grid"><div><span>ENTRADA</span><strong>{selectedSurfaceEnergy.entry_pct.toFixed(2)}%</strong><small>{selectedSurfaceEnergy.entry_flux_lm.toFixed(2)} lm · flujo que llega a la cara</small></div><div><span>TIR</span><strong>{selectedSurfaceEnergy.tir_pct.toFixed(2)}%</strong><small>{selectedSurfaceEnergy.tir_flux_lm.toFixed(2)} lm · rebote interno</small></div><div><span>SALIDA</span><strong>{selectedSurfaceEnergy.exit_pct.toFixed(2)}%</strong><small>{selectedSurfaceEnergy.exit_flux_lm.toFixed(2)} lm · flujo que sale</small></div></div> : selectedSurfaceLabel ? <div className="geometry-energy-empty">Sin interacción energética registrada en esta cara.</div> : null}<div className="geometry-inspection-actions">{selectedSurfaceIndex != null && <span>{selectedSurfaceRayCount.toLocaleString('es-ES')} rayos de la muestra tocan esta cara</span>}<button type="button" disabled={selectedSurfaceIndex == null} onClick={clearSurfaceFilter}>LIMPIAR SELECCIÓN</button></div></div><div className="geometry-color-legend"><span>Color: {colorMode === 'status' ? 'estado óptico' : 'LED de origen'}</span>{colorMode === 'status' ? (Object.keys(RAY_STATUS_LABELS) as PreviewRayStatus[]).map(status => <span key={status}><i style={{ background: RAY_STATUS_COLORS[status] }} />{RAY_STATUS_LABELS[status]}</span>) : LED_COLORS.map((color, index) => <span key={color}><i style={{ background: color }} />LED {index + 1}</span>)}</div><div className="geometry-status-filters">{(Object.keys(RAY_STATUS_LABELS) as PreviewRayStatus[]).map(status => <label key={status}><input type="checkbox" checked={statusVisibility[status]} onChange={() => toggleStatus(status)} /><i style={{ background: RAY_STATUS_COLORS[status] }} />{RAY_STATUS_LABELS[status]} <small>{data.trace.preview_status_counts?.[status] ?? 0}</small></label>)}<span>{Math.min(rayLimit, selectedCount).toLocaleString('es-ES')} visibles activos</span></div></>}
+    <div className="geometry-stats"><span><b>{(meshPreview?.geometry.lens_triangles ?? data.geometry.lens_triangles)?.toLocaleString('es-ES') || '—'}</b> triángulos lente</span>{!isCadPreview && <><span><b>{data.trace.transmission_pct.toFixed(2)}%</b> transmisión</span><span><b>{data.trace.total_internal_reflection_count.toLocaleString('es-ES')}</b> TIR</span><span><b>{data.ldt.peak_c_deg?.toFixed(0) ?? '—'}° / {data.ldt.peak_gamma_deg?.toFixed(0) ?? '—'}°</b> pico C / gamma</span></>}</div>
   </section>;
 }
 
@@ -1247,7 +1586,7 @@ function LdtPlaneProfiles({ diagnostic }: { diagnostic: LdtDiagnostic }) {
     <svg className="ldt-plane-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Perfiles fotométricos C0 C90 C180 y C280">
       <rect width={width} height={height} fill="#fbfcf9" />
       {[0, .25, .5, .75, 1].map(level => <g key={level}><line x1={left} y1={yPosition(maximum * level)} x2={left + plotWidth} y2={yPosition(maximum * level)} stroke="#dce5dc" strokeWidth="1" /><text x={left - 8} y={yPosition(maximum * level) + 3} textAnchor="end" fill="#819087" fontSize="9">{(maximum * level).toFixed(0)}</text></g>)}
-      {[0, 30, 60, 90].filter(value => value <= gammaMax).map(gamma => <g key={gamma}><line x1={xPosition(gamma)} y1={top} x2={xPosition(gamma)} y2={top + plotHeight} stroke="#eef2ec" strokeWidth="1" /><text x={xPosition(gamma)} y={top + plotHeight + 18} textAnchor="middle" fill="#819087" fontSize="9">{gamma}°</text></g>)}
+       {Array.from({ length: Math.floor(gammaMax / 5) + 1 }, (_, index) => index * 5).map(gamma => <g key={gamma}><line x1={xPosition(gamma)} y1={top} x2={xPosition(gamma)} y2={top + plotHeight} stroke={gamma % 15 === 0 ? "#dce5dc" : "#eef2ec"} strokeWidth="1" /><text x={xPosition(gamma)} y={top + plotHeight + 18} textAnchor="middle" fill="#819087" fontSize="8">{gamma}°</text></g>)}
       <line x1={left} y1={top + plotHeight} x2={left + plotWidth} y2={top + plotHeight} stroke="#173e36" strokeWidth="1" />
       {profiles.map(profile => <polyline key={profile.plane} points={points(profile.values)} fill="none" stroke={profile.color} strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />)}
       <text x={left + plotWidth} y={top + plotHeight + 38} textAnchor="end" fill="#52685a" fontSize="10">gamma / grados</text>
@@ -1283,7 +1622,8 @@ function smoothLdtDiagnostic(diagnostic: LdtDiagnostic): LdtDiagnostic {
   const gammaStep = Math.max(2.5, Math.min(5, diagnostic.gamma_angles_deg[1] - diagnostic.gamma_angles_deg[0] || 2.5));
   const directional = diagnostic.directional_c0_c180 === true;
   const cMax = directional ? Math.min(180, diagnostic.c_angles_deg[diagnostic.c_angles_deg.length - 1]) : 360;
-  const cAngles = Array.from({ length: Math.round(cMax / cStep) + 1 }, (_, index) => index * cStep);
+  const cCount = directional ? Math.round(cMax / cStep) + 1 : Math.round(360 / cStep);
+  const cAngles = Array.from({ length: cCount }, (_, index) => index * cStep);
   const gammaMax = diagnostic.gamma_angles_deg[diagnostic.gamma_angles_deg.length - 1];
   const gammaCount = Math.round(gammaMax / gammaStep) + 1;
   const gammaAngles = Array.from({ length: gammaCount }, (_, index) => Math.min(gammaMax, index * gammaStep));
@@ -1317,11 +1657,14 @@ function LdtSurface({ diagnostic }: { diagnostic: LdtDiagnostic }) {
   const [azimuth, setAzimuth] = useState(28);
   const [elevation, setElevation] = useState(24);
   const [scale, setScale] = useState(1);
-  const pointerRef = useRef<{ button: number; x: number; y: number } | null>(null);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const pointerRef = useRef<{ button: number; pan: boolean; x: number; y: number } | null>(null);
   const cAngles = surfaceDiagnostic.c_angles_deg;
   const gammas = surfaceDiagnostic.gamma_angles_deg;
   const max = Math.max(surfaceDiagnostic.max_intensity_cd_per_klm, 1);
   const originY = 54;
+  const centerX = 300 + pan.x;
+  const centerY = originY + pan.y;
   const project = (x: number, y: number, z: number) => {
     const yaw = azimuth * Math.PI / 180;
     const pitch = elevation * Math.PI / 180;
@@ -1329,7 +1672,7 @@ function LdtSurface({ diagnostic }: { diagnostic: LdtDiagnostic }) {
     const yawY = x * Math.sin(yaw) + y * Math.cos(yaw);
     const screenY = (yawY * Math.sin(pitch) + z * Math.cos(pitch)) * scale;
     const depth = yawY * Math.cos(pitch) - z * Math.sin(pitch);
-    return { point: `${300 + yawX * 190 * scale},${originY + screenY * 170}`, depth };
+    return { point: `${centerX + yawX * 190 * scale},${centerY + screenY * 170}`, depth };
   };
   const spherical = (c: number, gamma: number, value: number) => {
     const cRadians = c * Math.PI / 180;
@@ -1365,16 +1708,27 @@ function LdtSurface({ diagnostic }: { diagnostic: LdtDiagnostic }) {
     });
   }
   const handlePointerDown = (event: PointerEvent<SVGSVGElement>) => {
-    if (event.button !== 0 && event.button !== 2) return;
+    if (event.button !== 0 && event.button !== 1 && event.button !== 2) return;
+    event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
-    pointerRef.current = { button: event.button, x: event.clientX, y: event.clientY };
+    pointerRef.current = {
+      button: event.button,
+      pan: event.button === 2 || (event.button === 1 && (event.ctrlKey || event.metaKey)),
+      x: event.clientX,
+      y: event.clientY,
+    };
   };
   const handlePointerMove = (event: PointerEvent<SVGSVGElement>) => {
     const previous = pointerRef.current;
     if (!previous) return;
     const dx = event.clientX - previous.x;
     const dy = event.clientY - previous.y;
-    if (previous.button === 2) {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    const viewScaleX = 600 / Math.max(bounds.width, 1);
+    const viewScaleY = 270 / Math.max(bounds.height, 1);
+    if (previous.pan) {
+      setPan(value => ({ x: value.x + dx * viewScaleX, y: value.y + dy * viewScaleY }));
+    } else if (previous.button === 0 || previous.button === 1 || previous.button === 2) {
       setAzimuth(value => Math.max(-180, Math.min(180, value + dx * .55)));
       setElevation(value => Math.max(-80, Math.min(80, value + dy * .45)));
     } else {
@@ -1382,16 +1736,20 @@ function LdtSurface({ diagnostic }: { diagnostic: LdtDiagnostic }) {
     }
     pointerRef.current = { ...previous, x: event.clientX, y: event.clientY };
   };
+  const handleWheel = (event: WheelEvent<SVGSVGElement>) => {
+    event.preventDefault();
+    setScale(value => Math.max(.45, Math.min(1.9, value * Math.exp(-event.deltaY * .001))));
+  };
   const stopPointer = (event: PointerEvent<SVGSVGElement>) => {
     pointerRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
-  return <div className="ldt-surface-wrap"><div className="ldt-surface-head"><span>SÓLIDO FOTOMÉTRICO / cd/klm</span><small>radio = intensidad normalizada</small></div><svg className="ldt-surface interactive" viewBox="0 0 600 270" role="img" aria-label={`Sólido fotométrico 3D del LDT ${diagnostic.name}`} onContextMenu={event => event.preventDefault()} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={stopPointer} onPointerCancel={stopPointer}><rect width="600" height="270" fill="#153b34" /><g opacity=".35"><ellipse cx="300" cy={originY} rx="206" ry="38" fill="none" stroke="#aac4b0" /><ellipse cx="300" cy={originY} rx="105" ry="20" fill="none" stroke="#aac4b0" /><path d={`M94 ${originY}H506M300 20V250`} stroke="#aac4b0" /></g><g>{cells.sort((a, b) => a.depth - b.depth).map(cell => <polygon key={cell.key} points={cell.points} fill={cell.fill} fillOpacity={cell.opacity} stroke="rgba(221,239,218,.45)" strokeWidth=".5" />)}</g><path d={`M300 ${originY}L500 ${originY}M300 ${originY}L300 20`} stroke="#b9e77a" strokeWidth="1" opacity=".75" /><text x="508" y={originY + 6} fill="#b9e77a" fontSize="10" fontFamily="DM Mono, monospace">C</text><text x="305" y="265" fill="#b9e77a" fontSize="10" fontFamily="DM Mono, monospace">gamma 0°</text><circle cx="300" cy={originY} r="3" fill="#ef7348" /></svg><div className="ldt-controls ldt-mouse-help"><span>BOTÓN DERECHO + ARRASTRAR · GIRAR</span><span>BOTÓN IZQUIERDO + ARRASTRAR · TAMAÑO</span><b>{Math.round(scale * 100)} %</b></div></div>;
+  return <div className="ldt-surface-wrap"><div className="ldt-surface-head"><span>SÓLIDO FOTOMÉTRICO / cd/klm</span><small>radio = intensidad normalizada</small></div><svg className="ldt-surface interactive" viewBox="0 0 600 270" role="img" aria-label={`Sólido fotométrico 3D del LDT ${diagnostic.name}`} onContextMenu={event => event.preventDefault()} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={stopPointer} onPointerCancel={stopPointer} onWheel={handleWheel}><rect width="600" height="270" fill="#153b34" /><g opacity=".35"><ellipse cx={centerX} cy={centerY} rx="206" ry="38" fill="none" stroke="#aac4b0" /><ellipse cx={centerX} cy={centerY} rx="105" ry="20" fill="none" stroke="#aac4b0" /><path d={`M${centerX - 206} ${centerY}H${centerX + 206}M${centerX} ${centerY - 34}V${centerY + 196}`} stroke="#aac4b0" /></g><g>{cells.sort((a, b) => a.depth - b.depth).map(cell => <polygon key={cell.key} points={cell.points} fill={cell.fill} fillOpacity={cell.opacity} stroke="rgba(221,239,218,.45)" strokeWidth=".5" />)}</g><path d={`M${centerX} ${centerY}L${centerX + 200} ${centerY}M${centerX} ${centerY}L${centerX} ${centerY - 34}`} stroke="#b9e77a" strokeWidth="1" opacity=".75" /><text x={centerX + 208} y={centerY + 6} fill="#b9e77a" fontSize="10" fontFamily="DM Mono, monospace">C</text><text x={centerX + 5} y={centerY + 211} fill="#b9e77a" fontSize="10" fontFamily="DM Mono, monospace">gamma 0°</text><circle cx={centerX} cy={centerY} r="3" fill="#ef7348" /></svg><div className="ldt-controls ldt-mouse-help"><span>BOTÓN CENTRAL + ARRASTRAR · GIRAR</span><span>BOTÓN DERECHO + ARRASTRAR · DESPLAZAR</span><span>CTRL/CMD + CENTRAL · DESPLAZAR</span><span>RUEDA · ZOOM</span><b>{Math.round(scale * 100)} %</b></div></div>;
 }
 
 function LdtGridTable({ diagnostic }: { diagnostic: LdtDiagnostic }) {
   const mismatchFor = (angle: number) => diagnostic.pairs.find(pair => Math.abs(pair.c_deg - angle) < .01 || Math.abs(pair.mirror_c_deg - angle) < .01)?.symmetric === false;
-  return <div className="ldt-table-wrap"><div className="ldt-table-caption"><span>TABLA INTENSIDAD / C × GAMMA</span><small>rojo = par no simétrico</small></div><div className="ldt-table-scroll"><table className="ldt-table"><thead><tr><th>C / gamma</th>{diagnostic.gamma_angles_deg.map(gamma => <th key={gamma}>{gamma.toFixed(0)}°</th>)}</tr></thead><tbody>{diagnostic.c_angles_deg.map((angle, index) => <tr className={mismatchFor(angle) ? 'mismatch' : ''} key={angle}><th>{angle.toFixed(2)}°</th>{diagnostic.intensities_cd_per_klm[index].map((value, gammaIndex) => <td key={`${angle}-${gammaIndex}`}>{value.toFixed(0)}</td>)}</tr>)}</tbody></table></div></div>;
+  return <div className="ldt-table-wrap"><div className="ldt-table-caption"><span>TABLA INTENSIDAD / C × GAMMA</span><small>reconstrucción angular conservativa · rojo = par no simétrico</small></div><div className="ldt-table-scroll"><table className="ldt-table"><thead><tr><th>C / gamma</th>{diagnostic.gamma_angles_deg.map(gamma => <th key={gamma}>{gamma.toFixed(0)}°</th>)}</tr></thead><tbody>{diagnostic.c_angles_deg.map((angle, index) => <tr className={mismatchFor(angle) ? 'mismatch' : ''} key={angle}><th>{angle.toFixed(2)}°</th>{diagnostic.intensities_cd_per_klm[index].map((value, gammaIndex) => <td key={`${angle}-${gammaIndex}`}>{value.toFixed(0)}</td>)}</tr>)}</tbody></table></div></div>;
 }
 
 export default App;

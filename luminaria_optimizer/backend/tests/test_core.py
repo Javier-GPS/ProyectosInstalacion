@@ -22,9 +22,9 @@ from luminaire_optimizer.road import (
     precompute_luminance_influence,
 )
 from luminaire_optimizer.road import _base_group_intensity, photometric_azimuth_profile
-from luminaire_optimizer.optimizer import _symmetric_vector, _uniformity_quality, optimize_currents_and_tilt
+from luminaire_optimizer.optimizer import _symmetric_vector, _uniformity_quality, optimize_currents_and_tilt, optimize_currents_symmetric
 from luminaire_optimizer.rayset import parse_tm25
-from luminaire_optimizer.optical import _refract
+from luminaire_optimizer.optical import RayTraceResult, _refract
 from luminaire_optimizer.ray_photometry import rays_to_ldt
 from luminaire_optimizer.calibration import calibrate_orientation
 from luminaire_optimizer.api import GroupRequest, _currents, _model, _module_angles
@@ -74,23 +74,38 @@ def test_composition_scales_flux_and_rotates_groups():
     assert len(result.c_angles_deg) == 24
     assert result.c_angles_deg[1] == 15.0
     assert max(max(row) for row in result.intensities_cd_per_klm) > 0
-    assert result.metadata["directional_c0_c180"] == "true"
+    assert result.metadata["directional_c0_c180"] == "false"
+    assert result.gamma_angles_deg[-1] == 180.0
     assert result.metadata["group_c_rotation_deg"] == "90.0"
     diagnostic = ldt_diagnostic(result)
-    assert diagnostic["directional_c0_c180"] is True
+    assert diagnostic["directional_c0_c180"] is False
     assert diagnostic["group_c_rotation_deg"] == pytest.approx(90.0)
     parsed = parse_ldt_text(ldt_text(result))
-    assert parsed.metadata["directional_c0_c180"] == "true"
+    assert parsed.metadata.get("directional_c0_c180", "false") == "false"
     assert parsed.metadata["group_c_rotation_deg"] == "90.0"
 
 
-def test_composed_directional_ldt_does_not_wrap_c359_to_c0():
+def test_composed_luminaire_ldt_covers_the_complete_circular_frame():
     operating = calculate_luminaire_operating_point([700] * 8, Hl2xModel(897.81), 4000, 70)
     composed = compose_luminaire(group_ldt(), operating, c_step_deg=1.0, gamma_step_deg=45.0)
     assert composed.intensity_cd_per_klm(0.0, 45.0) > 0
-    assert composed.intensity_cd_per_klm(359.0, 45.0) == pytest.approx(0.0)
-    assert composed.intensity_cd_per_klm(-1.0, 45.0) == pytest.approx(0.0)
-    assert composed.intensity_cd_per_klm(181.0, 45.0) == pytest.approx(0.0)
+    assert composed.intensity_cd_per_klm(181.0, 45.0) > 0
+    assert composed.intensity_cd_per_klm(270.0, 45.0) > 0
+    assert composed.intensity_cd_per_klm(359.0, 45.0) > 0
+    assert composed.intensity_cd_per_klm(-1.0, 45.0) == pytest.approx(
+        composed.intensity_cd_per_klm(359.0, 45.0),
+    )
+    assert composed.metadata["directional_c0_c180"] == "false"
+
+
+def test_composed_luminaire_ldt_is_the_sum_of_all_eight_groups_at_each_c_plane():
+    operating = calculate_luminaire_operating_point([500, 550, 600, 650, 700, 750, 800, 850], Hl2xModel(897.81), 4000, 70)
+    composed = compose_luminaire(group_ldt(), operating, c_step_deg=15.0, gamma_step_deg=45.0)
+    sources = _virtual_sources(operating)
+    for c_angle in composed.c_angles_deg:
+        expected_cd = _group_intensity_cd(group_ldt(), sources, c_angle, 45.0)
+        actual_cd = composed.intensity_cd_per_klm(c_angle, 45.0) * composed.flux_lm / 1000.0
+        assert actual_cd == pytest.approx(expected_cd)
 
 
 def test_tagged_generated_group_ldt_does_not_receive_legacy_c_rotation():
@@ -112,11 +127,11 @@ def test_road_uses_virtual_groups_without_composed_ldt():
     assert all(source.flux_lm > 0 for source in sources)
 
 
-def test_complete_group_composition_has_no_c180_to_c360_emission():
+def test_complete_group_composition_has_emission_across_the_full_c_axis():
     model = Hl2xModel(897.81)
     operating = calculate_luminaire_operating_point([700] * 8, model, 4000, 70)
     composed = compose_luminaire(group_ldt(), operating, c_step_deg=15.0, gamma_step_deg=45.0)
-    assert composed.intensity_cd_per_klm(270.0, 45.0) == pytest.approx(0.0)
+    assert composed.intensity_cd_per_klm(270.0, 45.0) > 0
 
 
 def test_directional_group_ldt_is_rotated_clockwise_into_road_frame():
@@ -451,6 +466,47 @@ def test_symmetric_isolux_is_mirrored_about_midpoint_between_luminaires():
     np.testing.assert_allclose(isolux, isolux[::-1], rtol=1e-5, atol=1e-5)
 
 
+def test_symmetric_photometry_mirrors_luminance_and_illuminance_grids():
+    model = Hl2xModel(897.81)
+    asymmetric = LdtPhotometry(
+        "TEST", "Asymmetric group", [0.0, 90.0, 180.0, 270.0], [0.0, 45.0, 90.0],
+        [[10.0, 4.0, 0.0], [20.0, 5.0, 0.0], [30.0, 6.0, 0.0], [40.0, 7.0, 0.0]],
+        [LampSet("3", "HL2X", 897.81, "4000K", "70", 6.6)],
+    )
+    scenario = RoadScenario(height_m=1.0, spacing_m=10.0, photometry_symmetry="symmetric")
+    table = ReducedLuminanceTable(
+        "test",
+        (0.0, 1.0, 2.0, 5.0, 10.0),
+        tuple(float(value) for value in range(0, 181, 10)),
+        tuple(tuple(1000.0 for _ in range(19)) for _ in range(5)),
+    )
+    result = calculate_road(
+        asymmetric, model, [700] * 8, scenario, table,
+        cct_k=4000, cri=70, use_composed_luminaire=False,
+    )
+    visual = result.visual_grid
+    np.testing.assert_allclose(visual["illuminance_lx"], visual["illuminance_lx"][::-1], rtol=1e-5, atol=1e-5)
+    np.testing.assert_allclose(visual["luminance_cd_m2"], visual["luminance_cd_m2"][::-1], rtol=1e-5, atol=1e-5)
+
+
+def test_symmetric_optimizer_keeps_symmetric_visual_grid():
+    model = Hl2xModel(897.81)
+    scenario = RoadScenario(height_m=1.0, spacing_m=10.0, photometry_symmetry="symmetric")
+    table = ReducedLuminanceTable(
+        "test",
+        (0.0, 1.0, 2.0, 5.0, 10.0),
+        tuple(float(value) for value in range(0, 181, 10)),
+        tuple(tuple(1000.0 for _ in range(19)) for _ in range(5)),
+    )
+    result = optimize_currents_symmetric(
+        group_ldt(), model, scenario, table, cct_k=4000, cri=70,
+    )
+    isolux = [row[1] for row in result.calculation.visual_grid["illuminance_lx"]]
+    np.testing.assert_allclose(isolux, isolux[::-1], rtol=1e-5, atol=1e-5)
+    assert result.calculation.scenario.photometry_symmetry == "symmetric"
+    assert list(result.currents_ma) == pytest.approx(list(result.currents_ma)[::-1])
+
+
 def test_batch_uniformity_matches_single_candidate_evaluation():
     rng = np.random.default_rng(7)
     grids = rng.random((5, 1, 10, 3))
@@ -517,6 +573,66 @@ def test_transmitted_rays_are_binned_as_cd_per_klm():
     assert photometry.intensities_cd_per_klm[0][0] > 0
     assert photometry.metadata["group_c_rotation_deg"] == "0"
     assert ldt_diagnostic(photometry)["group_c_rotation_deg"] == pytest.approx(0.0)
+
+
+def test_transmitted_rays_preserve_upper_hemisphere():
+    result = type("Trace", (), {
+        "input_flux_lm": 10.0,
+        "transmitted_flux_lm": 8.0,
+        "led_count": 3,
+        "traced_ray_count": 1,
+        "transmitted_rays": np.array([[0, 0, 1, 0, 0, -1, 8.0]], dtype=float),
+    })()
+
+    photometry = rays_to_ldt(result, c_step_deg=90.0, gamma_step_deg=45.0)
+
+    assert photometry.gamma_angles_deg[-1] == 180.0
+    assert photometry.intensities_cd_per_klm[0][-1] > 0
+    assert float(photometry.metadata["gamma_gt_90_flux_lm"]) == pytest.approx(8.0)
+
+
+def test_generated_group_ldt_can_average_monte_carlo_c_mirror_pairs():
+    result = type("Trace", (), {
+        "input_flux_lm": 10.0,
+        "transmitted_flux_lm": 10.0,
+        "led_count": 3,
+        "traced_ray_count": 2,
+        "transmitted_rays": np.array([
+            [0, 0, 1, 1, 0, 0, 5.0],
+            [0, 0, 1, 0, 1, 0, 1.0],
+        ], dtype=float),
+    })()
+    photometry = rays_to_ldt(
+        result, c_step_deg=90.0, gamma_step_deg=45.0, enforce_c_symmetry=True,
+    )
+    assert photometry.metadata["c_symmetrized"] == "true"
+    diagnostic = ldt_diagnostic(photometry)
+    assert diagnostic["symmetric"] is True
+
+
+def test_surface_energy_diagnostic_reports_percentages_per_led():
+    trace = RayTraceResult(
+        source_ray_count=1, led_count=1, traced_ray_count=1,
+        input_flux_lm=10.0, missed_ray_count=0, missed_flux_lm=0.0,
+        intercepted_ray_count=1, intercepted_flux_lm=10.0,
+        transmitted_ray_count=1, transmitted_flux_lm=6.0,
+        total_internal_reflection_count=1, untransmitted_flux_lm=4.0,
+        transmitted_rays=np.empty((0, 7)),
+        surface_energy_by_led=({
+            "led_index": 0,
+            "input_flux_lm": 10.0,
+            "surface_energy": ({
+                "surface_index": 5,
+                "entry_flux_lm": 8.0,
+                "tir_flux_lm": 2.0,
+                "exit_flux_lm": 6.0,
+            },),
+        },),
+    )
+    record = trace.diagnostic()["surface_energy_by_led"][0]["surface_energy"][0]
+    assert record["entry_pct"] == pytest.approx(80.0)
+    assert record["tir_pct"] == pytest.approx(20.0)
+    assert record["exit_pct"] == pytest.approx(60.0)
 
 
 def test_orientation_calibration_finds_azimuth_offset():

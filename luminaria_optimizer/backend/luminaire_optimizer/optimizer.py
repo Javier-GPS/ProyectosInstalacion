@@ -57,11 +57,11 @@ def _grid_quality(luminance: np.ndarray, scenario: RoadScenario) -> tuple[float,
         max(0.0, req.ul_min - ul) / req.ul_min,
     )
     return (
-        deficits[0],
         max(deficits[1:]),
         sum(deficits[1:]),
         -min(uo, ul),
         -(uo + ul),
+        deficits[0],
     )
 
 
@@ -265,11 +265,11 @@ def _final_quality(calculation: RoadCalculation, scenario: RoadScenario) -> tupl
         max(0.0, req.ul_min - metrics.ul) / req.ul_min,
     )
     return (
-        lavg_deficit,
         max(uniformity_deficits),
         sum(uniformity_deficits),
         -min(metrics.uo, metrics.ul),
         -(metrics.uo + metrics.ul),
+        lavg_deficit,
         max(0.0, metrics.ti_pct - req.ti_max_pct) / req.ti_max_pct,
         max(0.0, req.rei_min - metrics.rei) / req.rei_min,
         0.0 if metrics.power_limit_ok else 1.0,
@@ -292,8 +292,6 @@ def optimize_currents_symmetric(
     uniform: bool = False,
 ) -> OptimizationResult:
     """Optimize mirrored groups first, then apply thermal/power scaling."""
-    # The mode only constrains currents. Never alter or symmetrise the LDT.
-    scenario = replace(scenario, photometry_symmetry="asymmetric")
     angles_deg = angles_deg or tuple((index + 0.5) * 180.0 / model.group_count for index in range(model.group_count))
     influence = precompute_luminance_influence(group_ldt, scenario, rtable, angles_deg=angles_deg)
     relative_vector, _, iterations = _guided_relative_profile(
@@ -317,6 +315,7 @@ def optimize_currents_symmetric(
                 cct_k=cct_k, cri=cri,
                 include_visual_grid=False, include_glare_metrics=True,
                 angles_deg=angles_deg,
+                use_composed_luminaire=False,
             )
         except ValueError:
             continue
@@ -355,8 +354,6 @@ def optimize_currents(
     angles_deg: tuple[float, ...] = (),
     uniform: bool = False,
 ) -> OptimizationResult:
-    # Independent and symmetric modes both use the measured LDT as supplied.
-    scenario = replace(scenario, photometry_symmetry="asymmetric")
     angles_deg = angles_deg or tuple((index + 0.5) * 180.0 / model.group_count for index in range(model.group_count))
     influence = precompute_luminance_influence(group_ldt, scenario, rtable, angles_deg=angles_deg)
     relative_vector, _, iterations = _guided_relative_profile(
@@ -380,6 +377,7 @@ def optimize_currents(
                 cct_k=cct_k, cri=cri,
                 include_visual_grid=False, include_glare_metrics=True,
                 angles_deg=angles_deg,
+                use_composed_luminaire=False,
             )
         except ValueError:
             continue
@@ -463,7 +461,6 @@ def optimize_currents_and_tilt(
     selected_scenario = replace(
         best_result.calculation.scenario,
         tilt_deg=best_result.calculation.scenario.tilt_deg,
-        photometry_symmetry="asymmetric",
     )
     if optimization_mode == "symmetric" and not uniform:
         refined = optimize_currents_symmetric(

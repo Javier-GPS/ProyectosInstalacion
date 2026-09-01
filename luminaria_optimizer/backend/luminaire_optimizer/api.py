@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import shutil
 import subprocess
 import tempfile
@@ -97,10 +98,27 @@ class CadPreviewRequest(CadUpdateRequest):
     c_offset_deg: float = 0.0
 
 
+class AutonomousCadRequest(CadOpenRequest):
+    """Bounded, unattended CAD exploration before the road-current stage."""
+
+    lens_index: float = Field(default=1.49, gt=1.0, le=3.0)
+    height_m: float = Field(default=1.0, gt=0)
+    carriageway_width_m: float = Field(default=3.5, gt=0)
+    edge_offset_m: float = Field(default=0.5, ge=0)
+    exploration_ray_count: int = Field(default=500, ge=500, le=20_000)
+    final_ray_count: int = Field(default=20_000, ge=10_000, le=5_000_000)
+    parameter_budget: int = Field(default=4, ge=1, le=12)
+    focus_recent_feature: bool = False
+    show_in_solidworks: bool = True
+    keep_solidworks_open: bool = True
+
+
 class OptimizerChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
     history: list[dict[str, str]] = Field(default_factory=list, max_length=40)
     context: dict[str, Any] = Field(default_factory=dict)
+    image_base64: str | None = Field(default=None, max_length=7_000_000)
+    image_name: str | None = Field(default=None, max_length=255)
 
 
 class RoadRequest(GroupRequest):
@@ -169,10 +187,14 @@ def _history_path(root: Path, stem: str, suffix: str) -> Path:
     """Return a unique timestamped candidate path without overwriting history."""
     root.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    candidate = root / f"{stem}_candidate_{stamp}{suffix}"
+    # Avoid recursively appending candidate timestamps: SolidWorks rejects long
+    # SaveAs paths with swFileSaveAsNameExceedsMaxPathLength (2048).
+    base_stem = re.sub(r"(?:_candidate_\d{8}_\d{6}(?:_\d{2})?)+$", "", stem, flags=re.IGNORECASE)
+    base_stem = (base_stem[:64].rstrip(" .") or "lens")
+    candidate = root / f"{base_stem}_candidate_{stamp}{suffix}"
     counter = 2
     while candidate.exists():
-        candidate = root / f"{stem}_candidate_{stamp}_{counter:02d}{suffix}"
+        candidate = root / f"{base_stem}_candidate_{stamp}_{counter:02d}{suffix}"
         counter += 1
     return candidate
 
@@ -248,16 +270,30 @@ def _profile_response(group_ldt, operating_point, gamma_deg, *, angles_deg, symm
     )
 
 
-def _result_photometry(group_ldt, operating_point, *, angles_deg, cct_k: int, cri: int, symmetric: bool = False, fixed: bool = False) -> dict[str, object]:
+def _result_luminaire_ldt(group_ldt, operating_point, *, angles_deg, cct_k: int, cri: int, symmetric: bool = False, fixed: bool = False):
     if fixed:
-        return ldt_diagnostic(
-            scale_ldt_runtime(group_ldt, operating_point.total_flux_lm, operating_point.total_driver_power_w),
-        )
-    composed = compose_luminaire(
+        return scale_ldt_runtime(group_ldt, operating_point.total_flux_lm, operating_point.total_driver_power_w)
+    return compose_luminaire(
         group_ldt, operating_point, angles_deg=angles_deg, symmetric=symmetric,
-        c_step_deg=5.0, gamma_step_deg=5.0, cct_k=cct_k, cri=cri,
+        c_step_deg=1.0, gamma_step_deg=1.0, cct_k=cct_k, cri=cri,
     )
-    return ldt_diagnostic(composed)
+
+
+def _result_luminaire_response(group_ldt, operating_point, *, angles_deg, cct_k: int, cri: int, symmetric: bool = False, fixed: bool = False) -> dict[str, object]:
+    luminaire_ldt = _result_luminaire_ldt(
+        group_ldt, operating_point, angles_deg=angles_deg, cct_k=cct_k, cri=cri,
+        symmetric=symmetric, fixed=fixed,
+    )
+    return {
+        "luminaire_ldt": ldt_diagnostic(luminaire_ldt),
+        "luminaire_ldt_base64": base64.b64encode(ldt_text(luminaire_ldt).encode("latin-1")).decode("ascii"),
+        "luminaire_ldt_metadata": {
+            "name": luminaire_ldt.name,
+            "flux_lm": luminaire_ldt.flux_lm,
+            "power_w": luminaire_ldt.power_w,
+            "group_angles_deg": list(angles_deg),
+        },
+    }
 
 
 def _trace_geometry_paths(step_path: Path, rayset_path: Path, request: GeometryTraceRequest) -> dict[str, object]:
@@ -284,6 +320,7 @@ def _trace_geometry(geometry, rayset_path: Path, request: GeometryTraceRequest) 
             gamma_step_deg=1.0,
             c_offset_deg=request.c_offset_deg,
             c_mirror=request.c_mirror,
+            enforce_c_symmetry=True,
         )
         preview = trace.transmitted_rays
         if len(preview) > request.preview_ray_count:
@@ -307,6 +344,36 @@ def _trace_geometry(geometry, rayset_path: Path, request: GeometryTraceRequest) 
         }
     finally:
         ray_set.close()
+
+
+def _road_target_direction(request: AutonomousCadRequest) -> np.ndarray:
+    """Aim the lens at the useful half of the configured carriageway."""
+    lateral_distance = request.edge_offset_m + request.carriageway_width_m / 2.0
+    elevation = float(np.arctan2(request.height_m, lateral_distance))
+    return np.array([0.0, np.cos(elevation), np.sin(elevation)], dtype=float)
+
+
+def _road_direction_score(trace_response: dict[str, object], target: np.ndarray) -> float:
+    """Rank candidates by transmitted flux concentrated toward the road target."""
+    rays = trace_response.get("preview_rays_detail", [])
+    aligned_flux = 0.0
+    transmitted_flux = 0.0
+    for ray in rays if isinstance(rays, list) else []:
+        if not isinstance(ray, dict) or ray.get("status") != "transmitted":
+            continue
+        direction = ray.get("direction_xyz")
+        if not isinstance(direction, list) or len(direction) != 3:
+            continue
+        vector = np.asarray(direction, dtype=float)
+        norm = float(np.linalg.norm(vector))
+        if norm <= 1e-9:
+            continue
+        flux = float(ray.get("transmitted_power_lm", 0.0))
+        transmitted_flux += flux
+        aligned_flux += flux * max(0.0, float(np.dot(vector / norm, target))) ** 4
+    alignment = aligned_flux / transmitted_flux if transmitted_flux else 0.0
+    transmission = float((trace_response.get("trace") or {}).get("transmission_pct", 0.0)) / 100.0
+    return 0.8 * alignment + 0.2 * transmission
 
 
 def _build_sldprt_assembly(lens_path: Path, target_path: Path) -> None:
@@ -388,9 +455,14 @@ def inspect_ldt(request: LdtInspectRequest):
 
 @app.post("/api/optimizer/chat")
 def optimizer_chat(request: OptimizerChatRequest):
-    """Discuss optical strategies without changing or saving CAD documents."""
+    """Discuss optical strategies with an optional annotated CAD sketch."""
     try:
-        return advise(request.message, request.context)
+        context = {
+            **request.context,
+            "image_attached": bool(request.image_base64),
+            "image_name": request.image_name or "croquis adjunto",
+        }
+        return advise(request.message, context)
     except (TypeError, ValueError, KeyError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -414,8 +486,7 @@ def geometry_trace(request: GeometryTraceRequest):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
-@app.post("/api/cad/open")
-def cad_open(request: CadOpenRequest):
+def _cad_open(request: CadOpenRequest, *, visible: bool = False):
     """Open a native SLDPRT/SLDASM package in a persistent SolidWorks session."""
     extension = Path(request.cad_filename).suffix.lower()
     if extension not in {".sldprt", ".sldasm", ".zip", ".rar"}:
@@ -453,7 +524,7 @@ def cad_open(request: CadOpenRequest):
             source_path = upload_path
         if extension in {".zip", ".rar"}:
             document_root = source_root / "package"
-        session_id = cad_sessions.open(source_path, document_root)
+        session_id = cad_sessions.open(source_path, document_root, visible=visible)
         description = cad_sessions.describe(session_id)
         return {"session_id": session_id, **description}
     except (SolidWorksError, OSError, ValueError, BadZipFile) as exc:
@@ -463,12 +534,176 @@ def cad_open(request: CadOpenRequest):
             shutil.rmtree(source_root, ignore_errors=True)
 
 
+@app.post("/api/cad/open")
+def cad_open(request: CadOpenRequest):
+    """Open a native SLDPRT/SLDASM package in a persistent SolidWorks session."""
+    return _cad_open(request)
+
+
 @app.post("/api/cad/update")
 def cad_update(request: CadUpdateRequest):
     try:
         return cad_sessions.update(request.session_id, request.parameter_values)
     except (SolidWorksError, KeyError, ValueError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/cad/mesh")
+def cad_mesh(request: CadUpdateRequest):
+    """Apply CAD dimensions and return a viewer mesh without ray tracing."""
+    try:
+        if request.parameter_values:
+            cad_sessions.update(request.session_id, request.parameter_values)
+        description = cad_sessions.describe(request.session_id)
+        geometry = cad_sessions.native_geometry(
+            request.session_id,
+            _models_lenses_path() / "ensamblaje lente dot led.SLDASM",
+        )
+        return {
+            "geometry": geometry.diagnostic(),
+            "preview_geometry_mesh": geometry.mesh_payload(),
+            "parameters": description["parameters"],
+        }
+    except (SolidWorksError, GeometryError, KeyError, ValueError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/cad/optimize-road-target")
+def optimize_cad_road_target(request: AutonomousCadRequest):
+    """Explore small CAD changes and retain only a better road-facing lens."""
+    session_id = ""
+    session_kept_open = False
+    try:
+        opened = _cad_open(
+            CadOpenRequest(cad_base64=request.cad_base64, cad_filename=request.cad_filename),
+            visible=request.show_in_solidworks,
+        )
+        session_id = str(opened["session_id"])
+        parameters = list(opened.get("parameters") or [])
+        baseline_values = {str(item["name"]): float(item["value"]) for item in parameters}
+        target = _road_target_direction(request)
+
+        def trace_current(sample_count: int) -> dict[str, object]:
+            geometry = cad_sessions.native_geometry(
+                session_id,
+                _models_lenses_path() / "ensamblaje lente dot led.SLDASM",
+            )
+            return _trace_geometry(
+                geometry,
+                _default_rayset_path(),
+                GeometryTraceRequest(
+                    step_base64="",
+                    step_filename="solidworks-native",
+                    sample_count=sample_count,
+                    chunk_size=min(10_000, sample_count),
+                    lens_index=request.lens_index,
+                    # Keep the interactive viewer responsive. The full sample
+                    # is still used for LDT generation; only its 3D overlay is bounded.
+                    preview_ray_count=min(5_000, sample_count),
+                    c_mirror=True,
+                ),
+            )
+
+        baseline = trace_current(request.exploration_ray_count)
+        baseline_score = _road_direction_score(baseline, target)
+        best_score = baseline_score
+        best_values = dict(baseline_values)
+        current_values = dict(baseline_values)
+        history: list[dict[str, object]] = []
+        # SolidWorks exposes feature dimensions but not a dependable dimension-to-
+        # face map. Screen bounded perturbations instead of guessing a label.
+        eligible = [
+            item for item in parameters
+            if float(item.get("value", 0.0)) != 0.0 and str(item.get("unit")) in {"mm", "deg"}
+        ]
+        if request.focus_recent_feature:
+            # A new wedge is normally appended to the SLDPRT feature tree.
+            # Its sketch/extrusion dimensions therefore appear at the end.
+            eligible = eligible[-request.parameter_budget:]
+        else:
+            eligible = eligible[:request.parameter_budget]
+        for parameter in eligible:
+            name = str(parameter["name"])
+            base_value = baseline_values[name]
+            delta = (
+                np.deg2rad(2.0)
+                if parameter.get("unit") == "deg"
+                else max(abs(base_value) * 0.03, 0.0001)
+            )
+            for direction in (-1.0, 1.0):
+                candidate_value = base_value + direction * float(delta)
+                try:
+                    candidate_values = {**baseline_values, name: candidate_value}
+                    changes = {
+                        key: value for key, value in candidate_values.items()
+                        if current_values.get(key) != value
+                    }
+                    if changes:
+                        cad_sessions.update(session_id, changes)
+                        current_values = candidate_values
+                    candidate = trace_current(request.exploration_ray_count)
+                    score = _road_direction_score(candidate, target)
+                    history.append({
+                        "parameter": name,
+                        "feature": parameter.get("feature"),
+                        "display_value": candidate_value * (180.0 / np.pi if parameter.get("unit") == "deg" else 1000.0),
+                        "unit": parameter.get("unit"),
+                        "score": score,
+                        "transmission_pct": (candidate.get("trace") or {}).get("transmission_pct", 0.0),
+                        "accepted": score > best_score,
+                    })
+                    if score > best_score:
+                        best_score = score
+                        best_values = {**baseline_values, name: candidate_value}
+                except (SolidWorksError, GeometryError, Tm25Error, ValueError) as exc:
+                    history.append({"parameter": name, "feature": parameter.get("feature"), "error": str(exc), "accepted": False})
+
+        changes = {
+            key: value for key, value in best_values.items()
+            if current_values.get(key) != value
+        }
+        if changes:
+            cad_sessions.update(session_id, changes)
+        final_trace = trace_current(request.final_ray_count)
+        saved_files: list[str] = []
+        save_warning: str | None = None
+        if best_values != baseline_values:
+            source = Path(str(opened.get("source_filename") or request.cad_filename))
+            target_path = _history_path(_models_lenses_path(), source.stem, source.suffix.upper())
+            try:
+                cad_sessions.export_native_copy(session_id, target_path)
+                saved_files.append(str(target_path))
+            except SolidWorksError as exc:
+                # The optical result is valid even if SolidWorks rejects SaveAs.
+                # Return it so the user can inspect and compare the candidate.
+                save_warning = str(exc)
+        final_trace["saved_cad_files"] = saved_files
+        session_kept_open = request.keep_solidworks_open
+        return {
+            "objective": {
+                "target_direction_xyz": target.tolist(),
+                "baseline_score": baseline_score,
+                "best_score": best_score,
+                "baseline_transmission_pct": (baseline.get("trace") or {}).get("transmission_pct", 0.0),
+                "best_transmission_pct": (final_trace.get("trace") or {}).get("transmission_pct", 0.0),
+                "improved": best_values != baseline_values,
+            },
+            "history": history,
+            "baseline_geometry_trace": baseline,
+            "geometry_trace": final_trace,
+            "save_warning": save_warning,
+            "solidworks_session_id": session_id if session_kept_open else None,
+        }
+    except HTTPException:
+        raise
+    except (SolidWorksError, GeometryError, Tm25Error, ValueError, KeyError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        if session_id and not session_kept_open:
+            try:
+                cad_sessions.close(session_id)
+            except KeyError:
+                pass
 
 
 @app.post("/api/cad/close")
@@ -636,7 +871,7 @@ def optimize(request: RoadRequest):
                 symmetric=request.photometry_symmetry == "symmetric",
             ),
             "group_ldt": ldt_diagnostic(ldt),
-            "luminaire_ldt": _result_photometry(
+            **_result_luminaire_response(
                 ldt, result.calculation.operating_point, angles_deg=angles_deg, cct_k=request.cct_k, cri=request.cri,
                 fixed=request.luminaire_mode == "fixed",
                 symmetric=request.photometry_symmetry == "symmetric",
@@ -696,7 +931,7 @@ def road_calculate(request: RoadRequest):
                 symmetric=request.photometry_symmetry == "symmetric",
             ),
             "group_ldt": ldt_diagnostic(ldt),
-            "luminaire_ldt": _result_photometry(
+            **_result_luminaire_response(
                 ldt, result.operating_point, angles_deg=angles_deg, cct_k=request.cct_k, cri=request.cri,
                 fixed=request.luminaire_mode == "fixed",
                 symmetric=request.photometry_symmetry == "symmetric",

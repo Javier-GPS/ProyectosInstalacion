@@ -36,6 +36,7 @@ class RayTraceResult:
     transmitted_rays: np.ndarray
     preview_rays_detail: tuple[dict[str, object], ...] = ()
     surface_energy: tuple[dict[str, float | int], ...] = ()
+    surface_energy_by_led: tuple[dict[str, object], ...] = ()
 
     def diagnostic(self) -> dict[str, object]:
         surface_energy = []
@@ -61,6 +62,25 @@ class RayTraceResult:
                 ),
                 "entry_incidence_max_deg": float(record.get("entry_incidence_max_deg", 0.0)),
             })
+        surface_energy_by_led = []
+        for led_record in self.surface_energy_by_led:
+            led_input_flux = float(led_record["input_flux_lm"])
+            led_surfaces = []
+            for record in led_record["surface_energy"]:
+                led_surfaces.append({
+                    "surface_index": int(record["surface_index"]),
+                    "entry_flux_lm": float(record["entry_flux_lm"]),
+                    "tir_flux_lm": float(record["tir_flux_lm"]),
+                    "exit_flux_lm": float(record["exit_flux_lm"]),
+                    "entry_pct": 100.0 * float(record["entry_flux_lm"]) / led_input_flux if led_input_flux else 0.0,
+                    "tir_pct": 100.0 * float(record["tir_flux_lm"]) / led_input_flux if led_input_flux else 0.0,
+                    "exit_pct": 100.0 * float(record["exit_flux_lm"]) / led_input_flux if led_input_flux else 0.0,
+                })
+            surface_energy_by_led.append({
+                "led_index": int(led_record["led_index"]),
+                "input_flux_lm": led_input_flux,
+                "surface_energy": led_surfaces,
+            })
         return {
             "source_ray_count": self.source_ray_count,
             "led_count": self.led_count,
@@ -75,6 +95,7 @@ class RayTraceResult:
             "total_internal_reflection_count": self.total_internal_reflection_count,
             "untransmitted_flux_lm": self.untransmitted_flux_lm,
             "surface_energy": surface_energy,
+            "surface_energy_by_led": surface_energy_by_led,
             "transmission_pct": (
                 100.0 * self.transmitted_flux_lm / self.input_flux_lm
                 if self.input_flux_lm else 0.0
@@ -689,6 +710,10 @@ def trace_tm25(
     transmitted_flux = 0.0
     transmitted_rows: list[np.ndarray] = []
     surface_energy_totals: dict[int, dict[str, float]] = {}
+    surface_energy_by_led: dict[int, dict[int, dict[str, float]]] = {}
+    input_flux_by_led: dict[int, float] = {}
+    for led_index in range(len(geometry.emission_origins)):
+        surface_energy_by_led[led_index] = {}
     mesh = getattr(geometry, "lens_mesh", None)
     preview_collector = _PreviewCollector(
         preview_ray_count,
@@ -721,6 +746,10 @@ def trace_tm25(
                 directions = np.tile(local_directions, (len(geometry.emission_origins), 1))
             source_flux = np.tile(local_flux, len(geometry.emission_origins))
             batch = _trace_mesh_batch(mesh, origins, directions, source_flux, lens_index, max_bounces)
+            led_indices = np.repeat(
+                np.arange(len(geometry.emission_origins), dtype=np.int64),
+                len(chunk),
+            )
             entry_surface_indices = batch["entry_surface_indices"]
             entry_mask = batch["entry_hit"] & (entry_surface_indices >= 0)
             if np.any(entry_mask):
@@ -745,6 +774,10 @@ def trace_tm25(
                 _surface_energy_values(surface_energy_totals, surface_index)["entry_flux_lm"] += float(
                     source_flux[entry_surface_indices == surface_index].sum(),
                 )
+                for led_index in np.unique(led_indices[entry_surface_indices == surface_index]):
+                    led_index = int(led_index)
+                    led_values = _surface_energy_values(surface_energy_by_led.setdefault(led_index, {}), surface_index)
+                    led_values["entry_flux_lm"] += float(source_flux[(entry_surface_indices == surface_index) & (led_indices == led_index)].sum())
             for ray_index, reflection_surfaces in batch["reflection_surface_indices"].items():
                 tir_flux = float(
                     source_flux[int(ray_index)] * batch["entry_transmission"][int(ray_index)],
@@ -754,6 +787,8 @@ def trace_tm25(
                     if surface_index < 0:
                         continue
                     _surface_energy_values(surface_energy_totals, surface_index)["tir_flux_lm"] += tir_flux
+                    led_values = _surface_energy_values(surface_energy_by_led.setdefault(int(led_indices[int(ray_index)]), {}), surface_index)
+                    led_values["tir_flux_lm"] += tir_flux
             transmitted_mask = batch["statuses"] == "transmitted"
             exit_surface_indices = batch["exit_surface_indices"]
             for surface_index in np.unique(exit_surface_indices[transmitted_mask]):
@@ -765,11 +800,12 @@ def trace_tm25(
                         transmitted_mask & (exit_surface_indices == surface_index)
                     ].sum(),
                 )
+                surface_mask = transmitted_mask & (exit_surface_indices == surface_index)
+                for led_index in np.unique(led_indices[surface_mask]):
+                    led_index = int(led_index)
+                    led_mask = surface_mask & (led_indices == led_index)
+                    _surface_energy_values(surface_energy_by_led.setdefault(led_index, {}), surface_index)["exit_flux_lm"] += float(batch["output_power"][led_mask].sum())
             if preview_ray_count:
-                led_indices = np.repeat(
-                    np.arange(len(geometry.emission_origins), dtype=np.int64),
-                    len(chunk),
-                )
                 preview_collector.add_batch(
                     led_indices=led_indices,
                     statuses=batch["statuses"],
@@ -800,6 +836,8 @@ def trace_tm25(
                 transmitted[:, 3:6] = transmitted[:, 3:6] @ _frame_basis(frames[0]).T
             transmitted_rows.append(transmitted)
             input_flux += float(source_flux.sum())
+            for led_index in np.unique(led_indices):
+                input_flux_by_led[int(led_index)] = input_flux_by_led.get(int(led_index), 0.0) + float(source_flux[led_indices == led_index].sum())
             continue
         frames = getattr(geometry, "emission_frames", ())
         for ray in chunk:
@@ -817,6 +855,7 @@ def trace_tm25(
                     direction = local_direction
                 traced_count += 1
                 input_flux += source_flux
+                input_flux_by_led[led_index] = input_flux_by_led.get(led_index, 0.0) + source_flux
                 status, entry_point, exit_point, final_direction, optical_transmission, ray_tir_count = _trace_single_lens_ray(
                     geometry.lens,
                     origin,
@@ -887,6 +926,16 @@ def trace_tm25(
             }
             for surface_index, values in sorted(surface_energy_totals.items())
         ),
+        surface_energy_by_led=tuple({
+            "led_index": led_index,
+            "input_flux_lm": input_flux_by_led.get(led_index, 0.0),
+            "surface_energy": tuple({
+                "surface_index": surface_index,
+                "entry_flux_lm": values["entry_flux_lm"],
+                "tir_flux_lm": values["tir_flux_lm"],
+                "exit_flux_lm": values["exit_flux_lm"],
+            } for surface_index, values in sorted(surfaces.items())),
+        } for led_index, surfaces in sorted(surface_energy_by_led.items())),
     )
 
 

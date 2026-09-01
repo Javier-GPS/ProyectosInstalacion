@@ -39,7 +39,7 @@ class SolidWorksSession:
     owns_application: bool
 
     @classmethod
-    def open(cls, source_path: str | pathlib.Path, document_root: str | pathlib.Path | None = None) -> "SolidWorksSession":
+    def open(cls, source_path: str | pathlib.Path, document_root: str | pathlib.Path | None = None, *, visible: bool = False) -> "SolidWorksSession":
         try:
             import pythoncom
             import win32com.client as win32
@@ -80,8 +80,7 @@ class SolidWorksSession:
                     owns_application = False
                 except Exception:
                     raise dispatch_error
-            if owns_application:
-                sw.Visible = False
+            sw.Visible = visible
             errors = win32.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
             warnings = win32.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
             model = sw.OpenDoc6(str(working), document_type, 0, "", errors, warnings)
@@ -148,6 +147,11 @@ class SolidWorksSession:
                 raise SolidWorksError(f"No se pudo modificar {name}: {exc}") from exc
         if not bool(self.model.EditRebuild3):
             raise SolidWorksError("SolidWorks no pudo reconstruir todas las operaciones.")
+        try:
+            self.model.GraphicsRedraw2()
+        except Exception:
+            # Rebuild success is still usable when the display refresh is unavailable.
+            pass
         return self.parameters()
 
     def export_step(self, target_path: str | pathlib.Path) -> pathlib.Path:
@@ -436,9 +440,9 @@ class SolidWorksSessionManager:
     def _submit(self, callback, *args):
         return self._executor.submit(callback, *args).result()
 
-    def open(self, source_path: str | pathlib.Path, document_root: str | pathlib.Path | None = None) -> str:
+    def open(self, source_path: str | pathlib.Path, document_root: str | pathlib.Path | None = None, *, visible: bool = False) -> str:
         def operation():
-            session = SolidWorksSession.open(source_path, document_root)
+            session = SolidWorksSession.open(source_path, document_root, visible=visible)
             session_id = uuid.uuid4().hex
             self._sessions[session_id] = session
             return session_id

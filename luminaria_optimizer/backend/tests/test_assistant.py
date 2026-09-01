@@ -34,3 +34,33 @@ def test_optimizer_chat_marks_geometry_changes_as_new_candidates():
 
     assert response["proposal"]["strategy"] == "output_direction"
     assert response["proposal"]["requires_new_file"] is True
+
+
+def test_optimizer_chat_accepts_an_annotated_wedge_sketch():
+    response = optimizer_chat(OptimizerChatRequest(
+        message="Prueba una cuña verde en la cara 7",
+        image_base64="aW1hZ2U=",
+        image_name="cuna-verde.png",
+        context={"selected_surface_index": 6},
+    ))
+
+    assert response["proposal"]["strategy"] == "wedge_surface_trial"
+
+
+def test_optimizer_chat_reports_the_current_contextual_status():
+    response = optimizer_chat(OptimizerChatRequest(
+        message="¿Qué estás haciendo?",
+        context={"cad_filename": "lente.SLDPRT", "trace": {"transmission_pct": 84.0}, "selected_surface_index": 6},
+    ))
+
+    assert "cara seleccionada es la 7" in response["message"]
+    assert "84.0%" in response["message"]
+
+
+def test_optimizer_chat_creates_an_alignment_work_order():
+    response = optimizer_chat(OptimizerChatRequest(
+        message="Optimiza los ángulos de las caras 14 hasta 20 para alinearlas como la cara 8",
+    ))
+
+    assert response["proposal"]["strategy"] == "face_alignment"
+    assert "14–20" in response["proposal"]["title"]

@@ -24,7 +24,7 @@ if not exist "%FRONTEND%\package.json" (
 )
 
 echo Iniciando SALVI Luminaria Optimizer...
-call :check_url "http://127.0.0.1:8760/api/health"
+call :check_backend
 if errorlevel 1 (
     for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":8760 .*LISTENING"') do taskkill /F /PID %%P >nul 2>&1
     start "SALVI Backend - puerto 8760" /D "%BACKEND%" "%ComSpec%" /d /k ""%PYTHON%" -m luminaire_optimizer"
@@ -51,4 +51,8 @@ exit /b
 
 :check_url
 powershell -NoProfile -Command "$r = try { Invoke-WebRequest -Uri '%~1' -UseBasicParsing -TimeoutSec 2 } catch { $null }; if ($r -and $r.StatusCode -eq 200) { exit 0 } else { exit 1 }" >nul 2>&1
+exit /b %errorlevel%
+
+:check_backend
+powershell -NoProfile -Command "$r = try { Invoke-WebRequest -Uri 'http://127.0.0.1:8760/openapi.json' -UseBasicParsing -TimeoutSec 2 } catch { $null }; if ($r -and $r.StatusCode -eq 200 -and $r.Content -match '/api/cad/optimize-road-target') { exit 0 } else { exit 1 }" >nul 2>&1
 exit /b %errorlevel%

@@ -1,6 +1,6 @@
 from zipfile import ZipFile
 
-from luminaire_optimizer.api import CadOpenRequest, GeometryTraceRequest, GroupRequest, _extract_cad_archive, _history_path, app
+from luminaire_optimizer.api import AutonomousCadRequest, CadOpenRequest, GeometryTraceRequest, GroupRequest, _extract_cad_archive, _history_path, app
 
 
 def test_api_metadata():
@@ -11,6 +11,8 @@ def test_api_metadata():
     assert "/api/ldt/inspect" in paths
     assert "/api/geometry/trace" in paths
     assert "/api/default-resources" in paths
+    assert "/api/cad/mesh" in paths
+    assert "/api/cad/optimize-road-target" in paths
 
 
 def test_api_accepts_optional_complete_luminaire_ldt_reference():
@@ -44,6 +46,14 @@ def test_geometry_trace_exposes_bounded_visual_preview_contract():
     assert GeometryTraceRequest.model_fields["c_offset_deg"].default == 0.0
 
 
+def test_autonomous_cad_request_can_target_the_latest_feature():
+    assert AutonomousCadRequest.model_fields["focus_recent_feature"].default is False
+    assert AutonomousCadRequest.model_fields["exploration_ray_count"].default == 500
+    assert AutonomousCadRequest.model_fields["final_ray_count"].default == 20_000
+    assert AutonomousCadRequest.model_fields["show_in_solidworks"].default is True
+    assert AutonomousCadRequest.model_fields["keep_solidworks_open"].default is True
+
+
 def test_cad_history_paths_never_overwrite_a_previous_candidate(tmp_path):
     first = _history_path(tmp_path, "lente", ".SLDPRT")
     first.touch()
@@ -51,3 +61,14 @@ def test_cad_history_paths_never_overwrite_a_previous_candidate(tmp_path):
 
     assert first != second
     assert second.name.startswith("lente_candidate_")
+
+
+def test_cad_history_path_strips_previous_candidate_timestamps(tmp_path):
+    candidate = _history_path(
+        tmp_path,
+        "lente_dot_candidate_20260829_192145_candidate_20260829_193157",
+        ".SLDPRT",
+    )
+
+    assert candidate.name.startswith("lente_dot_candidate_")
+    assert "192145" not in candidate.name

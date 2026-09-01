@@ -6,7 +6,7 @@ from dataclasses import dataclass, replace
 
 import numpy as np
 
-from .composition import DEFAULT_GROUP_ANGLES_DEG, group_c_rotation_deg
+from .composition import DEFAULT_GROUP_ANGLES_DEG, compose_luminaire, group_c_rotation_deg
 from .hl2x import Hl2xModel, LuminaireOperatingPoint, calculate_luminaire_operating_point
 from .ldt import LdtPhotometry
 from .normative import MClassRequirements, passes_maximum, passes_minimum, requirements_for
@@ -89,6 +89,7 @@ class VirtualGroupSource:
     azimuth_deg: float
     flux_lm: float
     directional_c0_c180: bool = True
+    apply_group_rotation: bool = True
 
 
 @dataclass(frozen=True)
@@ -234,14 +235,12 @@ def _group_intensity_cd(
     Each group samples the unchanged base LDT at the azimuth relative to its
     own optical axis. No composed LDT is generated during road optimization.
     """
-    c_rotation = group_c_rotation_deg(group_ldt)
-
     def total_at(c_deg: float) -> float:
-        if any(source.directional_c0_c180 for source in sources) and not 0.0 <= c_deg % 360.0 <= 180.0:
-            return 0.0
         return sum(
             _base_group_intensity(
-                group_ldt, c_deg - source.azimuth_deg - c_rotation, gamma_deg,
+                group_ldt,
+                c_deg - source.azimuth_deg - (group_c_rotation_deg(group_ldt) if source.apply_group_rotation else 0.0),
+                gamma_deg,
                 symmetric=False,
             )
             * source.flux_lm / 1000.0
@@ -302,13 +301,10 @@ def photometric_azimuth_profile(
     group_profiles = []
     for source in sources:
         group_values = [
-            (
-                _base_group_intensity(
-                    group_ldt, c - source.azimuth_deg - c_rotation, gamma_deg, symmetric=symmetric,
-                )
-                * source.flux_lm / 1000.0
-                if 0.0 <= c <= 180.0 else 0.0
+            _base_group_intensity(
+                group_ldt, c - source.azimuth_deg - c_rotation, gamma_deg, symmetric=symmetric,
             )
+            * source.flux_lm / 1000.0
             for c in c_angles
         ]
         group_max = max(group_values, default=0.0)
@@ -342,7 +338,9 @@ def _positions(
     width = scenario.carriageway_width_m
     periods = max(5, math.ceil(5.0 * scenario.height_m / scenario.spacing_m) + 1)
     k_min = -periods if k_min is None else k_min
-    k_max = periods if k_max is None else k_max
+    # The displayed calculation span is 0..S. Include the matching pole at
+    # (periods + 1)S so the finite row remains mirrored about S/2.
+    k_max = periods + 1 if k_max is None else k_max
     left_y = -scenario.edge_offset_m if scenario.pole_side == "left" else width + scenario.edge_offset_m
     right_y = width + scenario.edge_offset_m if scenario.pole_side == "left" else -scenario.edge_offset_m
     left_orientation = 0.0 if scenario.pole_side == "left" else 180.0
@@ -615,14 +613,37 @@ def calculate_road(
     include_visual_grid: bool = True,
     include_glare_metrics: bool = True,
     angles_deg: tuple[float, ...] | None = None,
+    use_composed_luminaire: bool = True,
 ) -> RoadCalculation:
     group_ldt.validate()
     operating = calculate_luminaire_operating_point(currents_ma, model, cct_k, cri)
     if angles_deg is None:
         angles_deg = tuple((index + 0.5) * 180.0 / model.group_count for index in range(model.group_count))
+    if not use_composed_luminaire:
+        metrics, visual_grid = _calculate_road_for_sources(
+            group_ldt,
+            _virtual_sources(operating, angles_deg),
+            scenario,
+            rtable,
+            include_visual_grid=include_visual_grid,
+            include_glare_metrics=include_glare_metrics,
+            power_limit_ok=operating.power_limit_ok,
+            power_input_w=operating.total_driver_power_w,
+        )
+        return RoadCalculation(scenario, operating, metrics, visual_grid)
+    luminaire_ldt = compose_luminaire(
+        group_ldt, operating, angles_deg=angles_deg,
+        c_step_deg=1.0, gamma_step_deg=1.0,
+        cct_k=cct_k, cri=cri,
+    )
     metrics, visual_grid = _calculate_road_for_sources(
-        group_ldt,
-        _virtual_sources(operating, angles_deg),
+        luminaire_ldt,
+        (VirtualGroupSource(
+            0.0,
+            luminaire_ldt.flux_lm,
+            directional_c0_c180=luminaire_ldt.metadata.get("directional_c0_c180", "false").lower() == "true",
+            apply_group_rotation=False,
+        ),),
         scenario,
         rtable,
         include_visual_grid=include_visual_grid,
@@ -648,7 +669,12 @@ def calculate_reference_road(
     reference_scenario = replace(scenario, photometry_symmetry="asymmetric")
     metrics, visual_grid = _calculate_road_for_sources(
         luminaire_ldt,
-        (VirtualGroupSource(0.0, luminaire_ldt.flux_lm, directional_c0_c180=False),),
+        (VirtualGroupSource(
+            0.0,
+            luminaire_ldt.flux_lm,
+            directional_c0_c180=luminaire_ldt.metadata.get("directional_c0_c180", "false").lower() == "true",
+            apply_group_rotation=False,
+        ),),
         reference_scenario,
         rtable,
         include_visual_grid=include_visual_grid,

@@ -57,7 +57,7 @@ def calibrate_orientation(
     c_solid_angle = np.radians(c_step_deg)
     gamma_solid_angle = np.asarray([
         np.cos(np.radians(max(0.0, gamma - gamma_step_deg / 2.0)))
-        - np.cos(np.radians(min(90.0, gamma + gamma_step_deg / 2.0)))
+        - np.cos(np.radians(min(180.0, gamma + gamma_step_deg / 2.0)))
         for gamma in reference.gamma_angles_deg
     ])
     # Compare integrated angular flux, not raw cd/klm. This avoids making the

@@ -54,15 +54,13 @@ def compose_luminaire(group_ldt: LdtPhotometry, operating_point: LuminaireOperat
     if len(angles_deg) != len(operating_point.groups):
         raise ValueError("group angle count does not match operating point")
     c_count = int(round(360.0 / c_step_deg))
-    g_count = int(round(90.0 / gamma_step_deg)) + 1
+    g_count = int(round(180.0 / gamma_step_deg)) + 1
     c_angles = [index * c_step_deg for index in range(c_count)]
     gamma_angles = [index * gamma_step_deg for index in range(g_count)]
     total_flux = operating_point.total_flux_lm
     c_rotation = group_c_rotation_deg(group_ldt)
     matrix: list[list[float]] = []
     def total_at(c: float, gamma: float) -> float:
-        if not 0.0 <= c % 360.0 <= 180.0:
-            return 0.0
         return sum(
             group_ldt.intensity_cd_per_klm(c - angle - c_rotation, gamma) * point.group_flux_lm / 1000.0
             for angle, point in zip(angles_deg, operating_point.groups)
@@ -93,7 +91,9 @@ def compose_luminaire(group_ldt: LdtPhotometry, operating_point: LuminaireOperat
             "source_report": f"Calculated sum of {group_count} azimuthal group LDTs",
             "source_date": "",
             "group_angles_deg": ",".join(map(str, angles_deg)),
-            "directional_c0_c180": "true",
+            # The source group can be directional, but the eight rotated
+            # groups form a complete 360 degree luminaire photometry.
+            "directional_c0_c180": "false",
             "group_c_rotation_deg": str(c_rotation),
         },
     )

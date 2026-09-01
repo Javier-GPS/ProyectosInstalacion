@@ -9025,6 +9025,7 @@ function _doExportZoneExcel(id, zone, ways, lang) {
     <xf numFmtId="0" fontId="1" fillId="4" borderId="1" xfId="0" applyFont="1" applyFill="1" applyBorder="1" applyAlignment="1"><alignment horizontal="center" vertical="center" wrapText="1"/></xf>
     <xf numFmtId="0" fontId="0" fillId="5" borderId="1" xfId="0" applyFill="1" applyBorder="1" applyAlignment="1"><alignment vertical="center"/></xf>
   </cellXfs>
+  <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
 </styleSheet>`;
     // Style indices: 1=header, 2=text odd, 3=text even, 4=num odd, 5=num even
 
@@ -9073,6 +9074,7 @@ function _doExportZoneExcel(id, zone, ways, lang) {
     const sheetXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
            xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <dimension ref="A1:${lastCell}"/>
   <sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
   <sheetFormatPr defaultRowHeight="15"/>
   <cols>${colsXml}</cols>
@@ -9142,6 +9144,7 @@ function _doExportZoneExcel(id, zone, ways, lang) {
     const summaryLast = summaryLetters[summaryHeaders.length - 1] + summaryData.length;
     const summarySheetXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <dimension ref="A1:${summaryLast}"/>
   <sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
   <sheetFormatPr defaultRowHeight="15"/><cols><col min="1" max="1" width="22"/><col min="2" max="2" width="25"/><col min="3" max="3" width="30"/><col min="4" max="7" width="16"/></cols>
   <sheetData>${summaryRowsXml}</sheetData><autoFilter ref="A1:${summaryLast}"/>
@@ -9165,7 +9168,7 @@ ${ssArr.map(s=>`<si><t xml:space="preserve">${s}</t></si>`).join('')}
     zip.file('xl/worksheets/_rels/sheet1.xml.rels', relsXml);
     zip.file('xl/worksheets/sheet2.xml', summarySheetXml);
 
-    zip.generateAsync({type:'blob', mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'})
+    zip.generateAsync({type:'blob', mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', compression:'DEFLATE', compressionOptions:{level:6}})
       .then(blob => {
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');

@@ -8845,12 +8845,12 @@ function _doExportZoneExcel(id, zone, ways, lang) {
       filePrefix:'Segmentos', toastMsg: n => `✓ ${n} segmentos exportados`
     },
     fr: {
-      headers: ['Zone','Nom de la voie','Type OSM','Type de voie','Long. segment (m)','Long. totale rue (km)',
-        'Largeur chaussée (m)','Source largeur','Voies OSM','Largeur OSM (m)','Chaussée',
-        'Surface (m²)','Revêtement OSM','Trottoir','Éclairement EN 13201 (lux)',
+      headers: ['Zone','Nom de la voie','Type OSM','Type de voie','Classe EN 13201','cd/m²','Éclairement requis',
+        'Long. segment (m)','Long. totale rue (km)','Largeur OSM (m)','Largeur effective (m)','Source largeur',
+        'Voies OSM','Largeur OSM brute (m)','Chaussée','Surface (m²)','Revêtement OSM','Trottoir',
         'Interdistance (m)','Nb mâts','Puissance/mât (W)','Puissance segment (kW)',
-        'Conso. LED annuelle (kWh)','Conso. LED+Adaptatif (kWh)',
-        'Latitude','Longitude','Luminaire sélectionné','Voir sur la carte'],
+        'Conso. LED annuelle (kWh)','Conso. LED+Adaptatif (kWh)','Latitude','Longitude',
+        'Luminaire sélectionné','Voir sur la carte'],
       roadLabels: {primary:'Primaire',secondary:'Secondaire',tertiary:'Tertiaire',residential:'Résidentielle',
         unclassified:'Non classée',living_street:'Zone résidentielle apaisée',pedestrian:'Piétonne',service:'Voie de service'},
       noName:'(sans nom)', single:'Simple', double:'Double', estimated:'estimé',
@@ -8944,8 +8944,9 @@ function _doExportZoneExcel(id, zone, ways, lang) {
       w.dual ? T.double : T.single,
        formulaCell(`H${xlRow}*K${xlRow}`, surf),
       w.surface || '', w.sidewalk || '',
-      formulaCell(`ROUND(H${xlRow}/S${xlRow},0)`, lums),
-      formulaCell(`IFERROR(V${xlRow}*1000/T${xlRow},0)`, wPerLum),
+       sp,
+       formulaCell(`ROUND(H${xlRow}/S${xlRow},0)`, lums),
+       formulaCell(`IFERROR(V${xlRow}*1000/T${xlRow},0)`, wPerLum),
       formulaCell(`G${xlRow}*P${xlRow}/${PROJECT_EFF}/1000`, totalKW),
       formulaCell(`V${xlRow}*12*365`, kwhLED),
       formulaCell(`W${xlRow}*0.5`, kwhAdap),
@@ -9044,7 +9045,7 @@ function _doExportZoneExcel(id, zone, ways, lang) {
         const isPhotoCol = hasPhoto && ci >= photoHdrOffset;
         const isFormula = !isHeader && val && typeof val === 'object' && val.formula;
         const rawVal = isFormula ? val.cached : val;
-        const isNum = !isHeader && numCols.has(ci) && rawVal !== '' && rawVal != null;
+         const isNum = !isHeader && numCols.has(ci) && rawVal !== '' && rawVal != null && Number.isFinite(Number(rawVal));
         const isLink = !isHeader && ci === linkCol && rawVal;
         let sIdx, cellXml;
         if (isHeader) {

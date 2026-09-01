@@ -1,6 +1,7 @@
 """Zones — CRUD, OSM, config, trees, Nominatim."""
 import asyncio
 import logging
+import math
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -17,7 +18,7 @@ from ..core.database import get_db, SessionLocal
 from ..core.helpers import fval
 from ..models import (
     GisLuminaire, GisLuxJob, GisLuxMaterialization,
-    GisPlanningDraft, GisProjectMembership, GisRoadWorkScope, GisZone, GisZoneConfig,
+    GisPlanningDraft, GisProjectMembership, GisRoadWorkScope, GisZone, GisZoneAlignment, GisZoneConfig,
     GisZoneOsmData, GisZoneSelection, GisZoneTrees, Project,
 )
 from ..schemas.zones import GisCreateZoneBody, GisPlanningDraftPut, GisRoadScopePut, GisRoutePreview, GisZoneSelectionPut
@@ -436,6 +437,67 @@ async def _enrich_buildings_background(zone_id: str, bbox: str, ways: list) -> N
         logger.warning("Background building enrichment failed for zone %s: %s", zone_id, exc)
     finally:
         _building_tasks.pop(zone_id, None)
+
+
+# ── Alignment (vector ↔ raster) ────────────────────────────────────────────
+@router.get("/api/zones/{zone_id}/alignment")
+async def gis_zone_alignment_get(
+    zone_id: str,
+    principal: Principal = Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    zone_for(principal, db, zone_id)
+    row = db.get(GisZoneAlignment, zone_id)
+    if not row:
+        return {"zone_id": zone_id, "dx": 0, "dy": 0, "dx_m": 0, "dy_m": 0, "confidence": 0, "source": "none", "updated_at": None}
+    return {
+        "zone_id": row.zone_id, "dx": row.dx, "dy": row.dy, "dx_m": row.dx_m, "dy_m": row.dy_m,
+        "confidence": row.confidence, "source": row.source,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+@router.post("/api/zones/{zone_id}/alignment/auto")
+async def gis_zone_alignment_auto(
+    zone_id: str,
+    principal: Principal = Depends(current_principal),
+    db: Session = Depends(get_db),
+):
+    zone = zone_for(principal, db, zone_id, write=True)
+    osm = db.get(GisZoneOsmData, zone_id)
+    if not osm or not isinstance(osm.ways, list) or not osm.ways:
+        raise HTTPException(status_code=422, detail="INVENTORY_UNAVAILABLE")
+    from ..services.road_alignment import auto_align_for_zone
+
+    result = await auto_align_for_zone(zone_id, osm.ways, zone.bbox or "")
+    if not result:
+        # No alignment found — store zero with low confidence
+        row = db.get(GisZoneAlignment, zone_id)
+        if row:
+            row.dx = row.dy = row.dx_m = row.dy_m = 0
+            row.confidence = 0
+            row.source = "none"
+            row.updated_at = datetime.now(timezone.utc)
+        else:
+            db.add(GisZoneAlignment(zone_id=zone_id, dx=0, dy=0, dx_m=0, dy_m=0, confidence=0, source="none"))
+        db.commit()
+        return {"zone_id": zone_id, "dx": 0, "dy": 0, "dx_m": 0, "dy_m": 0, "confidence": 0, "source": "none"}
+
+    dx, dy, conf, source = result
+    # Convert to meters for storage
+    lat = zone.center_lat or 40.0
+    d_lng, d_lat = (1 / (111320 * math.cos(math.radians(lat) or 1e-6)), 1 / 111320)
+    # dx,dy are in degrees; compute meters
+    dx_m = dx / d_lng if d_lng else 0
+    dy_m = dy / d_lat if d_lat else 0
+    row = db.get(GisZoneAlignment, zone_id)
+    now = datetime.now(timezone.utc)
+    if row:
+        row.dx, row.dy, row.dx_m, row.dy_m, row.confidence, row.source, row.updated_at = dx, dy, dx_m, dy_m, conf, source, now
+    else:
+        db.add(GisZoneAlignment(zone_id=zone_id, dx=dx, dy=dy, dx_m=dx_m, dy_m=dy_m, confidence=conf, source=source, updated_at=now))
+    db.commit()
+    return {"zone_id": zone_id, "dx": dx, "dy": dy, "dx_m": dx_m, "dy_m": dy_m, "confidence": conf, "source": source}
 
 
 @router.get("/api/zones/{zone_id}/building-widths")

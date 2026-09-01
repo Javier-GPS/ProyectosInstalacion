@@ -6,7 +6,7 @@ const EARTH_M = 6371008.8;
 
 export const roadSelectionIsCurrent = (draft: RoadSelectionDraft, inventory: GisPlanningInventory, boundary: GisZoneGeometry['boundary'] | undefined) =>
   draft.inventory_hash === inventory.base_inventory_hash
-  && draft.boundary_signature === JSON.stringify(boundary)
+  && draft.boundary_signature === JSON.stringify(boundary ?? null)
   && [draft.a?.target_ref, draft.b?.target_ref].filter(Boolean).every(targetRef => inventory.targets.some(target => target.target_ref === targetRef));
 
 export const distanceM = (a: [number, number], b: [number, number]) => {

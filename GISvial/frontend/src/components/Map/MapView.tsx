@@ -6,6 +6,8 @@ import { useMapLayer } from '../../hooks/useMapLayer';
 import type { GisPhotometricResult, GisPlanningInventoryTarget, GisPlanningPatch } from '../../types';
 import { nearestInventoryHit, pointInsideBoundary, polygonFromPoints, targetsInsidePolygon } from '../../lib/roadSelection';
 import { targetName, targetRef, targetDisplayLabel } from '../../lib/roadNaming';
+import { getZoneAlignment, autoAlignZone } from '../../lib/api';
+import { shiftLine, shiftRing, shiftLngLat } from '../../lib/alignment';
 import SegmentContextPopup from './SegmentContextPopup';
 import SegmentGeometryInfo from './SegmentGeometryInfo';
 
@@ -26,7 +28,7 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
   const initDone = useRef(false);
   const baseLayerRef = useRef<'osm' | 'satellite'>('osm');
   const [styleRevision, setStyleRevision] = useState(0);
-  const [contextPopup, setContextPopup] = useState<{ x: number; y: number; target: GisPlanningInventoryTarget; roadType: string | null } | null>(null);
+  const [contextPopup, setContextPopup] = useState<{ x: number; y: number; target: GisPlanningInventoryTarget | null; roadType: string | null; lngLat: [number, number] } | null>(null);
   const [hover, setHover] = useState<{ x: number; y: number; target: GisPlanningInventoryTarget; roadType: string | null } | null>(null);
   const contextOpenRef = useRef(false);
   const lastHoverRef = useRef(0);
@@ -113,7 +115,7 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
               return;
             }
           }
-          if (!zoneBoundary || !pointInsideBoundary(coord, zoneBoundary)) {
+          if (zoneBoundary && !pointInsideBoundary(coord, zoneBoundary)) {
             store.setRoadSelection(zoneId, { ...draft, error: 'El área debe quedar dentro del límite real de la zona.' });
             return;
           }
@@ -131,9 +133,11 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
           const inv = store.activePlanningInventory;
           console.log('[MapView click] inv:', inv?.zone_id, 'selectedZone:', store.selectedZoneId, 'targets with geometry:', inv?.targets.filter(t => t.geometry).length);
           if (inv && inv.zone_id === store.selectedZoneId) {
-            const targetsWithGeometry = inv.targets.filter(t => t.geometry);
+            const align = store.zoneAlignments[inv.zone_id];
+            const baseTargets = inv.targets.filter(t => t.geometry);
+            const targetsWithGeometry = !align || (align.dx === 0 && align.dy === 0) ? baseTargets : baseTargets.map(t => ({ ...t, geometry: (t.geometry as any).map((c: any) => [c[0] + align.dx, c[1] + align.dy]) }));
             console.log('[MapView click] calling nearestInventoryHit with', targetsWithGeometry.length, 'targets, point:', e.point);
-            const anchor = nearestInventoryHit(map, targetsWithGeometry, e.point, 30);
+            const anchor = nearestInventoryHit(map, targetsWithGeometry as any, e.point, 30);
             console.log('[MapView click] anchor:', anchor);
             if (anchor) {
               // Click sobre tramo ya seleccionado → deselección limpia (sin highlight rojo).
@@ -161,7 +165,12 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
         if (draft.area_points.length < 3) return;
         const inventory = store.activePlanningInventory;
         const boundary = polygonFromPoints(draft.area_points);
-        const insideRefs = inventory ? targetsInsidePolygon(inventory.targets, boundary) : [];
+        let insideRefs: string[] = [];
+        if (inventory) {
+          const align = store.zoneAlignments[inventory.zone_id];
+          const shifted = !align || (align.dx === 0 && align.dy === 0) ? inventory.targets : inventory.targets.map(t => ({ ...t, geometry: t.geometry ? (t.geometry as any).map((c: any) => [c[0] + align.dx, c[1] + align.dy]) : t.geometry }));
+          insideRefs = targetsInsidePolygon(shifted as any, boundary);
+        }
         store.setRoadSelection(zoneId, {
           ...draft,
           boundary,
@@ -216,7 +225,10 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
         } catch (err) { console.warn('[MapView hover] queryRenderedFeatures:', err); }
         if (!target) {
           try {
-            const anchor = nearestInventoryHit(map, inv.targets.filter(t => t.geometry), e.point, 15);
+            const alignHover = useGisStore.getState().zoneAlignments[inv.zone_id];
+            const baseHover = inv.targets.filter(t => t.geometry);
+            const shiftedHover = !alignHover || (alignHover.dx === 0 && alignHover.dy === 0) ? baseHover : baseHover.map(t => ({ ...t, geometry: (t.geometry as any).map((c: any) => [c[0] + alignHover.dx, c[1] + alignHover.dy]) }));
+            const anchor = nearestInventoryHit(map, shiftedHover as any, e.point, 15);
             if (anchor && anchor.target_ref) {
               target = inv.targets.find(t => t.target_ref === anchor.target_ref);
             }
@@ -248,7 +260,7 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
       if (source) source.setData(data);
       };
 
-      // Right-click → context popup with segment info & editing
+      // Right-click → context popup with segment info & Street View
       map.on('contextmenu', (e: any) => {
         e.originalEvent.preventDefault();
         const store = useGisStore.getState();
@@ -259,15 +271,17 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
         const draft = zoneId ? store.roadSelectionByZone[zoneId] : undefined;
         if (draft && (draft.status === 'draw_area' || draft.status === 'pick_a' || draft.status === 'pick_b')) return;
 
-        const anchor = nearestInventoryHit(map, inv.targets.filter(t => t.geometry), e.point, 30);
-        if (!anchor) return;
-        const target = inv.targets.find(t => t.target_ref === anchor.target_ref);
-        if (!target) return;
-        const group = inv.groups.find(g => g.group_ref === target.group_ref);
+        const lngLat: [number, number] = [e.lngLat.lng, e.lngLat.lat];
+        const alignCtx = store.zoneAlignments[inv.zone_id];
+        const baseForCtx = inv.targets.filter(t => t.geometry);
+        const shiftedForCtx = !alignCtx || (alignCtx.dx === 0 && alignCtx.dy === 0) ? baseForCtx : baseForCtx.map(t => ({ ...t, geometry: (t.geometry as any).map((c: any) => [c[0] + alignCtx.dx, c[1] + alignCtx.dy]) }));
+        const anchor = nearestInventoryHit(map, shiftedForCtx as any, e.point, 30);
+        const target = anchor ? inv.targets.find(t => t.target_ref === anchor.target_ref) : null;
+        const group = target ? inv.groups.find(g => g.group_ref === target.group_ref) : null;
         contextOpenRef.current = true;
         setHover(null);
         hoverRef.current = null;
-        setContextPopup({ x: e.originalEvent.clientX, y: e.originalEvent.clientY, target, roadType: group?.road_type || null });
+        setContextPopup({ x: e.originalEvent.clientX, y: e.originalEvent.clientY, target: target || null, roadType: group?.road_type || null, lngLat });
       });
     });
 
@@ -417,6 +431,29 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
     };
   }, [mapContainerId]);
 
+  /* ── Alignment: fetch and auto-align vector ↔ raster ─────────────────── */
+  useEffect(() => {
+    if (!selectedZoneId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await getZoneAlignment(selectedZoneId);
+        if (cancelled) return;
+        useGisStore.getState().setZoneAlignment(selectedZoneId, { dx: res.dx || 0, dy: res.dy || 0, dx_m: res.dx_m || 0, dy_m: res.dy_m || 0, confidence: res.confidence || 0, source: res.source || 'none', updated_at: res.updated_at });
+        if ((!res.dx && !res.dy) && (res.confidence || 0) === 0) {
+          const zone = useGisStore.getState().zones.find(z => z.id === selectedZoneId);
+          if (!zone?.bbox) return;
+          try {
+            const auto = await autoAlignZone(selectedZoneId);
+            if (cancelled) return;
+            useGisStore.getState().setZoneAlignment(selectedZoneId, { dx: auto.dx || 0, dy: auto.dy || 0, dx_m: auto.dx_m || 0, dy_m: auto.dy_m || 0, confidence: auto.confidence || 0, source: auto.source || 'auto', updated_at: new Date().toISOString() });
+          } catch { /* ignore */ }
+        }
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedZoneId]);
+
   /* ── Update layers (non-destructive, each group is independent) ──────── */
   const updateZoneBounds = useCallback(() => {
     const map = mapRef.current;
@@ -424,12 +461,21 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
 
     const boundsFeats: any[] = [];
     zones.forEach(z => {
-      const boundary = z.geometry?.boundary;
+      const boundary: any = z.geometry?.boundary;
       if (boundary) {
+        const align = useGisStore.getState().zoneAlignments[z.id];
+        let geom = boundary;
+        if (align && (align.dx !== 0 || align.dy !== 0)) {
+          if (boundary.type === 'Polygon') {
+            geom = { ...boundary, coordinates: boundary.coordinates.map((ring: any) => ring.map((c: any) => [c[0] + align.dx, c[1] + align.dy])) };
+          } else if (boundary.type === 'MultiPolygon') {
+            geom = { ...boundary, coordinates: boundary.coordinates.map((poly: any) => poly.map((ring: any) => ring.map((c: any) => [c[0] + align.dx, c[1] + align.dy]))) };
+          }
+        }
         boundsFeats.push({
           type: 'Feature',
           properties: { color: z.color, selected: z.id === selectedZoneId },
-          geometry: boundary,
+          geometry: geom,
         });
       }
     });
@@ -457,10 +503,12 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
     });
 
     if (!planningInventory || planningInventory.zone_id !== selectedZoneId) return;
+    const align = planningInventory.zone_id ? useGisStore.getState().zoneAlignments[planningInventory.zone_id] : undefined;
     const groups = new Map(planningInventory.groups.map(group => [group.group_ref, group]));
     const feats = planningInventory.targets.flatMap(target => {
       const group = groups.get(target.group_ref);
       if (!target.geometry || roadTypeVisibility[target.group_ref] === false) return [];
+      const coords = align && (align.dx !== 0 || align.dy !== 0) ? (target.geometry as any).map((c: any) => [c[0] + align.dx, c[1] + align.dy]) : target.geometry;
       return [{
         type: 'Feature' as const,
         properties: {
@@ -473,7 +521,7 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
           nameState: target.nameState || '',
           roadRole: target.roadRole || '',
         },
-        geometry: { type: 'LineString' as const, coordinates: target.geometry },
+        geometry: { type: 'LineString' as const, coordinates: coords },
       }];
     });
     if (!feats.length) return;
@@ -496,11 +544,16 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
       removeSource(map, `lums-src-${z.id}`);
 
       if (!lums?.length) return;
-      const feats = lums.map(l => ({
-        type: 'Feature' as const,
-        properties: { lumId: `${z.id}__${l.id}` },
-        geometry: { type: 'Point' as const, coordinates: [l.lon, l.lat] },
-      }));
+      const align = useGisStore.getState().zoneAlignments[z.id];
+      const feats = lums.map(l => {
+        const lon = align ? l.lon + align.dx : l.lon;
+        const lat = align ? l.lat + align.dy : l.lat;
+        return {
+          type: 'Feature' as const,
+          properties: { lumId: `${z.id}__${l.id}` },
+          geometry: { type: 'Point' as const, coordinates: [lon, lat] },
+        };
+      });
 
       addSource(map, { id: `lums-src-${z.id}`, type: 'geojson', data: { type: 'FeatureCollection', features: feats } });
       addLayer(map, {
@@ -533,8 +586,12 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
       else if (draft.area_points.length >= 2) features.push({ type: 'Feature', properties: { kind: 'area-line' }, geometry: { type: 'LineString', coordinates: draft.area_points } });
     }
     const selectedTargetRefs = new Set([draft.a?.target_ref, draft.b?.target_ref].filter(Boolean));
+    const alignRS = planningInventory?.zone_id ? useGisStore.getState().zoneAlignments[planningInventory.zone_id] : undefined;
     planningInventory?.targets.forEach(target => {
-      if (target.geometry && selectedTargetRefs.has(target.target_ref)) features.push({ type: 'Feature', properties: { kind: 'target' }, geometry: { type: 'LineString', coordinates: target.geometry } });
+      if (target.geometry && selectedTargetRefs.has(target.target_ref)) {
+        const coords = alignRS && (alignRS.dx !== 0 || alignRS.dy !== 0) ? (target.geometry as any).map((c: any) => [c[0] + alignRS.dx, c[1] + alignRS.dy]) : target.geometry;
+        features.push({ type: 'Feature', properties: { kind: 'target' }, geometry: { type: 'LineString', coordinates: coords } });
+      }
     });
     if (draft.path?.length && draft.status === 'complete') features.push({ type: 'Feature', properties: { kind: 'path' }, geometry: { type: 'LineString', coordinates: draft.path } });
     if (draft.a) features.push({ type: 'Feature', properties: { kind: 'a' }, geometry: { type: 'Point', coordinates: draft.a.coordinate } });
@@ -644,15 +701,17 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
     removeLayer(map, 'highlight-street');
     removeLayer(map, 'highlight-segment');
     removeSource(map, 'highlight');
+    const alignH = planningInventory?.zone_id ? useGisStore.getState().zoneAlignments[planningInventory.zone_id] : undefined;
+    const shiftH = (coords: any) => alignH && (alignH.dx !== 0 || alignH.dy !== 0) ? coords.map((c: any) => [c[0] + alignH.dx, c[1] + alignH.dy]) : coords;
 
     const features: any[] = [];
     if (selectedTargetRef && planningInventory?.zone_id === selectedZoneId) {
       const target = planningInventory.targets.find(t => t.target_ref === selectedTargetRef);
-      if (target?.geometry) features.push({ type: 'Feature', properties: { kind: 'segment' }, geometry: { type: 'LineString', coordinates: target.geometry } });
+      if (target?.geometry) features.push({ type: 'Feature', properties: { kind: 'segment' }, geometry: { type: 'LineString', coordinates: shiftH(target.geometry) } });
       if (selectedStreetName) {
         planningInventory.targets.forEach(t => {
           if ((targetName(t) || '') !== selectedStreetName || t.target_ref === selectedTargetRef || !t.geometry) return;
-          features.push({ type: 'Feature', properties: { kind: 'street' }, geometry: { type: 'LineString', coordinates: t.geometry } });
+          features.push({ type: 'Feature', properties: { kind: 'street' }, geometry: { type: 'LineString', coordinates: shiftH(t.geometry) } });
         });
       }
     }
@@ -672,11 +731,13 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
     const zoneSel = selectedZoneId ? (accumulatedSelection[selectedZoneId] || {}) : {};
     const selRefs = new Set(Object.keys(zoneSel));
     if (!selRefs.size || !planningInventory || planningInventory.zone_id !== selectedZoneId) return;
+    const alignAcc = planningInventory.zone_id ? useGisStore.getState().zoneAlignments[planningInventory.zone_id] : undefined;
 
     const feats: any[] = [];
     planningInventory.targets.forEach(target => {
       if (target.geometry && selRefs.has(target.target_ref)) {
-        feats.push({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: target.geometry } });
+        const coords = alignAcc && (alignAcc.dx !== 0 || alignAcc.dy !== 0) ? (target.geometry as any).map((c: any) => [c[0] + alignAcc.dx, c[1] + alignAcc.dy]) : target.geometry;
+        feats.push({ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } });
       }
     });
     if (!feats.length) return;
@@ -745,12 +806,13 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
           </div>
         </div>
       )}
-      {contextPopup && (
+      {contextPopup && contextPopup.target && (
         <SegmentContextPopup
           x={contextPopup.x}
           y={contextPopup.y}
           target={contextPopup.target}
           roadType={contextPopup.roadType}
+          lngLat={contextPopup.lngLat}
           onClose={closeContextPopup}
           onSelectStreet={(streetName) => {
             const store = useGisStore.getState();
@@ -765,6 +827,20 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
             if (anyChanged) store.setSelectedSegment(null, null);
           }}
         />
+      )}
+      {contextPopup && !contextPopup.target && (
+        <div
+          className="fixed z-50 rounded-lg bg-white shadow-xl ring-1 ring-black/10"
+          style={{ left: Math.max(4, Math.min(contextPopup.x, window.innerWidth - 220)), top: Math.max(4, Math.min(contextPopup.y, window.innerHeight - 80)) }}
+        >
+          <button
+            onClick={() => { window.open(`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${contextPopup.lngLat[1]},${contextPopup.lngLat[0]}`, '_blank'); closeContextPopup(); }}
+            className="flex w-full items-center gap-2 px-3 py-2 text-xs font-medium text-salvi-black hover:bg-salvi-surface"
+          >
+            📷 Abrir en Street View
+          </button>
+          <button onClick={closeContextPopup} className="w-full border-t border-salvi-line px-3 py-1 text-[10px] text-salvi-muted hover:bg-salvi-surface">Cerrar</button>
+        </div>
       )}
     </>
   );

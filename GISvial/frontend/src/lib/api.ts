@@ -83,6 +83,16 @@ export const getBuildingWidths = (zoneId: string, signal?: AbortSignal) =>
     `/api/zones/${zoneId}/building-widths`, undefined, undefined, signal,
   );
 
+export const getZoneAlignment = (zoneId: string, signal?: AbortSignal) =>
+  api<{ zone_id: string; dx: number; dy: number; dx_m: number; dy_m: number; confidence: number; source: string; updated_at: string | null }>(
+    `/api/zones/${zoneId}/alignment`, undefined, undefined, signal,
+  );
+
+export const autoAlignZone = (zoneId: string, signal?: AbortSignal) =>
+  api<{ zone_id: string; dx: number; dy: number; dx_m: number; dy_m: number; confidence: number; source: string }>(
+    `/api/zones/${zoneId}/alignment/auto`, { method: 'POST' }, undefined, signal,
+  );
+
 export const getEditorFeatures = (zoneId: string, bbox: string, signal?: AbortSignal) =>
   api<{ features: { kind: string; ring: [number, number][]; height?: number | null }[]; error?: string }>(
     `/api/zones/${zoneId}/editor-features?bbox=${encodeURIComponent(bbox)}`, undefined, undefined, signal,

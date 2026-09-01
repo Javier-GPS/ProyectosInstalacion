@@ -204,6 +204,21 @@ class GisZoneSelection(Base):
     updated_by: Mapped[int | None] = mapped_column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
 
+class GisZoneAlignment(Base):
+    """Per-zone automatic vector ↔ raster alignment (dx/dy in degrees and meters)."""
+
+    __tablename__ = "gis_zone_alignment"
+
+    zone_id: Mapped[str] = mapped_column(String(50), ForeignKey("gis_zones.id", ondelete="CASCADE"), primary_key=True)
+    dx: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    dy: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    dx_m: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    dy_m: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    source: Mapped[str] = mapped_column(String(50), default="auto")
+    confidence: Mapped[float] = mapped_column(Float, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow)
+
+
 def _ensure_gis_columns() -> None:
   """Add columns that may be missing after a CREATE TABLE IF NOT EXISTS."""
   import sqlalchemy as sa
@@ -296,5 +311,6 @@ def ensure_gis_tables() -> None:
     GisPlanningDraft.__table__.create(bind=engine, checkfirst=True)
     GisRoadWorkScope.__table__.create(bind=engine, checkfirst=True)
     GisZoneSelection.__table__.create(bind=engine, checkfirst=True)
+    GisZoneAlignment.__table__.create(bind=engine, checkfirst=True)
     _ensure_projects_columns()
     _ensure_gis_columns()

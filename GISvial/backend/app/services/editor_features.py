@@ -10,8 +10,11 @@ import httpx
 from typing import Any, Mapping
 
 from .overpass import parse_bbox
+from ..core.redis import cache_get, cache_set
 
 logger = logging.getLogger(__name__)
+
+EDITOR_FEATURES_CACHE_TTL = 3600  # 1 hour cache for Overpass responses
 
 GREEN = {
     "grass", "meadow", "forest", "village_green", "recreation_ground",
@@ -39,10 +42,17 @@ def _num(value: object) -> float | None:
 
 
 def _height(tags: Mapping) -> float | None:
-    h = _num(tags.get("building:height"))
+    h = _num(tags.get("height")) or _num(tags.get("building:height"))
     if h is None and _num(tags.get("building:levels")):
         h = _num(tags.get("building:levels")) * 3.2
     return h
+
+
+def _base(tags: Mapping) -> float | None:
+    levels = _num(tags.get("building:min_level"))
+    if levels is None:
+        return None
+    return levels * 3.2
 
 
 def _kind(tags: Mapping) -> str | None:
@@ -81,10 +91,14 @@ async def _overpass(query: str) -> Any:
 
 async def fetch_editor_features(bbox: str) -> list[dict]:
     """Devuelve [{'kind': 'building'|'green'|'water', 'ring', 'height'?}] para el bbox."""
+    cached = await cache_get(f"editor-features:{bbox}")
+    if cached is not None:
+        return cached
     south, north, west, east = parse_bbox(bbox)
     query = (
         f"[out:json][timeout:120];\n"
         f"way[\"building\"]({south},{west},{north},{east});\n"
+        f"way[\"building:part\"]({south},{west},{north},{east});\n"
         f"way[\"leisure\"=\"park\"]({south},{west},{north},{east});\n"
         f"way[\"natural\"~\"water|wood|grassland\"]({south},{west},{north},{east});\n"
         f"way[\"waterway\"]({south},{west},{north},{east});\n"
@@ -114,5 +128,9 @@ async def fetch_editor_features(bbox: str) -> list[dict]:
         item: dict = {"kind": kind, "ring": pts}
         if kind == "building":
             item["height"] = _height(tags)
+            base = _base(tags)
+            if base is not None:
+                item["base"] = base
         out.append(item)
+    await cache_set(f"editor-features:{bbox}", out, EDITOR_FEATURES_CACHE_TTL)
     return out

@@ -23,13 +23,15 @@ interface SegmentContextPopupProps {
   target: GisPlanningInventoryTarget;
   /** Road type string (e.g. 'primary') */
   roadType: string | null;
+  /** Click position for Street View */
+  lngLat?: [number, number];
   /** Close handler */
   onClose: () => void;
   /** Select entire street callback */
   onSelectStreet?: (streetName: string) => void;
 }
 
-const SegmentContextPopup: React.FC<SegmentContextPopupProps> = ({ x, y, target, roadType, onClose, onSelectStreet }) => {
+const SegmentContextPopup: React.FC<SegmentContextPopupProps> = ({ x, y, target, roadType, lngLat, onClose, onSelectStreet }) => {
   const ref = useRef<HTMLDivElement>(null);
   const planningPayload = useGisStore(s => s.planningPayload);
   const inventory = useGisStore(s => s.activePlanningInventory);
@@ -130,6 +132,21 @@ const SegmentContextPopup: React.FC<SegmentContextPopupProps> = ({ x, y, target,
         {roadType && <span>{cfg ? cfg.labelKey.replace('road.', '') : roadType}</span>}
       </div>
       <SegmentGeometryInfo target={target} />
+
+      {/* Street View */}
+      <div className="border-b border-salvi-line/50 px-3 py-2">
+        <button
+          onClick={() => {
+            const coords = lngLat || (target.geometry && target.geometry.length ? (() => { const g = target.geometry as [number, number][]; const i = Math.floor((g.length - 1) / 2); const a = g[i]; const b = g[i + 1] ?? a; return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] as [number, number]; })() : null);
+            if (!coords) return;
+            window.open(`https://www.google.com/maps/@?api=1&map_action=pano&viewpoint=${coords[1]},${coords[0]}`, '_blank');
+          }}
+          className="flex w-full items-center justify-center gap-1.5 rounded border border-salvi-line bg-white px-2 py-1.5 text-xs font-medium text-salvi-black hover:bg-salvi-surface"
+        >
+          📷 Abrir en Street View
+        </button>
+        <p className="mt-1 text-center text-[9px] text-salvi-muted">Observa carriles, aceras y anchuras y completa los valores abajo.</p>
+      </div>
 
       {/* Street selection */}
       {hasStreetSelection && (

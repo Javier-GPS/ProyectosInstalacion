@@ -2,7 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import maplibregl from 'maplibre-gl';
 import { useI18n } from '../../i18n';
 import { useGisStore, ROAD_CFG } from '../../store/useGisStore';
-import { getEditorFeatures, getBuildingWidths, getZoneTrees, bulkSaveLuminaires, deleteLuminaire, exportDxfObjects } from '../../lib/api';
+import { getEditorFeatures, getBuildingWidths, getZoneTrees, bulkSaveLuminaires, deleteLuminaire, exportDxfObjects, getZoneAlignment, autoAlignZone } from '../../lib/api';
+import { shiftLine, shiftRing, shiftLngLat, unshiftLngLat } from '../../lib/alignment';
 import { makeEditorObject, type EditorObject } from '../../lib/editorObjects';
 import { effectiveInventory } from '../../lib/planningOverrides';
 import { targetName, targetDisplayLabel } from '../../lib/roadNaming';
@@ -12,10 +13,11 @@ import {
   roadPolygon, sidewalkPolygons, rotateFootprint, bboxOfMany, offsetEdge, lineLengthM,
   pointAlongLine, lateralOffsetPoint,
   buildingHeight, parseBuildings, parseTrees, metersToDeg, pointInPolygon,
+  connectStreetSegments, joinStreetPath,
   type LngLat, type FarolaPlacement,
 } from '../../lib/editorGeometry';
 import type { GisPlanningInventoryTarget } from '../../types';
-import EditorToolbar from './EditorToolbar';
+import EditorToolbar, { type EditorBase } from './EditorToolbar';
 import EditorRoadInspector from './RoadInspector';
 import ObjectsPanel from './ObjectsPanel';
 import FarolaPlacementPopup, { type FarolaPlaceResult } from './FarolaPlacementPopup';
@@ -24,7 +26,7 @@ const setVis = (map: maplibregl.Map, id: string, vis: 'visible' | 'none') => {
   if (map.getLayer(id)) { try { map.setLayoutProperty(id, 'visibility', vis); } catch { /* ignore */ } }
 };
 
-const addExtrusion = (map: maplibregl.Map, id: string, data: any, height: any, base: number, color: any) => {
+const addExtrusion = (map: maplibregl.Map, id: string, data: any, height: any, base: any, color: any) => {
   if (map.getSource(id)) { (map.getSource(id) as any).setData(data); } else { map.addSource(id, { type: 'geojson', data }); }
   if (!map.getLayer(id)) {
     map.addLayer({
@@ -71,7 +73,8 @@ const CityEditor: React.FC = () => {
   const [ready, setReady] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
   const [view3d, setView3d] = useState(false);
-  const [base, setBase] = useState<'plan' | 'aerial'>('plan');
+  const [base, setBase] = useState<EditorBase>('plan');
+  const [relief, setRelief] = useState<'none' | 'hillshade' | 'terrain'>('none');
   const [noSel, setNoSel] = useState(false);
   const [layers, setLayers] = useState<Record<string, boolean>>({
     buildings: true, trees: true, luminaries: true, roads: true, sidewalks: true, objects: true,
@@ -91,11 +94,51 @@ const CityEditor: React.FC = () => {
   const measureRef = useRef<LngLat[]>([]);
   const [placePopup, setPlacePopup] = useState<{ x: number; y: number; path: LngLat[]; roadHalfWidth: number; label: string; obstacleRings: LngLat[][] } | null>(null);
   const [measure, setMeasure] = useState<{ x: number; y: number; text: string } | null>(null);
+  const [routeNotice, setRouteNotice] = useState<string | null>(null);
+  const routeNoticeTimerRef = useRef<number | undefined>(undefined);
+  const [buildingsState, setBuildingsState] = useState<'loading' | 'done' | 'none' | null>(null);
+
+  const showRouteNotice = useCallback((msg: string) => {
+    setRouteNotice(msg);
+    window.clearTimeout(routeNoticeTimerRef.current);
+    routeNoticeTimerRef.current = window.setTimeout(() => setRouteNotice(null), 4500);
+  }, []);
+
+  const zoneAlignments = useGisStore(s => s.zoneAlignments);
+  const setZoneAlignmentStore = useGisStore(s => s.setZoneAlignment);
+  const alignment = zoneId ? zoneAlignments[zoneId] : undefined;
+  const [aligning, setAligning] = useState(false);
+
+  // Fetch alignment and auto-trigger if missing
+  useEffect(() => {
+    if (!zoneId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await getZoneAlignment(zoneId);
+        if (cancelled) return;
+        setZoneAlignmentStore(zoneId, { dx: res.dx || 0, dy: res.dy || 0, dx_m: res.dx_m || 0, dy_m: res.dy_m || 0, confidence: res.confidence || 0, source: res.source || 'none', updated_at: res.updated_at });
+        // Auto-align if never aligned and we have a bbox
+        if ((!res.dx && !res.dy) && res.confidence === 0) {
+          const zone = useGisStore.getState().zones.find(z => z.id === zoneId);
+          if (!zone?.bbox) return;
+          setAligning(true);
+          try {
+            const auto = await autoAlignZone(zoneId);
+            if (!cancelled) setZoneAlignmentStore(zoneId, { dx: auto.dx || 0, dy: auto.dy || 0, dx_m: auto.dx_m || 0, dy_m: auto.dy_m || 0, confidence: auto.confidence || 0, source: auto.source || 'auto', updated_at: new Date().toISOString() });
+          } catch { /* ignore */ }
+          finally { if (!cancelled) setAligning(false); }
+        }
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [zoneId, setZoneAlignmentStore]);
 
   const applyVisibility = useCallback((map: maplibregl.Map) => {
     const plan = base === 'plan';
-    // CAD-style plan: neutral backdrop, no raster tiles. Base map is the drawn geometry.
-    setVis(map, 'satellite-layer', plan ? 'none' : 'visible');
+    // Plan: fondo neutro CAD; satélite/PNOA en sus modos
+    setVis(map, 'satellite-layer', base === 'aerial' ? 'visible' : 'none');
+    setVis(map, 'pnoa-layer', base === 'pnoa' ? 'visible' : 'none');
     for (const id of ['ed-ground', 'ed-green', 'ed-water']) setVis(map, id, plan ? 'visible' : 'none');
     const rv = plan && layers.roads ? 'visible' : 'none';
     setVis(map, 'ed-roads', rv); setVis(map, 'ed-marks', rv);
@@ -109,23 +152,30 @@ const CityEditor: React.FC = () => {
   }, [base, layers]);
 
   const buildEditorLayers = useCallback((map: maplibregl.Map, objs: any[]) => {
-    const objFeats = objs.map(o => ({ type: 'Feature', properties: { color: o.color, h: o.height }, geometry: { type: 'Polygon', coordinates: [rotateFootprint(o.lng, o.lat, o.width, o.length, o.rotation)] } }));
-    const pts = objs.map(o => ({ type: 'Feature', properties: { oid: o.id, color: o.color }, geometry: { type: 'Point', coordinates: [o.lng, o.lat] } }));
+    const st = useGisStore.getState();
+    const align = zoneId ? st.zoneAlignments[zoneId] : undefined;
+    const shiftedObjs = (!align || (align.dx === 0 && align.dy === 0)) ? objs : objs.map(o => ({ ...o, lng: o.lng + align.dx, lat: o.lat + align.dy }));
+    const objFeats = shiftedObjs.map(o => ({ type: 'Feature', properties: { color: o.color, h: o.height }, geometry: { type: 'Polygon', coordinates: [rotateFootprint(o.lng, o.lat, o.width, o.length, o.rotation)] } }));
+    const pts = shiftedObjs.map(o => ({ type: 'Feature', properties: { oid: o.id, color: o.color }, geometry: { type: 'Point', coordinates: [o.lng, o.lat] } }));
     addExtrusion(map, 'ed-obj-3d', { type: 'FeatureCollection', features: objFeats }, ['get', 'h'], 0, ['get', 'color']);
     if (map.getSource('ed-obj-circles')) { (map.getSource('ed-obj-circles') as any).setData({ type: 'FeatureCollection', features: pts }); } else {
       map.addSource('ed-obj-circles', { type: 'geojson', data: { type: 'FeatureCollection', features: pts } as any });
       map.addLayer({ id: 'ed-obj-circles', type: 'circle', source: 'ed-obj-circles', paint: { 'circle-radius': 5, 'circle-color': ['get', 'color'], 'circle-stroke-width': 1.5, 'circle-stroke-color': '#ffffff', 'circle-pitch-alignment': 'map', 'circle-pitch-scale': 'map' } } as any);
     }
-  }, []);
+  }, [zoneId]);
 
   const updateSelection = useCallback((map: maplibregl.Map, ids: string[], objs: any[]) => {
+    const st = useGisStore.getState();
+    const align = zoneId ? st.zoneAlignments[zoneId] : undefined;
+    const shift = (lng: number, lat: number): LngLat => (!align || (align.dx === 0 && align.dy === 0)) ? [lng, lat] : [lng + align.dx, lat + align.dy];
     const sel = ids.filter(id => objs.some(o => o.id === id));
     const feats: any[] = [];
     for (const id of sel) {
       const o = objs.find(x => x.id === id);
       if (!o) continue;
-      feats.push({ type: 'Feature', properties: { kind: 'poly' }, geometry: { type: 'Polygon', coordinates: [rotateFootprint(o.lng, o.lat, o.width, o.length, o.rotation)] } });
-      feats.push({ type: 'Feature', properties: { kind: 'pt' }, geometry: { type: 'Point', coordinates: [o.lng, o.lat] } });
+      const [slng, slat] = shift(o.lng, o.lat);
+      feats.push({ type: 'Feature', properties: { kind: 'poly' }, geometry: { type: 'Polygon', coordinates: [rotateFootprint(slng, slat, o.width, o.length, o.rotation)] } });
+      feats.push({ type: 'Feature', properties: { kind: 'pt' }, geometry: { type: 'Point', coordinates: [slng, slat] } });
     }
     const data = { type: 'FeatureCollection', features: feats } as any;
     if (map.getSource('ed-sel')) { (map.getSource('ed-sel') as any).setData(data); } else {
@@ -133,23 +183,27 @@ const CityEditor: React.FC = () => {
       map.addLayer({ id: 'ed-sel', type: 'line', source: 'ed-sel', filter: ['==', ['get', 'kind'], 'poly'], paint: { 'line-color': '#c9a227', 'line-width': 3 } } as any);
       map.addLayer({ id: 'ed-sel-pt', type: 'circle', source: 'ed-sel', filter: ['==', ['get', 'kind'], 'pt'], paint: { 'circle-radius': 16, 'circle-color': '#c9a227', 'circle-opacity': 0.35, 'circle-stroke-width': 2.5, 'circle-stroke-color': '#c9a227' } } as any);
     }
-  }, []);
+  }, [zoneId]);
 
   const computeEditorTargets = useCallback((): GisPlanningInventoryTarget[] => {
     if (!zoneId) return [];
     const st = useGisStore.getState();
+    const align = st.zoneAlignments[zoneId];
     const inv = st.activePlanningInventory ? effectiveInventory(st.activePlanningInventory, st.planningPayload) : null;
     const acc = st.accumulatedSelection[zoneId] || {};
     const saved = st.savedSelectionByZone[zoneId] || {};
     const hasSel = Object.keys(acc).length > 0;
     const hasSaved = Object.keys(saved).length > 0;
     const want = hasSel ? acc : hasSaved ? saved : null;
-    return inv?.targets.filter(tg => tg.geometry && (want ? want[tg.target_ref] : true)) || [];
+    const filtered = inv?.targets.filter(tg => tg.geometry && (want ? want[tg.target_ref] : true)) || [];
+    if (!align || (align.dx === 0 && align.dy === 0)) return filtered;
+    return filtered.map(tg => ({ ...tg, geometry: tg.geometry ? shiftLine(tg.geometry as LngLat[], align) as any : tg.geometry }));
   }, [zoneId]);
 
   /** Dibuja calzadas, aceras, marcas de carril y el relleno de suelo. Un bbox de vuelta. */
   const paintScene = useCallback((map: maplibregl.Map, targets: GisPlanningInventoryTarget[]) => {
     const st = useGisStore.getState();
+    const align = zoneId ? st.zoneAlignments[zoneId] : undefined;
     const groupTypes = new Map((st.activePlanningInventory?.groups || []).map(g => [g.group_ref, g.road_type]));
     const roads: any[] = [];
     const sidewalks: any[] = [];
@@ -157,7 +211,7 @@ const CityEditor: React.FC = () => {
     const baseRings: LngLat[][] = [];
     const ringsByRef: { ref: string; ring: LngLat[] }[] = [];
     for (const tg of targets) {
-      const geom = tg.geometry as LngLat[];
+      const geom = shiftLine(tg.geometry as LngLat[], align);
       const type = groupTypes.get(tg.group_ref);
       const w = tg.estWidth ?? ROAD_CFG[type || '']?.width ?? 5;
       const ring = roadPolygon(geom, w);
@@ -193,7 +247,7 @@ const CityEditor: React.FC = () => {
       map.addLayer({ id: 'ed-marks', type: 'line', source: 'ed-marks', paint: { 'line-color': '#ffffff', 'line-width': 1.6, 'line-dasharray': [1.6, 1.4] } } as any);
     }
     return bbox;
-  }, []);
+  }, [zoneId]);
 
   /** Overlay del recorrido de farolas: puntos A/B + línea. */
   const updateRouteOverlay = useCallback((map: maplibregl.Map, a: RoadSelectionAnchor | null, b: RoadSelectionAnchor | null, path: LngLat[] | null) => {
@@ -236,12 +290,16 @@ const CityEditor: React.FC = () => {
   }, []);
 
   const makeRouteFarola = useCallback((p: FarolaPlacement, opts: FarolaPlaceResult['opts']): EditorObject => {
-    const obj = makeEditorObject('farola', p.point[0], p.point[1]);
+    const st = useGisStore.getState();
+    const align = zoneId ? st.zoneAlignments[zoneId] : undefined;
+    const lng = align ? p.point[0] - align.dx : p.point[0];
+    const lat = align ? p.point[1] - align.dy : p.point[1];
+    const obj = makeEditorObject('farola', lng, lat);
     obj.rotation = p.rotation;
     obj.height = opts.poleH;
     obj.attrs = { ...obj.attrs, watts: opts.watts, armLength: opts.armLen, tilt: opts.tilt, spacing: opts.spacing, distribution: opts.distribution, setback: opts.setback };
     return obj;
-  }, []);
+  }, [zoneId]);
 
   const handlePlaceFarolas = useCallback((result: FarolaPlaceResult) => {
     const z = zoneId;
@@ -270,11 +328,14 @@ const CityEditor: React.FC = () => {
         version: 8,
         sources: {
           'satellite': { type: 'raster', tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'], tileSize: 256, maxzoom: 19, attribution: 'Tiles © Esri' },
+          'pnoa': { type: 'raster', tiles: ['https://www.ign.es/wmts/pnoa-ma?Service=WMTS&Request=GetTile&Version=1.0.0&Format=image/jpeg&Layer=OI.OrthoimageCoverage&Style=default&TileMatrixSet=GoogleMapsCompatible&TileMatrix={z}&TileCol={x}&TileRow={y}'], tileSize: 256, maxzoom: 19, attribution: 'Ortofotos PNOA © Instituto Geográfico Nacional de España' },
           'terrain-dem': { type: 'raster-dem', tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'], tileSize: 256, maxzoom: 14, encoding: 'terrarium' },
         },
         layers: [
           { id: 'bg', type: 'background', paint: { 'background-color': '#e6e1d6' } },
           { id: 'satellite-layer', type: 'raster', source: 'satellite', layout: { visibility: 'none' } },
+          { id: 'pnoa-layer', type: 'raster', source: 'pnoa', layout: { visibility: 'none' } },
+          { id: 'hillshade-layer', type: 'hillshade', source: 'terrain-dem', layout: { visibility: 'none' }, paint: { 'hillshade-illumination-direction': 315, 'hillshade-exaggeration': 0.4 } } as any,
         ],
       },
       center: [-3.7038, 40.4168], zoom: 15, pitch: 0, bearing: 0, maxPitch: 85, attributionControl: false,
@@ -283,6 +344,7 @@ const CityEditor: React.FC = () => {
     map.dragRotate.enable();
     map.touchZoomRotate.enableRotation();
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), 'bottom-right');
+    map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
 
     const lassoSet = (pts: LngLat[]) => {
       if (map.getSource('ed-lasso')) { (map.getSource('ed-lasso') as any).setData({ type: 'FeatureCollection', features: [{ type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: [...pts, pts[0]] } }] }); }
@@ -325,6 +387,41 @@ const CityEditor: React.FC = () => {
         updateRouteOverlay(map, anchor, null, null);
         return;
       }
+      if (a.target_ref !== anchor.target_ref) {
+        const streetSegs = targets
+          .filter(t => t.geometry)
+          .map(t => ({ ref: t.target_ref, geom: t.geometry as LngLat[] }));
+        const chain = connectStreetSegments(streetSegs, a.target_ref, anchor.target_ref);
+        const path = chain && chain.length > 1
+          ? joinStreetPath(streetSegs, chain, { measure: a.measure, coordinate: a.coordinate }, { measure: anchor.measure, coordinate: anchor.coordinate })
+          : null;
+        if (path && lineLengthM(path) > 0.5) {
+          const w = target.estWidth ?? ROAD_CFG[target.highway || '']?.width ?? 5;
+          const chainSet = new Set(chain);
+          const obstacleRings = roadRingsRef.current.filter(r => !chainSet.has(r.ref)).map(r => r.ring);
+          const aTarget = targets.find(t => t.target_ref === a.target_ref);
+          const aName = aTarget ? targetName(aTarget) : null;
+          const bName = targetName(target);
+          const label = aName && bName && aName !== bName
+            ? `${aName} → ${bName}`
+            : (aName || bName || targetDisplayLabel(target));
+          routeRef.current = { a, b: anchor };
+          setPlacePopup({
+            x: e.originalEvent?.clientX ?? e.point.x,
+            y: e.originalEvent?.clientY ?? e.point.y,
+            path,
+            roadHalfWidth: w / 2,
+            label,
+            obstacleRings,
+          });
+          updateRouteOverlay(map, a, anchor, path);
+          return;
+        }
+        showRouteNotice('No hay un camino conectado entre los dos puntos.');
+        routeRef.current = { a: anchor, b: null };
+        updateRouteOverlay(map, anchor, null, null);
+        return;
+      }
       routeRef.current = { a: anchor, b: null };
       updateRouteOverlay(map, anchor, null, null);
     };
@@ -352,7 +449,9 @@ const CityEditor: React.FC = () => {
                 const v: LngLat = [e.lngLat.lng - sample.point[0], e.lngLat.lat - sample.point[1]];
                 const side = (v[0] * sample.lNormal[0] + v[1] * sample.lNormal[1]) >= 0 ? 1 : -1;
                 const p = lateralOffsetPoint(sample, (w / 2) + off * side);
-                st.updateEditorObject(st.editorZoneId, st.editorSelectedIds[0], { lng: p[0], lat: p[1], rotation: sample.headingDeg });
+                const align = st.zoneAlignments[st.editorZoneId];
+                const up = unshiftLngLat(p, align);
+                st.updateEditorObject(st.editorZoneId, st.editorSelectedIds[0], { lng: up[0], lat: up[1], rotation: sample.headingDeg });
                 return;
               }
             }
@@ -362,7 +461,13 @@ const CityEditor: React.FC = () => {
       if (tool) {
         const z = st.editorZoneId;
         if (!z) return;
+        const align = st.zoneAlignments[z];
         const obj = makeEditorObject(tool, e.lngLat.lng, e.lngLat.lat);
+        // Store in OSM (unshifted) CRS — unshift the click position
+        {
+          const up = unshiftLngLat([obj.lng, obj.lat], align);
+          obj.lng = up[0]; obj.lat = up[1];
+        }
         try {
           const hit = nearestInventoryHit(map, targetsRef.current, e.point, 24);
           if (hit) {
@@ -377,8 +482,9 @@ const CityEditor: React.FC = () => {
                   const v: LngLat = [e.lngLat.lng - sample.point[0], e.lngLat.lat - sample.point[1]];
                   const side = (v[0] * sample.lNormal[0] + v[1] * sample.lNormal[1]) >= 0 ? 1 : -1;
                   const p = lateralOffsetPoint(sample, (w / 2) + off * side);
-                  obj.lng = p[0];
-                  obj.lat = p[1];
+                  const up = unshiftLngLat(p, align);
+                  obj.lng = up[0];
+                  obj.lat = up[1];
                 }
               }
             }
@@ -446,7 +552,12 @@ const CityEditor: React.FC = () => {
       }
       if (!draggingRef.current) return;
       const z = useGisStore.getState().editorZoneId;
-      if (z) useGisStore.getState().updateEditorObject(z, draggingRef.current, { lng: e.lngLat.lng, lat: e.lngLat.lat });
+      if (z) {
+        const st = useGisStore.getState();
+        const align = z ? st.zoneAlignments[z] : undefined;
+        const up = unshiftLngLat([e.lngLat.lng, e.lngLat.lat], align);
+        st.updateEditorObject(z, draggingRef.current, { lng: up[0], lat: up[1] });
+      }
     };
     const onMouseUp = () => {
       if (lassoRef.current) {
@@ -456,8 +567,9 @@ const CityEditor: React.FC = () => {
         if (pts.length >= 3) {
           const st = useGisStore.getState();
           const z = st.editorZoneId;
+          const align = z ? st.zoneAlignments[z] : undefined;
           const objs = z ? (st.editorObjects[z] || []) : [];
-          st.selectEditorObjects(objs.filter(o => pointInPolygon([o.lng, o.lat], pts)).map(o => o.id));
+          st.selectEditorObjects(objs.filter(o => pointInPolygon(shiftLngLat([o.lng, o.lat], align), pts)).map(o => o.id));
           st.setEditorTool(null);
         }
         return;
@@ -499,51 +611,65 @@ const CityEditor: React.FC = () => {
 
   const buildScene = useCallback((map: maplibregl.Map) => {
     const zid = zoneId as string;
+    const stAlign = useGisStore.getState().zoneAlignments[zid];
     const targets = computeEditorTargets();
     targetsRef.current = targets;
     if (!targets.length) { setNoSel(true); return; }
     setNoSel(false);
     const bbox = paintScene(map, targets);
     dataRef.current.bbox = bbox;
-    const clip = bbox ? expandBbox(bbox, 160) : null;
+    if (bbox) {
+      const limited = expandBbox(bbox, 5000);
+      try { map.setMaxBounds([[limited[0], limited[1]], [limited[2], limited[3]]] as any); } catch { /* ignore */ }
+    }
+    const clip = bbox ? expandBbox(bbox, 5000) : null;
     const bboxStr = bbox ? `${bbox[1]},${bbox[3]},${bbox[0]},${bbox[2]}` : '';
+    setBuildingsState('loading');
     (async () => {
-      let buildings: any[] = [];
       let greens: any[] = [];
       let waters: any[] = [];
-      let overpassOk = false;
+      let painted = false;
+      const paintBuildings = (features: any[]) => {
+        if (!features.length) return;
+        addExtrusion(map, 'ed-buildings', { type: 'FeatureCollection', features }, ['get', 'h'], ['get', 'base'], ['get', 'color']);
+        painted = true;
+        setBuildingsState('done');
+      };
+      // Fuente rápida: edificios del inventario con altura estimada, mientras Overpass responde.
+      (async () => {
+        try {
+          const bw: any = await getBuildingWidths(zid);
+          const rings = parseBuildings(bw?.buildings).filter(r => r.length >= 4 && (!clip || inBbox(ringCenter(shiftRing(r, stAlign)), clip)));
+          paintBuildings(rings.map(r => { const sr = shiftRing(r, stAlign); const h = buildingHeight(sr); return { type: 'Feature', properties: { h, base: 0, color: BUILDING_COLOR(h) }, geometry: { type: 'Polygon', coordinates: [sr] } }; }));
+        } catch { /* ignore */ }
+      })();
       try {
         const res: any = await getEditorFeatures(zid, bboxStr);
         const feats = res?.features || [];
-        overpassOk = true;
+        const buildings: any[] = [];
         for (const f of feats) {
-          const ring = f.ring as LngLat[];
+          const ring = shiftRing(f.ring as LngLat[], stAlign);
           if (!ring || ring.length < 4) continue;
           if (clip && !inBbox(ringCenter(ring), clip)) continue;
           const geo = { type: 'Polygon', coordinates: [ring] } as any;
           if (f.kind === 'green') greens.push({ type: 'Feature', properties: {}, geometry: geo });
           else if (f.kind === 'water') waters.push({ type: 'Feature', properties: {}, geometry: geo });
-          else if (f.kind === 'building') { const h = f.height || buildingHeight(ring); buildings.push({ type: 'Feature', properties: { h, color: BUILDING_COLOR(h) }, geometry: geo }); }
+          else if (f.kind === 'building') { const h = f.height || buildingHeight(ring); buildings.push({ type: 'Feature', properties: { h, base: f.base || 0, color: BUILDING_COLOR(h) }, geometry: geo }); }
         }
+        addFill(map, 'ed-green', { type: 'FeatureCollection', features: greens }, '#a9d3a0');
+        addFill(map, 'ed-water', { type: 'FeatureCollection', features: waters }, '#6fb4d9');
+        paintBuildings(buildings);
       } catch (err) { console.warn('[CityEditor] features', err); }
-      if (!overpassOk || !buildings.length) {
-        try {
-          const bw: any = await getBuildingWidths(zid);
-          const rings = parseBuildings(bw?.buildings).filter(r => r.length >= 4 && (!clip || inBbox(ringCenter(r), clip)));
-          buildings = rings.map(r => { const h = buildingHeight(r); return { type: 'Feature', properties: { h, color: BUILDING_COLOR(h) }, geometry: { type: 'Polygon', coordinates: [r] } }; });
-        } catch (err) { console.warn('[CityEditor] widths', err); }
-      }
-      addFill(map, 'ed-green', { type: 'FeatureCollection', features: greens }, '#a9d3a0');
-      addFill(map, 'ed-water', { type: 'FeatureCollection', features: waters }, '#6fb4d9');
-      if (buildings.length) addExtrusion(map, 'ed-buildings', { type: 'FeatureCollection', features: buildings }, ['get', 'h'], 0, ['get', 'color']);
+      if (!painted) setBuildingsState('none');
       try {
         const tr: any = await getZoneTrees(zid);
-        const pts = parseTrees(tr?.trees).filter(p => !clip || inBbox(p, clip));
-        const trees = pts.map(p => ({ type: 'Feature', properties: { h: 5, color: '#3f7d3f' }, geometry: { type: 'Polygon', coordinates: [rotateFootprint(p[0], p[1], 1.2, 1.2, 0)] } }));
+        const pts = parseTrees(tr?.trees).filter(p => !clip || inBbox(shiftLngLat(p, stAlign), clip));
+        const trees = pts.map(p => { const sp = shiftLngLat(p, stAlign); return { type: 'Feature', properties: { h: 5, color: '#3f7d3f' }, geometry: { type: 'Polygon', coordinates: [rotateFootprint(sp[0], sp[1], 1.2, 1.2, 0)] } }; });
         addExtrusion(map, 'ed-trees', { type: 'FeatureCollection', features: trees }, ['get', 'h'], 0, ['get', 'color']);
       } catch (err) { console.warn('[CityEditor] trees', err); }
       try {
-        const lum = (useGisStore.getState().zoneLuminaires[zid] || []).map(l => ({ type: 'Feature', properties: { color: '#FACC15' }, geometry: { type: 'Polygon', coordinates: [rotateFootprint(l.lon, l.lat, 0.3, 0.3, 0)] } }));
+        const lums = useGisStore.getState().zoneLuminaires[zid] || [];
+        const lum = lums.map(l => { const sp = shiftLngLat([l.lon, l.lat], stAlign) as LngLat; return { type: 'Feature', properties: { color: '#FACC15' }, geometry: { type: 'Polygon', coordinates: [rotateFootprint(sp[0], sp[1], 0.3, 0.3, 0)] } }; });
         addExtrusion(map, 'ed-lum', { type: 'FeatureCollection', features: lum }, 9, 0, ['get', 'color']);
       } catch (err) { console.warn('[CityEditor] lum', err); }
       applyVisibility(map);
@@ -572,8 +698,17 @@ const CityEditor: React.FC = () => {
     if (!map || !readyRef.current) return;
     const target = view3d ? 60 : 0;
     if (Math.abs(map.getPitch() - target) > 0.5) map.easeTo({ pitch: target, duration: 300 });
-    try { map.setTerrain(view3d ? { source: 'terrain-dem', exaggeration: 1.5 } : null); } catch { /* ignore */ }
   }, [view3d, ready]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !readyRef.current) return;
+    try {
+      if (relief === 'terrain') map.setTerrain({ source: 'terrain-dem', exaggeration: 1.5 } as any);
+      else map.setTerrain(null as any);
+    } catch { /* ignore */ }
+    setVis(map, 'hillshade-layer', relief === 'hillshade' ? 'visible' : 'none');
+  }, [relief, ready]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -643,6 +778,7 @@ const CityEditor: React.FC = () => {
     if (editorTool === 'farolas_route') return;
     routeRef.current = { a: null, b: null };
     setPlacePopup(null);
+    setRouteNotice(null);
     if (mapRef.current) updateRouteOverlay(mapRef.current, null, null, null);
   }, [editorTool, updateRouteOverlay]);
 
@@ -660,9 +796,11 @@ const CityEditor: React.FC = () => {
       <EditorToolbar
         view3d={view3d}
         base={base}
+        relief={relief}
         layers={layers}
         onToggleView={() => setView3d(v => !v)}
-        onToggleBase={() => setBase(b => (b === 'plan' ? 'aerial' : 'plan'))}
+        onSetBase={setBase}
+        onSetRelief={setRelief}
         onReset={() => mapRef.current && fitSection(mapRef.current)}
         onToggleLayer={(k) => setLayers(s => ({ ...s, [k]: !s[k] }))}
         onSave={handleSave}
@@ -681,6 +819,21 @@ const CityEditor: React.FC = () => {
         {noSel && (
           <div className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-full bg-black/70 px-3 py-1 text-[11px] text-white">
             {t('editor.noSelection')}
+          </div>
+        )}
+        {routeNotice && (
+          <div className="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2 rounded-full bg-black/80 px-3 py-1.5 text-[11px] text-amber-200">
+            {routeNotice}
+          </div>
+        )}
+        {buildingsState === 'loading' && (
+          <div className="pointer-events-none absolute left-1/2 top-12 z-10 -translate-x-1/2 rounded-full bg-black/70 px-3 py-1 text-[11px] text-white">
+            Cargando edificios…
+          </div>
+        )}
+        {buildingsState === 'none' && (
+          <div className="pointer-events-none absolute left-1/2 top-12 z-10 -translate-x-1/2 rounded-full bg-black/70 px-3 py-1 text-[11px] text-amber-200">
+            Sin datos de edificios en esta zona
           </div>
         )}
         {mapError && (

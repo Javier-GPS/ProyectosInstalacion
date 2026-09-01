@@ -281,6 +281,121 @@ export const placeFarolasAlong = (geom: LngLat[], opts: FarolaRouteOpts): Farola
   return items;
 };
 
+export interface StreetSegment {
+  ref: string;
+  geom: LngLat[];
+}
+
+const segEnds = (geom: LngLat[]): LngLat[] => [geom[0], geom[geom.length - 1]];
+
+/** Tolerancia de conexión entre extremos de tramos (~1 cm). */
+const CONN_EPS = 1e-7;
+
+const segsConnected = (a: LngLat[], b: LngLat[]) => {
+  for (const ea of segEnds(a)) for (const eb of segEnds(b)) {
+    if (Math.hypot(ea[0] - eb[0], ea[1] - eb[1]) < CONN_EPS) return true;
+  }
+  return false;
+};
+
+/** Camino de `ref`s conectados entre dos tramos de la misma calle, o null si no hay conexión. */
+export const connectStreetSegments = (segments: StreetSegment[], aRef: string, bRef: string): string[] | null => {
+  if (aRef === bRef) return [aRef];
+  const byRef = new Map(segments.map(s => [s.ref, s]));
+  if (!byRef.has(aRef) || !byRef.has(bRef)) return null;
+  const queue: { ref: string; chain: string[] }[] = [{ ref: aRef, chain: [aRef] }];
+  const visited = new Set<string>([aRef]);
+  while (queue.length) {
+    const { ref, chain } = queue.shift()!;
+    const geom = byRef.get(ref)!.geom;
+    for (const s of segments) {
+      if (visited.has(s.ref)) continue;
+      if (!segsConnected(geom, s.geom)) continue;
+      const nextChain = [...chain, s.ref];
+      if (s.ref === bRef) return nextChain;
+      visited.add(s.ref);
+      queue.push({ ref: s.ref, chain: nextChain });
+    }
+  }
+  return null;
+};
+
+/** Construye la polilínea continua desde el punto A hasta el punto B a lo largo del camino de tramos. */
+export const joinStreetPath = (
+  segments: StreetSegment[],
+  chain: string[],
+  a: { measure: number; coordinate: LngLat },
+  b: { measure: number; coordinate: LngLat },
+): LngLat[] | null => {
+  const byRef = new Map(segments.map(s => [s.ref, s]));
+  const geoms = chain.map(ref => byRef.get(ref)?.geom);
+  if (geoms.some(g => !g || g.length < 2)) return null;
+  const near = (p: LngLat, q: LngLat) => Math.hypot(p[0] - q[0], p[1] - q[1]) < CONN_EPS;
+  const end = (g: LngLat[]) => g[g.length - 1];
+  const nearestIdx = (g: LngLat[], p: LngLat) => {
+    let best = 0, bestD = Infinity;
+    for (let i = 0; i < g.length; i++) {
+      const d = Math.hypot(g[i][0] - p[0], g[i][1] - p[1]);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+  };
+  // Porción de un tramo desde `cut` hasta su extremo (forward) o su inicio (backward).
+  const cutFrom = (g: LngLat[], cut: LngLat, forward: boolean): LngLat[] => {
+    const ni = nearestIdx(g, cut);
+    const isV = near(g[ni], cut);
+    return forward
+      ? (isV ? g.slice(ni) : [cut, ...g.slice(ni + 1)])
+      : (isV ? g.slice(0, ni + 1).reverse() : [cut, ...g.slice(0, ni).reverse()]);
+  };
+  // Porción de un tramo desde su extremo (forward) o su inicio (backward) hasta `cut`.
+  const cutTo = (g: LngLat[], cut: LngLat, forward: boolean): LngLat[] => {
+    const ni = nearestIdx(g, cut);
+    const isV = near(g[ni], cut);
+    return forward
+      ? (isV ? g.slice(0, ni + 1) : [...g.slice(0, ni), cut])
+      : (isV ? g.slice(ni).reverse() : [...g.slice(ni + 1).reverse(), cut]);
+  };
+  const path: LngLat[] = [];
+  const pushPts = (pts: LngLat[]) => {
+    for (const p of pts) {
+      if (!path.length || !near(path[path.length - 1], p)) path.push(p);
+    }
+  };
+  for (let i = 0; i < chain.length; i++) {
+    const geom = geoms[i] as LngLat[];
+    const isLast = i === chain.length - 1;
+    let forward: boolean;
+    if (i === 0 && !isLast) {
+      const next = geoms[1] as LngLat[];
+      forward = near(end(geom), next[0]) || near(end(geom), end(next));
+    } else if (isLast && i > 0) {
+      const prevLast = path[path.length - 1];
+      forward = near(geom[0], prevLast);
+    } else {
+      forward = b.measure >= a.measure;
+    }
+    if (i === 0 && isLast) {
+      // Un único tramo: porción entre A y B.
+      const na = nearestIdx(geom, a.coordinate);
+      const nb = nearestIdx(geom, b.coordinate);
+      const va = near(geom[na], a.coordinate);
+      const vb = near(geom[nb], b.coordinate);
+      const pts = forward
+        ? [va ? geom[na] : a.coordinate, ...geom.slice(na + 1, nb), vb ? geom[nb] : b.coordinate]
+        : [va ? geom[na] : a.coordinate, ...geom.slice(nb + 1, na).reverse(), vb ? geom[nb] : b.coordinate];
+      pushPts(pts);
+    } else if (i === 0) {
+      pushPts(cutFrom(geom, a.coordinate, forward));
+    } else if (isLast) {
+      pushPts(cutTo(geom, b.coordinate, forward));
+    } else {
+      pushPts(forward ? geom : [...geom].reverse());
+    }
+  }
+  return path;
+};
+
 /** Ray-casting point-in-polygon. `ring` es una polilínea cerrada [lng,lat]. */
 export const pointInPolygon = (pt: LngLat, ring: LngLat[]): boolean => {
   let inside = false;

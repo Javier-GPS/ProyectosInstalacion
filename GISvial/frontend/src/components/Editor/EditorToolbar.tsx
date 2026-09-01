@@ -3,19 +3,24 @@ import { useI18n } from '../../i18n';
 import { useGisStore } from '../../store/useGisStore';
 import { EDITOR_OBJECT_TYPES } from '../../lib/editorObjects';
 
+export type EditorBase = 'plan' | 'aerial' | 'pnoa';
+export type EditorRelief = 'none' | 'hillshade' | 'terrain';
+
 interface Props {
   view3d: boolean;
-  base: 'plan' | 'aerial';
+  base: EditorBase;
+  relief: EditorRelief;
   layers: Record<string, boolean>;
   onToggleView: () => void;
-  onToggleBase: () => void;
+  onSetBase: (base: EditorBase) => void;
+  onSetRelief: (relief: EditorRelief) => void;
   onReset: () => void;
   onToggleLayer: (key: string) => void;
   onSave: () => void;
   onExport: () => void;
 }
 
-const EditorToolbar: React.FC<Props> = ({ view3d, base, layers, onToggleView, onToggleBase, onReset, onToggleLayer, onSave, onExport }) => {
+const EditorToolbar: React.FC<Props> = ({ view3d, base, relief, layers, onToggleView, onSetBase, onSetRelief, onReset, onToggleLayer, onSave, onExport }) => {
   const { t } = useI18n();
   const editorTool = useGisStore(s => s.editorTool);
   const setEditorTool = useGisStore(s => s.setEditorTool);
@@ -121,7 +126,7 @@ const EditorToolbar: React.FC<Props> = ({ view3d, base, layers, onToggleView, on
           )}
         </section>
 
-        {/* View */}
+{/* View */}
         <section>
           <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-salvi-muted">{t('editor.view')}</div>
           <div className="flex gap-1.5">
@@ -134,10 +139,37 @@ const EditorToolbar: React.FC<Props> = ({ view3d, base, layers, onToggleView, on
               {t('editor.reset')}
             </button>
           </div>
-          <button onClick={onToggleBase}
-            className="mt-1.5 w-full rounded border border-salvi-line px-2 py-1.5 text-xs hover:bg-salvi-surface">
-            {base === 'plan' ? '🛰 ' + t('editor.satellite') : '🗺 ' + t('editor.map')}
-          </button>
+          <div className="mt-1.5 flex flex-col gap-1">
+            {([
+              { key: 'plan', label: '🗺 ' + t('editor.map') },
+              { key: 'aerial', label: '🛰 ' + t('editor.satellite') },
+              { key: 'pnoa', label: '🛩 ' + t('editor.pnoa') },
+            ] as { key: EditorBase; label: string }[]).map(opt => (
+              <button
+                key={opt.key}
+                onClick={() => onSetBase(opt.key)}
+                className={`rounded border px-2 py-1.5 text-xs transition-colors ${base === opt.key ? 'border-salvi-black bg-salvi-black/5 text-salvi-black' : 'border-salvi-line text-salvi-grey hover:bg-salvi-surface'}`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <div className="mt-2 flex flex-col gap-1">
+            <div className="text-[10px] font-medium text-salvi-grey">Relieve</div>
+            {([
+              { key: 'none', label: 'Sin relieve' },
+              { key: 'hillshade', label: '⛰ Sombreado' },
+              { key: 'terrain', label: '🏔 Terreno 3D' },
+            ] as { key: EditorRelief; label: string }[]).map(opt => (
+              <button
+                key={opt.key}
+                onClick={() => onSetRelief(opt.key)}
+                className={`rounded border px-2 py-1.5 text-xs transition-colors ${relief === opt.key ? 'border-salvi-black bg-salvi-black/5 text-salvi-black' : 'border-salvi-line text-salvi-grey hover:bg-salvi-surface'}`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
         </section>
 
         {/* Layers */}

@@ -7,7 +7,7 @@ import {
   getLuxJob, getPlanningDraft, getPlanningInventory, getZoneSelection, loadPlanningOsm, putPlanningDraft, putZoneSelection,
 } from '../../lib/api';
 import { useGisStore, ROAD_CFG } from '../../store/useGisStore';
-import type { Etagged, GisLuxJob, GisPlanningDraft, GisPlanningInventory, GisPlanningPayload } from '../../types';
+import type { Etagged, GisLuxJob, GisPlanningDraft, GisPlanningInventory, GisPlanningInventoryTarget, GisPlanningPayload } from '../../types';
 import type { RoadSelectionDraft } from '../../store/types';
 import { roadSelectionIsCurrent } from '../../lib/roadSelection';
 import { targetName } from '../../lib/roadNaming';
@@ -415,11 +415,11 @@ const StepVias: React.FC = () => {
     }
   };
   const startArea = () => {
-    if (!selectedZoneId || !inventory || !zone?.geometry.boundary) return;
+    if (!selectedZoneId || !inventory || !zone) return;
     setRoadSelection(selectedZoneId, {
       zone_id: selectedZoneId,
       inventory_hash: inventory.base_inventory_hash,
-      boundary_signature: JSON.stringify(zone.geometry.boundary),
+      boundary_signature: JSON.stringify(zone.geometry.boundary ?? null),
       status: 'draw_area',
       area_points: [],
       etag: undefined,
@@ -467,10 +467,35 @@ const StepVias: React.FC = () => {
       .map(([street, entry]) => ({ key: street, street, targets: entry.selected, allTargets: entry.all }));
   }, [inventory, selectedZoneId, accumulatedSelection]);
 
-  const segmentList = useMemo(() => (inventory?.targets || [])
-    .map(target => ({ target, label: targetName(target) || `Tramo ${target.source_index + 1}` }))
-    .filter(({ label }) => !normalizedQuery || label.toLowerCase().includes(normalizedQuery)),
-  [inventory, normalizedQuery]);
+  const searchGroups = useMemo(() => {
+    if (!inventory || !normalizedQuery) return [];
+    const groups: { street: string | null; targets: GisPlanningInventoryTarget[] }[] = [];
+    const byStreet = new Map<string, GisPlanningInventoryTarget[]>();
+    const singles: GisPlanningInventoryTarget[] = [];
+    for (const target of inventory.targets) {
+      const name = targetName(target);
+      const label = name || `Tramo ${target.source_index + 1}`;
+      if (!label.toLowerCase().includes(normalizedQuery)) continue;
+      if (name) {
+        const arr = byStreet.get(name) || [];
+        arr.push(target);
+        byStreet.set(name, arr);
+      } else {
+        singles.push(target);
+      }
+    }
+    for (const [street, targets] of byStreet) groups.push({ street, targets });
+    for (const t of singles) groups.push({ street: null, targets: [t] });
+    return groups;
+  }, [inventory, normalizedQuery]);
+
+  const toggleAllRefs = useCallback((targets: GisPlanningInventoryTarget[]) => {
+    if (!selectedZoneId || !targets.length) return;
+    const refs = targets.filter(t => t.geometry).map(t => t.target_ref);
+    const all = refs.length > 0 && refs.every(r => zoneSelection[r]);
+    if (all) refs.forEach(r => toggleTargetSelection(selectedZoneId, r));
+    else refs.forEach(r => { if (!zoneSelection[r]) toggleTargetSelection(selectedZoneId, r); });
+  }, [selectedZoneId, zoneSelection, toggleTargetSelection]);
 
   const selectedTargetsFlat = useMemo(() => {
     if (!inventory || !selectedZoneId) return [];
@@ -538,35 +563,88 @@ const StepVias: React.FC = () => {
   );
 
   const editable = resource.kind === 'absent' || resource.kind === 'current';
-  const haveBoundary = !!zone.geometry.boundary;
 
-  const resultList = segmentList.map(({ target, label }, idx) => {
-    const selected = !!zoneSelection[target.target_ref];
-    return (
-      <div
-        key={target.target_ref}
-        className={`flex items-center gap-2 px-3 py-1.5 ${idx > 0 ? 'border-t border-salvi-line/60' : ''} ${selected ? 'bg-[#1F7A4D]/5' : ''}`}
-        onMouseEnter={() => hoverTarget(target.target_ref)}
-        onMouseLeave={clearHover}
-      >
-        <input
-          type="checkbox"
-          checked={selected}
-          disabled={!target.geometry && !selected}
-          onChange={() => { if (selectedZoneId) toggleTargetSelection(selectedZoneId, target.target_ref); }}
-          className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-[#1F7A4D]"
-          aria-label={`Seleccionar tramo ${target.source_index + 1}`}
-        />
-        <button
-          onClick={() => revealTarget(target.target_ref)}
-          className="min-w-0 flex-1 truncate text-left text-xs font-medium text-salvi-black hover:underline"
-          title="Ver este tramo en el mapa"
+  const searchResult = searchGroups.map(group => {
+    const { street, targets } = group;
+    if (!street) {
+      const target = targets[0];
+      const selected = !!zoneSelection[target.target_ref];
+      return (
+        <div
+          key={target.target_ref}
+          className={`flex items-center gap-2 px-3 py-1.5 border-t border-salvi-line/60 ${selected ? 'bg-[#1F7A4D]/5' : ''}`}
+          onMouseEnter={() => hoverTarget(target.target_ref)}
+          onMouseLeave={clearHover}
         >
-          {label}
-        </button>
-        <div className="flex shrink-0 items-center gap-2 text-[10px] text-salvi-muted">
-          <span>{target.length_m != null ? `${Math.round(target.length_m)} m` : '—'}</span>
+          <input
+            type="checkbox"
+            checked={selected}
+            disabled={!target.geometry && !selected}
+            onChange={() => { if (selectedZoneId) toggleTargetSelection(selectedZoneId, target.target_ref); }}
+            className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-[#1F7A4D]"
+            aria-label={`Seleccionar tramo ${target.source_index + 1}`}
+          />
+          <button
+            onClick={() => revealTarget(target.target_ref)}
+            className="min-w-0 flex-1 truncate text-left text-xs font-medium text-salvi-black hover:underline"
+            title="Ver este tramo en el mapa"
+          >
+            Tramo {target.source_index + 1}
+          </button>
+          <span className="shrink-0 text-[10px] text-salvi-muted">{target.length_m != null ? `${Math.round(target.length_m)} m` : '—'}</span>
         </div>
+      );
+    }
+    const all = targets.filter(t => t.geometry).length > 0 && targets.every(t => !t.geometry || zoneSelection[t.target_ref]);
+    return (
+      <div key={`street:${street}`} className="overflow-hidden border-t border-salvi-line/60">
+        <div className="flex items-center gap-2 bg-salvi-surface/50 px-3 py-1.5">
+          <input
+            type="checkbox"
+            checked={all}
+            disabled={!targets.some(t => t.geometry)}
+            onChange={() => toggleAllRefs(targets)}
+            className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-[#1F7A4D]"
+            aria-label={`Seleccionar calle ${street}`}
+          />
+          <button
+            onClick={() => toggleAllRefs(targets)}
+            className="min-w-0 flex-1 truncate text-left text-xs font-semibold text-salvi-black hover:underline"
+            title={all ? 'Deseleccionar toda la calle' : 'Seleccionar toda la calle'}
+          >
+            {street}
+          </button>
+          <span className="shrink-0 rounded bg-salvi-surface px-1.5 py-0.5 text-[9px] text-salvi-muted">{targets.length} tramos</span>
+        </div>
+        {targets.map(target => {
+          const selected = !!zoneSelection[target.target_ref];
+          return (
+            <div
+              key={target.target_ref}
+              className={`flex items-center gap-2 py-1.5 pl-8 pr-3 border-t border-salvi-line/40 ${selected ? 'bg-[#1F7A4D]/5' : ''}`}
+              onMouseEnter={() => hoverTarget(target.target_ref)}
+              onMouseLeave={clearHover}
+            >
+              <input
+                type="checkbox"
+                checked={selected}
+                disabled={!target.geometry && !selected}
+                onChange={() => { if (selectedZoneId) toggleTargetSelection(selectedZoneId, target.target_ref); }}
+                className="h-3.5 w-3.5 shrink-0 cursor-pointer accent-[#1F7A4D]"
+                aria-label={`Seleccionar tramo ${target.source_index + 1}`}
+              />
+              <button
+                onClick={() => revealTarget(target.target_ref)}
+                className="min-w-0 flex-1 truncate text-left text-[11px] font-medium text-salvi-black hover:underline"
+                title="Ver este tramo en el mapa"
+              >
+                Tramo {target.source_index + 1}
+                {target.length_m != null && <span className="ml-1 font-normal text-salvi-muted">· {Math.round(target.length_m)} m</span>}
+              </button>
+              <span className="shrink-0 text-[9px] text-salvi-muted">{target.nameState === 'legacy' ? 'legacy' : ''}</span>
+            </div>
+          );
+        })}
       </div>
     );
   });
@@ -655,7 +733,7 @@ const StepVias: React.FC = () => {
             ) : (
               <button
                 onClick={startArea}
-                disabled={!haveBoundary || !editable}
+                disabled={!editable}
                 className="rounded bg-salvi-black px-2.5 py-1 text-[11px] font-medium text-white disabled:opacity-40"
               >
                 {roadSelection?.status === 'draw_area' ? 'Area en curso…' : 'Dibujar área'}
@@ -680,7 +758,6 @@ const StepVias: React.FC = () => {
               </div>
             </div>
           )}
-          {!haveBoundary && <div className="border-t border-salvi-line px-3 py-2 text-[11px] text-state-warning">La zona necesita un límite real para dibujar el área.</div>}
         </section>
 
         {/* ── Selección ── */}
@@ -829,9 +906,9 @@ const StepVias: React.FC = () => {
         {/* ── Resultados de búsqueda (solo con texto) ── */}
         {normalizedQuery && (
           <>
-            {!segmentList.length
+            {!searchGroups.length
               ? <div className="rounded bg-salvi-surface p-4 text-center text-xs text-salvi-muted">No hay tramos con ese nombre.</div>
-              : <section className="rounded-lg border border-salvi-line bg-white">{resultList}</section>}
+              : <section className="rounded-lg border border-salvi-line bg-white">{searchResult}</section>}
           </>
         )}
 

@@ -48,8 +48,9 @@ _pending_imports = {}  # { temp_id: {"rows": [...], "headers": [...], "ts": floa
 # ── DB context manager ─────────────────────────────────────────────────────────
 @contextmanager
 def db():
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=30000")
     try:
         yield conn
     finally:
@@ -76,6 +77,7 @@ _SCHEMA_SQL = [
         zone_id TEXT PRIMARY KEY, spacing INTEGER DEFAULT 30,
         watt_hps REAL DEFAULT 150, watt_led REAL DEFAULT 60,
         efficacy REAL DEFAULT 90, hours_night REAL DEFAULT 11.5,
+        ui_state TEXT DEFAULT '{}',
         updated_at TEXT DEFAULT (datetime('now')))""",
     """CREATE TABLE IF NOT EXISTS zone_osm_data (
         zone_id TEXT PRIMARY KEY, km_by_type TEXT DEFAULT '{}',
@@ -131,6 +133,7 @@ _MIGRATIONS = [
     "ALTER TABLE luminaires ADD COLUMN height_m REAL DEFAULT NULL",
     "ALTER TABLE luminaires ADD COLUMN arm_len REAL DEFAULT NULL",
     "ALTER TABLE luminaires ADD COLUMN distribution TEXT DEFAULT NULL",
+    "ALTER TABLE zone_config ADD COLUMN ui_state TEXT DEFAULT '{}'",
 ]
 
 # ── Auth helpers ──────────────────────────────────────────────────────────────
@@ -865,6 +868,7 @@ class Handler(BaseHTTPRequestHandler):
         for r in rows:
             r["corridors"]      = _parse_json_field(r.get("corridors"), [])
             r["bounds_polygon"] = _parse_json_field(r.get("bounds_polygon"), [])
+            r["ui_state"]       = _parse_json_field(r.get("ui_state"), {})
             r["est"] = {
                 "primary":      _fval(r.pop("est_primary",    0)) or 0,
                 "secondary":    _fval(r.pop("est_secondary",  0)) or 0,
@@ -885,12 +889,12 @@ class Handler(BaseHTTPRequestHandler):
         with db() as conn:
             if project_id:
                 rows = _rows2list(conn.execute(
-                    "SELECT z.*, COALESCE(c.spacing,30) AS spacing "
+                    "SELECT z.*, COALESCE(c.spacing,30) AS spacing, COALESCE(c.ui_state,'{}') AS ui_state "
                     "FROM zones z LEFT JOIN zone_config c ON z.id=c.zone_id "
                     "WHERE z.project_id=? ORDER BY z.created_at DESC", (project_id,)).fetchall())
             else:
                 rows = _rows2list(conn.execute(
-                    "SELECT z.*, COALESCE(c.spacing,30) AS spacing "
+                    "SELECT z.*, COALESCE(c.spacing,30) AS spacing, COALESCE(c.ui_state,'{}') AS ui_state "
                     "FROM zones z LEFT JOIN zone_config c ON z.id=c.zone_id "
                     "ORDER BY z.created_at DESC").fetchall())
         self._send(200, self._format_zones(rows))
@@ -933,7 +937,7 @@ class Handler(BaseHTTPRequestHandler):
             conn.execute("INSERT OR IGNORE INTO zone_config (zone_id) VALUES (?)", (zid,))
             conn.commit()
             row = _row2dict(conn.execute(
-                "SELECT z.*, COALESCE(c.spacing,30) AS spacing "
+                "SELECT z.*, COALESCE(c.spacing,30) AS spacing, COALESCE(c.ui_state,'{}') AS ui_state "
                 "FROM zones z LEFT JOIN zone_config c ON z.id=c.zone_id WHERE z.id=?", (zid,)).fetchone())
         self._send(201, self._format_zones([row])[0])
 
@@ -1006,10 +1010,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def h_zone_config(self, qs, m):
         zid = m.group(1); b = self._body()
-        allowed = {"spacing","watt_hps","watt_led","efficacy","hours_night"}
+        allowed = {"spacing","watt_hps","watt_led","efficacy","hours_night","ui_state"}
         sets = []; vals = []
         for k, v in b.items():
-            if k in allowed: sets.append(f"{k}=?"); vals.append(v)
+            if k in allowed:
+                if k == "ui_state" and isinstance(v, (dict, list)):
+                    v = json.dumps(v)
+                sets.append(f"{k}=?"); vals.append(v)
         sets.append("updated_at=datetime('now')"); vals.append(zid)
         with db() as conn:
             conn.execute("INSERT OR IGNORE INTO zone_config (zone_id) VALUES (?)", (zid,))
@@ -1166,7 +1173,7 @@ class Handler(BaseHTTPRequestHandler):
                   r["line_id"], r["support_type"]) for r in lum_rows])
             conn.commit()
             zone_row = _row2dict(conn.execute(
-                "SELECT z.*, COALESCE(c.spacing,30) AS spacing "
+                "SELECT z.*, COALESCE(c.spacing,30) AS spacing, COALESCE(c.ui_state,'{}') AS ui_state "
                 "FROM zones z LEFT JOIN zone_config c ON z.id=c.zone_id WHERE z.id=?", (zid,)).fetchone())
         self._send(201, {"zone": self._format_zones([zone_row])[0], "count": len(lum_rows)})
 

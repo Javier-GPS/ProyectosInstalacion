@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS users (
 """)
     for sql in [
         "ALTER TABLE zones ADD COLUMN osm_relation INTEGER DEFAULT NULL",
+        "ALTER TABLE zone_config ADD COLUMN ui_state TEXT DEFAULT '{}'",
     ]:
         try:
             conn.execute(sql)

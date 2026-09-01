@@ -1351,8 +1351,9 @@ const ALL_LC = {
   T2:  { cls:'T2',  cdm2:null, lux:75 },
   T3:  { cls:'T3',  cdm2:null, lux:50 },
 };
-// Efficacy constant (lm/W) for LED luminaire power calculation
-const LAMP_EFFICACY = 90;
+// Preliminary assumptions before the detailed Lux Studio calculation.
+const LAMP_EFFICACY = 150;      // lm/W: luminaire luminous efficacy
+const PROJECT_EFFICIENCY = 90;  // lux·m²/W: global project power estimate
 
 const SPACING_LABELS = { 25:'Urbano denso / seguridad', 30:'Estándar urbano', 35:'Económico', 40:'Grandes avenidas' };
 
@@ -2685,7 +2686,91 @@ let streetGeomStore = {};
 let streetTypeIndex = {}; // { [zoneId]: { [type]: [wKey, ...] } }
 let zoneTypeSpacing      = {}; // { [zoneId]: { [type]: number } } — per-type spacing override
 let zoneTypeDistribution = {}; // { [zoneId]: { [type]: string } } — per-type luminaire distribution
+let zoneTypeModel         = {}; // { [zoneId]: { [type]: model key|null } } — per-type default
 let zonePhotometric      = {}; // { [zoneId]: [{match_key, power_w, lm_em, uo, ...}] } — photometric study results
+const LUMINAIRE_MODELS = {
+  SIL_L_260: { name:'SIL L 260', family:'SIL L', system:'solar', panelWp:260, batteryWh:1200, height:'7–12 m', spigot:'Ø120 mm', url:'https://www.salvi.es/en/portfolio/luminaria-sil-l/' },
+  SIL_L_200: { name:'SIL L 200', family:'SIL L', system:'solar', panelWp:200, batteryWh:900, height:'7–12 m', spigot:'Ø120 mm', url:'https://www.salvi.es/en/portfolio/luminaria-sil-l/' },
+  SIL_M_90: { name:'SIL M 90', family:'SIL M', system:'solar', panelWp:90, batteryWh:500, height:'6–10 m', spigot:'Ø60 mm', url:'https://www.salvi.es/en/portfolio/luminaria-sil-m/' },
+  SIL_M_60: { name:'SIL M 60', family:'SIL M', system:'solar', panelWp:60, batteryWh:300, height:'6–10 m', spigot:'Ø60 mm', url:'https://www.salvi.es/en/portfolio/luminaria-sil-m/' },
+  CLAP_M: { name:'CLAP M', family:'CLAP', system:'grid', url:'https://www.salvi.es/en/' },
+  CLAP_S: { name:'CLAP S', family:'CLAP', system:'grid', url:'https://www.salvi.es/en/' },
+  KRONOS: { name:'KRONOS', family:'KRONOS', system:'grid', url:'https://www.salvi.es/en/' }
+};
+function luminaireModelLabel(modelKey) {
+  const m = LUMINAIRE_MODELS[modelKey];
+  if (!m) return 'Sin definir';
+  return m.system === 'solar' ? `${m.name} · PV ${m.panelWp} Wp` : m.name;
+}
+function luminaireModelColor(modelKey) {
+  if (modelKey === 'SIL_L_260') return '#d58b16';
+  if (modelKey === 'SIL_L_200') return '#a96610';
+  if (modelKey === 'SIL_M_90') return '#1a6a3a';
+  if (modelKey === 'SIL_M_60') return '#4caf82';
+  if (modelKey === 'CLAP_M') return '#2b75b6';
+  if (modelKey === 'CLAP_S') return '#1d4f85';
+  if (String(modelKey || '').startsWith('KRONOS')) return '#7046a8';
+  return '#9aa5a0';
+}
+function luminaireModelOptionsHTML(selected) {
+  const solar = Object.entries(LUMINAIRE_MODELS).filter(([,m]) => m.system === 'solar');
+  const grid = Object.entries(LUMINAIRE_MODELS).filter(([,m]) => m.system === 'grid');
+  const options = rows => rows.map(([mk]) => `<option value="${mk}"${selected===mk?' selected':''}>${luminaireModelLabel(mk)}</option>`).join('');
+  return `<option value=""${!selected?' selected':''}>Sin definir (seleccionar)</option><optgroup label="Solar">${options(solar)}</optgroup><optgroup label="Red eléctrica">${options(grid)}</optgroup>`;
+}
+function getTypeLuminaireModel(zoneId, type) {
+  const model = zoneTypeModel[zoneId]?.[type];
+  return LUMINAIRE_MODELS[model] ? model : null;
+}
+function getSegmentLuminaireModel(wKey) {
+  const info = segmentLightingInfo[wKey];
+  if (!info) return null;
+  return getLuxParams(wKey).luminaireModel || getTypeLuminaireModel(info.zoneId, info.type);
+}
+function setZoneTypeModel(zoneId, type, model) {
+  if (!zoneTypeModel[zoneId]) zoneTypeModel[zoneId] = {};
+  zoneTypeModel[zoneId][type] = model || null;
+  try { localStorage.setItem('salviGIS_models_' + zoneId, JSON.stringify(zoneTypeModel[zoneId])); } catch(_) {}
+  _saveZoneUiState(zoneId);
+  _refreshTypePopups(zoneId, type);
+  renderZoneDetail(selectedZone);
+}
+function setSegmentLuminaireModel(wKey, model) {
+  setLuxParam(wKey, 'luminaireModel', model || '');
+  _refreshSegmentPopup(wKey);
+  renderZoneDetail(selectedZone);
+}
+function _loadZoneTypeModels(zoneId) {
+  if (zoneTypeModel[zoneId]) return;
+  try {
+    const saved = JSON.parse(localStorage.getItem('salviGIS_models_' + zoneId) || 'null');
+    if (saved && typeof saved === 'object') zoneTypeModel[zoneId] = saved;
+  } catch(_) {}
+}
+function _zoneUiState(zoneId) {
+  return {
+    typeSpacing: zoneTypeSpacing[zoneId] || {},
+    typeDistribution: zoneTypeDistribution[zoneId] || {},
+    typeModel: zoneTypeModel[zoneId] || {},
+    typeLightingClass: zoneTypeLightingClass[zoneId] || {},
+    typeVisibility: zoneTypeVisibility[zoneId] || {}
+  };
+}
+function _restoreZoneUiState(zone) {
+  const state = zone?.ui_state || {};
+  if (state.typeSpacing) zoneTypeSpacing[zone.id] = state.typeSpacing;
+  if (state.typeDistribution) zoneTypeDistribution[zone.id] = state.typeDistribution;
+  if (state.typeModel) zoneTypeModel[zone.id] = state.typeModel;
+  if (state.typeLightingClass) zoneTypeLightingClass[zone.id] = state.typeLightingClass;
+  if (state.typeVisibility) zoneTypeVisibility[zone.id] = state.typeVisibility;
+  _loadZoneTypeModels(zone.id);
+}
+function _saveZoneUiState(zoneId) {
+  const state = _zoneUiState(zoneId);
+  try { localStorage.setItem('salviGIS_models_' + zoneId, JSON.stringify(state.typeModel)); } catch(_) {}
+  apiPut('/api/zones/' + zoneId + '/config', { ui_state: state })
+    .catch(e => console.warn('[API] Zone configuration save failed:', e.message));
+}
 // Distribution options: unilateral_r | unilateral_l | bilateral_pareado | bilateral_tresbolillo | centrada_mediana | mediana_compartida
 const DIST_DEFAULTS = { motorway:'bilateral_pareado', trunk:'bilateral_pareado', primary:'bilateral_pareado', secondary:'bilateral_pareado' };
 const DIST_FACTOR   = { unilateral_r:1, unilateral_l:1, bilateral_pareado:2, bilateral_tresbolillo:2, centrada_mediana:1, mediana_compartida:0 };
@@ -2696,6 +2781,7 @@ function distFactor(zoneId, type) { return DIST_FACTOR[getTypeDist(zoneId,type)]
 function setZoneTypeDistribution(zoneId, type, val) {
   if (!zoneTypeDistribution[zoneId]) zoneTypeDistribution[zoneId] = {};
   zoneTypeDistribution[zoneId][type] = val;
+  _saveZoneUiState(zoneId);
   renderZoneCards();
 }
 let segmentLightingInfo = {}; // { [wKey]: { zoneId, type, lux, effW, _lenM } }
@@ -2704,6 +2790,8 @@ let segmentDistribution     = {}; // { [wKey]: string } — distribution overrid
 
 function getSegmentDist(wKey) {
   if (segmentDistribution[wKey]) return segmentDistribution[wKey];
+  const persisted = getLuxParams(wKey).distribution;
+  if (persisted) return persisted;
   const info = segmentLightingInfo[wKey];
   if (!info) return 'unilateral_r';
   return getTypeDist(info.zoneId, info.type);
@@ -2726,6 +2814,7 @@ function _bearing(lat0,lon0,lat1,lon1){
 
 function setSegmentDistribution(wKey, val) {
   segmentDistribution[wKey] = val;
+  setLuxParam(wKey, 'distribution', val);
   // If luminaires already placed for this segment, re-place with new distribution
   if (streetLumLayers[wKey]) {
     const info = segmentLightingInfo[wKey];
@@ -2906,6 +2995,7 @@ async function loadZonesFromAPI() {
       }
       ZONES.push(z);
       zoneSpacing[z.id] = z.spacing || 30;
+      _restoreZoneUiState(z);
       zoneData[z.id] = { kmByType: {...z.est}, source:'estimated' };
       if (z.bounds_polygon && z.bounds_polygon.length) zonePoly[z.id] = z.bounds_polygon;
     });
@@ -2949,10 +3039,27 @@ async function loadZonesFromAPI() {
   }
 }
 
-// Save OSM road data to DB (fire-and-forget)
+// Coalesce rapid edits: one zone write contains the latest complete road state.
+const _osmSaveTimers = {};
+const _osmSavePending = {};
+const _osmSaveRunning = {};
 function saveOsmDataToDB(zoneId, kmByType, ways) {
-  apiPut('/api/zones/' + zoneId + '/osm', { kmByType, ways, source:'osm' })
-    .catch(e => console.warn('[API] OSM data save failed:', e.message));
+  _osmSavePending[zoneId] = { kmByType, ways };
+  clearTimeout(_osmSaveTimers[zoneId]);
+  _osmSaveTimers[zoneId] = setTimeout(async () => {
+    if (_osmSaveRunning[zoneId]) return;
+    const payload = _osmSavePending[zoneId];
+    delete _osmSavePending[zoneId];
+    _osmSaveRunning[zoneId] = true;
+    try {
+      await apiPut('/api/zones/' + zoneId + '/osm', { ...payload, source:'osm' });
+    } catch(e) {
+      console.warn('[API] OSM data save failed:', e.message);
+    } finally {
+      _osmSaveRunning[zoneId] = false;
+      if (_osmSavePending[zoneId]) saveOsmDataToDB(zoneId, _osmSavePending[zoneId].kmByType, _osmSavePending[zoneId].ways);
+    }
+  }, 450);
 }
 
 // ─── MAP ──────────────────────────────────────────────────────────────────
@@ -3879,10 +3986,11 @@ function popupSpacingChanged(wKey, zoneId, type, val) {
   } else {
     // Per-segment override
     segmentCustomSpacing[wKey] = val;
+    setLuxParam(wKey, 'spacing', val);
     const info = segmentLightingInfo[wKey];
     if (!info) return;
     const lc_seg = getEffectiveLightingClass(wKey);
-    const w_val = (lc_seg.lux * info.effW * val / LAMP_EFFICACY).toFixed(1);
+    const w_val = (lc_seg.lux * info.effW * val / PROJECT_EFFICIENCY).toFixed(1);
     const hdrEl = document.getElementById('wlumhdr_' + wKey);
     const wEl   = document.getElementById('watts_'   + wKey);
     const lcEl  = document.getElementById('lumcount_'+ wKey);
@@ -3947,7 +4055,9 @@ function getValidationStats(zoneId, type) {
 
 // ─── LUMINAIRE DB ─────────────────────────────────────────────────────────
 function getSegmentSpacing(wKey, zoneId, type) {
+  const persisted = getLuxParams(wKey).spacing;
   return segmentCustomSpacing[wKey]
+    || persisted
     || (zoneTypeSpacing[zoneId] && zoneTypeSpacing[zoneId][type])
     || zoneSpacing[zoneId]
     || 30;
@@ -3986,7 +4096,7 @@ function _defaultWatts(wKey) {
   const info = segmentLightingInfo[wKey]; if (!info) return null;
   const lc = getEffectiveLightingClass(wKey);
   const sp = getSegmentSpacing(wKey, info.zoneId, info.type);
-  return +(lc.lux * info.effW * sp / LAMP_EFFICACY).toFixed(1);
+  return +(lc.lux * info.effW * sp / PROJECT_EFFICIENCY).toFixed(1);
 }
 
 function _lumFieldValue(wKey, idx, field) {
@@ -4025,8 +4135,9 @@ function applyGroupLumField(field, value) {
   const touchedTypes = new Set();
   wKeys.forEach(wKey => {
     const info = segmentLightingInfo[wKey]; if (!info) return;
-    if (field === 'spacing') segmentCustomSpacing[wKey] = value;
-    else segmentDistribution[wKey] = value;
+    if (field === 'spacing') { segmentCustomSpacing[wKey] = value; setLuxParam(wKey, 'spacing', value); }
+    else if (field === 'model') setLuxParam(wKey, 'luminaireModel', value || '');
+    else { segmentDistribution[wKey] = value; setLuxParam(wKey, 'distribution', value); }
     delete streetLumLayers[wKey];
     placeStreetLuminaires(wKey, getSegmentSpacing(wKey, info.zoneId, info.type));
     // Re-seleccionar los puntos regenerados de este tramo (los índices viejos ya no valen)
@@ -4039,17 +4150,41 @@ function applyGroupLumField(field, value) {
 }
 
 let _detailAutoSaveTimers = {};
+let _lumSaveTail = Promise.resolve();
+const _lumSaveActive = new Set();
+function _queueLuminaireSave(zoneId, type, items, announce) {
+  const key = zoneId + '::' + type;
+  if (_lumSaveActive.has(key)) return Promise.resolve(false);
+  _lumSaveActive.add(key);
+  const task = _lumSaveTail.catch(() => {}).then(async () => {
+    if (announce) showToast(t('toast.saving', {n: items.length}));
+    ctxSetSave('saving');
+    try {
+      const res = await apiPost('/api/luminaires/bulk', { zone_id: zoneId, road_type: type, items });
+      if (!luminaireDBCounts[zoneId]) luminaireDBCounts[zoneId] = {};
+      luminaireDBCounts[zoneId][type] = res.inserted;
+      if (announce) showToast(t('toast.saved', {n: res.inserted}));
+      ctxSetSave('saved');
+      setTimeout(() => ctxSetSave(null), 4000);
+      renderZoneCards();
+      return true;
+    } catch(e) {
+      if (announce) showToast('Error al guardar: ' + e.message, false);
+      ctxSetSave('error');
+      setTimeout(() => ctxSetSave(null), 6000);
+      return false;
+    }
+  });
+  _lumSaveTail = task.catch(() => {});
+  return task.finally(() => _lumSaveActive.delete(key));
+}
 function _scheduleDetailAutoSave(zoneId, type) {
   const key = zoneId + '::' + type;
   clearTimeout(_detailAutoSaveTimers[key]);
   _detailAutoSaveTimers[key] = setTimeout(async () => {
     const items = collectLuminairePositions(zoneId, type);
     if (!items.length) return;
-    try {
-      ctxSetSave('saving');
-      await apiPost('/api/luminaires/bulk', { zone_id: zoneId, road_type: type, items });
-      ctxSetSave('saved'); setTimeout(() => ctxSetSave(null), 3000);
-    } catch(e) { ctxSetSave('error'); setTimeout(() => ctxSetSave(null), 5000); }
+    await _queueLuminaireSave(zoneId, type, items, false);
   }, 500);
 }
 
@@ -4062,7 +4197,7 @@ function collectLuminairePositions(zoneId, type) {
     if (!info) return;
     const sp = getSegmentSpacing(wKey, zoneId, type);
     const lc = getEffectiveLightingClass(wKey);
-    const watts = (lc.lux * info.effW * sp / LAMP_EFFICACY);
+    const watts = (lc.lux * info.effW * sp / PROJECT_EFFICIENCY);
     // Use actual marker positions if luminaires were placed on map
     if (Array.isArray(streetLumLayers[wKey])) {
       streetLumLayers[wKey].forEach((item, idx) => {
@@ -4130,21 +4265,9 @@ async function loadLuminaireDBCounts(zoneId) {
 async function saveLuminairesToDB(zoneId, type) {
   const items = collectLuminairePositions(zoneId, type);
   if (!items.length) { showToast(t('toast.no_pos')); return; }
-  showToast(t('toast.saving', {n: items.length}));
-  ctxSetSave('saving');
-  try {
-    const res = await apiPost('/api/luminaires/bulk', { zone_id: zoneId, road_type: type, items });
-    if (!luminaireDBCounts[zoneId]) luminaireDBCounts[zoneId] = {};
-    luminaireDBCounts[zoneId][type] = res.inserted;
-    showToast(t('toast.saved', {n: res.inserted}));
-    ctxSetSave('saved');
-    setTimeout(() => ctxSetSave(null), 4000);
-    renderZoneCards();
-  } catch(e) {
-    showToast('Error al guardar: ' + e.message);
-    ctxSetSave('error');
-    setTimeout(() => ctxSetSave(null), 6000);
-  }
+  const zoneState = zoneData[zoneId];
+  if (zoneState?.ways) saveOsmDataToDB(zoneId, zoneState.kmByType, zoneState.ways);
+  await _queueLuminaireSave(zoneId, type, items, true);
 }
 
 async function exportLuminairesExcel(zoneId) {
@@ -5212,10 +5335,11 @@ function _streetClickHandler(zone) {
     const wKey = p.wKey;
     const info = segmentLightingInfo[wKey] || {};
     const lc = getEffectiveLightingClass(wKey);
-    const curSp  = segmentCustomSpacing[wKey] || (zoneTypeSpacing[info.zoneId]&&zoneTypeSpacing[info.zoneId][info.type]) || zoneSpacing[info.zoneId] || 30;
+    const curSp  = getSegmentSpacing(wKey, info.zoneId, info.type);
     const curDist = getSegmentDist(wKey);
+    const curModel = getSegmentLuminaireModel(wKey);
     const curDfac = DIST_FACTOR[curDist] ?? 1;
-    const wPerLum = (lc.lux * (info.effW||p.effW) * curSp / LAMP_EFFICACY).toFixed(1);
+    const wPerLum = (lc.lux * (info.effW||p.effW) * curSp / PROJECT_EFFICIENCY).toFixed(1);
     const svUrl = `https://www.google.com/maps?q=&layer=c&cbll=${e.lngLat.lat.toFixed(6)},${e.lngLat.lng.toFixed(6)}&cbp=12,0,,0,0`;
     const totalKmRow = +p.totalKmM ? `<div class="popup-row">${t('popup.total_len')}: <span>${p.totalKmM} m</span></div>` : '';
     const html = `
@@ -5248,7 +5372,7 @@ function _streetClickHandler(zone) {
           <span style="color:#ffd700;font-size:11px;font-weight:600"><span id="watts_${wKey}">${wPerLum}</span> W/lum</span>
           <span style="color:#4caf82;font-size:12px;font-weight:600;margin-left:auto">→ <span id="lumcount_${wKey}">${Math.round(p.lenM/curSp*curDfac)}</span> ${t('popup.lights')}</span>
         </div>
-        <div style="margin-bottom:6px;display:flex;align-items:center;gap:6px">
+         <div style="margin-bottom:6px;display:flex;align-items:center;gap:6px">
           <label style="color:#8fa8c0;font-size:11px;flex:0 0 auto">Distribución:</label>
           <select id="distinput_${wKey}" onchange="setSegmentDistribution('${wKey}',this.value)" onclick="event.stopPropagation()"
             style="flex:1;background:var(--bg4);color:#e8c060;border:1px solid #5a4a1a;border-radius:4px;padding:3px 5px;font-size:11px;cursor:pointer">
@@ -5258,9 +5382,16 @@ function _streetClickHandler(zone) {
             <option value="bilateral_tresbolillo" ${curDist==='bilateral_tresbolillo' ?'selected':''}>Bilateral tresbolillo</option>
             <option value="centrada_mediana"      ${curDist==='centrada_mediana'      ?'selected':''}>Centrada en mediana</option>
             <option value="mediana_compartida"   ${curDist==='mediana_compartida'    ?'selected':''}>Sin lum. (mediana compartida)</option>
-          </select>
-        </div>
-        <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">
+           </select>
+         </div>
+         <div style="display:flex;align-items:center;gap:6px">
+           <label style="color:#8fa8c0;font-size:11px;flex:0 0 auto">Luminaria:</label>
+           <select id="modelinput_${wKey}" onchange="setSegmentLuminaireModel('${wKey}',this.value)" onclick="event.stopPropagation()"
+             style="flex:1;background:var(--bg4);color:${curModel?'#4caf82':'#8fa8c0'};border:1px solid ${curModel?'rgba(31,122,77,.4)':'var(--border1)'};border-radius:4px;padding:3px 5px;font-size:11px;cursor:pointer">
+             ${luminaireModelOptionsHTML(curModel)}
+           </select>
+         </div>
+         <div style="display:flex;gap:4px;align-items:center;flex-wrap:wrap">
           <button id="lumbtn_${wKey}" onclick="placeStreetLuminaires('${wKey}',parseInt(document.getElementById('spinput_${wKey}').value)||${curSp})"
             style="flex:1;padding:6px;background:#1a6a3a;color:#fff;border:none;border-radius:5px;cursor:pointer;font-size:12px;font-weight:600">${t('popup.btn.place')}</button>
           <button id="lumeditbtn_${wKey}" onclick="startLumEditMode('${wKey}')"
@@ -5832,8 +5963,9 @@ function renderDetailDocks() {
       const curHeight = _lumFieldValue(fWKey, fIdx, 'height');
       const curArm    = _lumFieldValue(fWKey, fIdx, 'arm');
       const curCls    = _lumFieldValue(fWKey, fIdx, 'cls');
-      const curSpacing = getSegmentSpacing(fWKey, segmentLightingInfo[fWKey]?.zoneId, segmentLightingInfo[fWKey]?.type);
-      const curArrangement = getSegmentDist(fWKey);
+       const curSpacing = getSegmentSpacing(fWKey, segmentLightingInfo[fWKey]?.zoneId, segmentLightingInfo[fWKey]?.type);
+       const curArrangement = getSegmentDist(fWKey);
+       const curModel = getSegmentLuminaireModel(fWKey);
       const hint = selectedLumIds.size === 1
         ? 'Arrastra el marcador en el mapa para mover esta luminaria.'
         : `Los cambios se aplican a las ${selectedLumIds.size} luminarias seleccionadas.`;
@@ -5861,7 +5993,7 @@ function renderDetailDocks() {
           <label style="font-size:11px;color:var(--text3)">Interdistancia (m) · aplica al tramo
             <input type="number" value="${curSpacing}" min="5" max="150" style="width:100%;font-size:12px;padding:4px"
               onchange="applyGroupLumField('spacing', parseFloat(this.value))"></label>
-          <label style="font-size:11px;color:var(--text3)">Disposición · aplica al tramo
+           <label style="font-size:11px;color:var(--text3)">Disposición · aplica al tramo
             <select style="width:100%;font-size:12px;padding:4px" onchange="applyGroupLumField('distribution', this.value)">
               <option value="unilateral_r"          ${curArrangement==='unilateral_r'          ?'selected':''}>Unilateral derecha</option>
               <option value="unilateral_l"          ${curArrangement==='unilateral_l'          ?'selected':''}>Unilateral izquierda</option>
@@ -5869,8 +6001,12 @@ function renderDetailDocks() {
               <option value="bilateral_tresbolillo" ${curArrangement==='bilateral_tresbolillo' ?'selected':''}>Bilateral tresbolillo</option>
               <option value="centrada_mediana"      ${curArrangement==='centrada_mediana'      ?'selected':''}>Centrada en mediana</option>
               <option value="mediana_compartida"    ${curArrangement==='mediana_compartida'    ?'selected':''}>Sin lum. (mediana compartida)</option>
-            </select></label>
-        </div>
+             </select></label>
+           <label style="font-size:11px;color:var(--text3)">Modelo · aplica al tramo
+             <select style="width:100%;font-size:12px;padding:4px" onchange="applyGroupLumField('model', this.value)">
+               ${luminaireModelOptionsHTML(curModel)}
+             </select></label>
+         </div>
         <button class="lux-btn ghost" style="margin-top:8px" onclick="selectedLumIds.clear();_onSelectionChanged();">Deseleccionar todo</button>`;
     }
     right.innerHTML = `
@@ -5991,6 +6127,7 @@ function renderZoneCards() {
 function toggleZoneType(zoneId, type, checked) {
   if (!zoneTypeVisibility[zoneId]) zoneTypeVisibility[zoneId] = {};
   zoneTypeVisibility[zoneId][type] = checked;
+  _saveZoneUiState(zoneId);
   _applyZoneTypeVisibility(zoneId);
   renderZoneCards();
 }
@@ -6001,6 +6138,8 @@ function getEffectiveLightingClass(wKey) {
   if (!info) return LIGHTING_CLASS.unclassified;
   const segCls  = segmentLightingClassOverride[wKey];
   if (segCls  && ALL_LC[segCls])  return ALL_LC[segCls];
+  const persistedCls = getLuxParams(wKey).lightingClass;
+  if (persistedCls && ALL_LC[persistedCls]) return ALL_LC[persistedCls];
   const typeCls = (zoneTypeLightingClass[info.zoneId] || {})[info.type];
   if (typeCls && ALL_LC[typeCls]) return ALL_LC[typeCls];
   return LIGHTING_CLASS[info.type] || LIGHTING_CLASS.unclassified;
@@ -6016,9 +6155,16 @@ function _lcSelectHTML(selectedCls, onchangeFn) {
 function setZoneTypeLightingClass(zoneId, type, cls) {
   if (!zoneTypeLightingClass[zoneId]) zoneTypeLightingClass[zoneId] = {};
   zoneTypeLightingClass[zoneId][type] = cls;
+  _saveZoneUiState(zoneId);
   // Type-level change wins → clear all per-segment overrides for this type
   const keys = (streetTypeIndex[zoneId] || {})[type] || [];
-  keys.forEach(k => { delete segmentLightingClassOverride[k]; });
+  keys.forEach(k => {
+    delete segmentLightingClassOverride[k];
+    const way = _wayForKey(k);
+    if (way?.luxParams) delete way.luxParams.lightingClass;
+  });
+  const zd = zoneData[zoneId];
+  if (zd) saveOsmDataToDB(zoneId, zd.kmByType, zd.ways);
   // Live-update open popups
   _refreshTypePopups(zoneId, type);
   renderZoneCards();
@@ -6026,6 +6172,7 @@ function setZoneTypeLightingClass(zoneId, type, cls) {
 
 function setSegmentLightingClass(wKey, cls) {
   segmentLightingClassOverride[wKey] = cls;
+  setLuxParam(wKey, 'lightingClass', cls);
   _refreshSegmentPopup(wKey);
 }
 
@@ -6038,29 +6185,32 @@ function _refreshSegmentPopup(wKey) {
   const info = segmentLightingInfo[wKey];
   if (!info) return;
   const lc    = getEffectiveLightingClass(wKey);
-  const curSp = segmentCustomSpacing[wKey] || (zoneTypeSpacing[info.zoneId]?.[info.type]) || zoneSpacing[info.zoneId] || 30;
-  const w_val = (lc.lux * info.effW * curSp / LAMP_EFFICACY).toFixed(1);
+  const curSp = getSegmentSpacing(wKey, info.zoneId, info.type);
+  const w_val = (lc.lux * info.effW * curSp / PROJECT_EFFICIENCY).toFixed(1);
   const hdrEl  = document.getElementById('wlumhdr_'  + wKey);
   const wEl    = document.getElementById('watts_'    + wKey);
   const lcEl   = document.getElementById('lumcount_' + wKey);
   const clsEl  = document.getElementById('lccls_'    + wKey);
   const luxEl  = document.getElementById('lclux_'    + wKey);
+  const modelEl = document.getElementById('modelinput_' + wKey);
   if (hdrEl)  hdrEl.textContent = w_val + ' W/lum';
   if (wEl)    wEl.textContent   = w_val;
   if (lcEl)   lcEl.textContent  = Math.round(info._lenM / curSp);
   if (clsEl)  clsEl.value       = lc.cls;
   if (luxEl)  luxEl.textContent = (lc.cdm2 ? lc.cdm2+' cd/m² → ' : '') + lc.lux + ' lux';
+  if (modelEl) modelEl.value = getSegmentLuminaireModel(wKey) || '';
 }
 
 function setZoneTypeSpacing(zoneId, type, val) {
   if (!zoneTypeSpacing[zoneId]) zoneTypeSpacing[zoneId] = {};
   zoneTypeSpacing[zoneId][type] = val;
+  _saveZoneUiState(zoneId);
   const keys = (streetTypeIndex[zoneId] || {})[type] || [];
   keys.forEach(k => {
     const info = segmentLightingInfo[k];
     if (!info) return;
     const lc    = getEffectiveLightingClass(k);
-    const w_val = (lc.lux * info.effW * val / LAMP_EFFICACY).toFixed(1);
+    const w_val = (lc.lux * info.effW * val / PROJECT_EFFICIENCY).toFixed(1);
     const hdrEl = document.getElementById('wlumhdr_' + k);
     const wEl   = document.getElementById('watts_'   + k);
     const spEl  = document.getElementById('spinput_' + k);
@@ -6085,6 +6235,7 @@ function renderZoneDetail(zoneId) {
   if (!zone) { el.innerHTML = ''; return; }
   const d = zoneData[zone.id];
   if (!d) { el.innerHTML = ''; return; }
+  _loadZoneTypeModels(zone.id);
 
   const km = d.kmByType;
   const vis = zoneTypeVisibility[zone.id] || {};
@@ -6144,8 +6295,8 @@ function renderZoneDetail(zoneId) {
           🌳${tc!==null?' '+tc:''}</button>`;})()} 
     </div>
     <div style="display:flex;flex-wrap:wrap;gap:4px">
-      <button onclick="generateZoneReport('${zone.id}')" title="Informe Word"
-        style="background:var(--bg4);border:1px solid var(--border2);color:var(--salvi-black);border-radius:4px;padding:3px 8px;cursor:pointer;font-size:12px;font-family:var(--font-ui)">📄 Doc</button>
+       <button onclick="generateZoneReport('${zone.id}')" title="Informe completo del proyecto"
+         style="background:var(--bg4);border:1px solid var(--border2);color:var(--salvi-black);border-radius:4px;padding:3px 8px;cursor:pointer;font-size:12px;font-family:var(--font-ui)">📄 Doc</button>
       <button onclick="exportZoneExcel('${zone.id}')" title="Excel segmentos"
         style="background:var(--bg4);border:1px solid var(--border2);color:var(--salvi-black);border-radius:4px;padding:3px 8px;cursor:pointer;font-size:12px;font-family:var(--font-ui)">📊 Calles</button>
       <button onclick="exportLuminairesExcel('${zone.id}')" title="Excel luminarias"
@@ -6187,8 +6338,9 @@ function renderZoneDetail(zoneId) {
     <div style="padding:0 12px 12px">
       <table style="width:100%;border-collapse:collapse;font-size:11px">
         <thead><tr style="color:var(--text3);border-bottom:1px solid var(--border1)">
-          <th style="text-align:left;padding:3px 4px;font-weight:600">${t('card.col.type')}</th>
-          <th style="text-align:right;padding:3px 4px;font-weight:600">${t('card.col.km')}</th>
+           <th style="text-align:left;padding:3px 4px;font-weight:600">${t('card.col.type')}</th>
+           <th style="text-align:left;padding:3px 4px;font-weight:600">Modelo</th>
+           <th style="text-align:right;padding:3px 4px;font-weight:600">${t('card.col.km')}</th>
           <th style="text-align:right;padding:3px 4px;font-weight:600">${t('card.col.dist')}</th>
           <th style="text-align:right;padding:3px 4px;font-weight:600">${t('card.col.lum')}</th>
           <th style="padding:3px 4px;font-weight:600"></th>
@@ -6208,6 +6360,7 @@ function renderZoneDetail(zoneId) {
             const lk   = Math.round((km[k]||0)*1000/tsp*dfac);
             const vis2 = zoneTypeVisibility[zone.id]?.[k] !== false;
             const cfg  = ROAD_CFG[k]||ROAD_CFG.unclassified;
+            const model = getTypeLuminaireModel(zone.id, k);
             const effClsKey = (zoneTypeLightingClass[zone.id]||{})[k] || (LIGHTING_CLASS[k]||LIGHTING_CLASS.unclassified).cls;
             const lc   = ALL_LC[effClsKey] || LIGHTING_CLASS[k] || LIGHTING_CLASS.unclassified;
             const isCustomSp = zoneTypeSpacing[zone.id]?.[k] && zoneTypeSpacing[zone.id][k] !== sp;
@@ -6216,16 +6369,23 @@ function renderZoneDetail(zoneId) {
               <td style="padding:3px 4px;color:#8fa8c0">
                 <input type="checkbox" ${vis2?'checked':''} onclick="event.stopPropagation();toggleZoneType('${zone.id}','${k}',this.checked);this.closest('tr').style.opacity=this.checked?1:0.45"
                   style="margin-right:4px;accent-color:${cfg.color};cursor:pointer;vertical-align:middle" />
-                ${ico} ${label}<br>
+               ${ico} ${label}<br>
                 <span style="margin-left:18px;display:inline-flex;align-items:center;gap:3px">
                   <select onchange="event.stopPropagation();setZoneTypeLightingClass('${zone.id}','${k}',this.value)" onclick="event.stopPropagation()"
                     style="background:${isCustomLc?'var(--green-bg)':'var(--bg4)'};color:${isCustomLc?'var(--state-success)':'var(--salvi-black)'};border:1px solid ${isCustomLc?'rgba(31,122,77,.4)':'var(--border1)'};border-radius:3px;padding:1px 3px;font-size:10px;font-weight:700;cursor:pointer">
                     ${Object.keys(ALL_LC).map(ck=>`<option value="${ck}"${ck===effClsKey?' selected':''}>${ck}</option>`).join('')}
                   </select>
                   <span style="font-size:9px;color:var(--text3)">${lc.lux} lux</span>
-                </span>
-              </td>
-              <td style="padding:3px 4px;text-align:right;color:var(--text);font-weight:600">${(km[k]||0).toFixed(2)}</td>
+               </span>
+             </td>
+             <td style="padding:3px 4px;vertical-align:top">
+               <select onchange="event.stopPropagation();setZoneTypeModel('${zone.id}','${k}',this.value)" onclick="event.stopPropagation()"
+                 title="Modelo por defecto para este tipo de vía"
+                 style="width:82px;background:${model?'var(--green-bg)':'var(--bg4)'};color:${model?'var(--state-success)':'var(--text3)'};border:1px solid ${model?'rgba(31,122,77,.4)':'var(--border1)'};border-radius:3px;padding:2px 2px;font-size:10px;font-weight:700;cursor:pointer">
+                 ${luminaireModelOptionsHTML(model).replace('Sin definir (seleccionar)', 'Sin definir')}
+               </select>
+             </td>
+             <td style="padding:3px 4px;text-align:right;color:var(--text);font-weight:600">${(km[k]||0).toFixed(2)}</td>
               <td style="padding:2px 4px;text-align:right">
                 <input type="number" min="5" max="100" value="${tsp}"
                   style="width:44px;background:${isCustomSp?'var(--green-bg)':'var(--bg4)'};border:1px solid ${isCustomSp?'rgba(31,122,77,.4)':'var(--border1)'};color:${isCustomSp?'var(--state-success)':'var(--salvi-black)'};padding:2px 4px;border-radius:3px;font-size:11px;font-weight:700;text-align:center"
@@ -6316,6 +6476,7 @@ function setZoneSpacing(id, val) {
   if (isNaN(v) || v < 5) return;
   zoneSpacing[id] = v;
   apiPut('/api/zones/' + id + '/config', { spacing: v }).catch(e => console.warn('[API] Config save failed:', e.message));
+  _saveZoneUiState(id);
   if (currentTab === 'analysis') renderAnalysis();
   if (currentTab === 'scenarios') renderScenarios();
 }
@@ -6337,6 +6498,8 @@ function deleteZone(id) {
   if (idx > -1) ZONES.splice(idx, 1);
   delete zoneData[id];
   delete zoneSpacing[id];
+  delete zoneTypeModel[id];
+  try { localStorage.removeItem('salviGIS_models_' + id); } catch(_) {}
   if (selectedZone === id) selectedZone = null;
   // Persist deletion to DB
   apiDelete('/api/zones/' + id).catch(e => console.warn('[API] Delete failed:', e.message));
@@ -7446,7 +7609,7 @@ function _waysToFeatures(zone, ways) {
         dual: (w.dual===true||w.dual==='yes') ? 'yes':'no', surface:w.surface||'', sidewalk:w.sidewalk||'',
         totalKmM: totalKm ? Math.round(totalKm*1000) : 0,
         lcCls:_lc0.cls, lcLux:_lc0.lux, lcCdm2:_lc0.cdm2||0,
-        wPerLum: +(_lc0.lux * _effW0 * _sp0 / LAMP_EFFICACY).toFixed(1),
+        wPerLum: +(_lc0.lux * _effW0 * _sp0 / PROJECT_EFFICIENCY).toFixed(1),
         lenM: _lenM0, effW:_effW0,
         lumCount: Math.round(_lenM0/_sp0)
       }
@@ -8628,8 +8791,12 @@ function exportZoneExcel(id) {
 function _doExportZoneExcel(id, zone, ways, lang) {
   // Reset shared string table for this export
   ssArr = []; ssMap = {}; ssCount = 0;
+  _loadZoneTypeModels(id);
   const sp = zoneSpacing[id] || 30;
-  const EFFICACY = LAMP_EFFICACY; // 90 lm/W
+  const EFFICACY = LAMP_EFFICACY; // 150 lm/W: luminaire efficacy
+  const PROJECT_EFF = PROJECT_EFFICIENCY; // 90 lux·m²/W: project estimate
+  const formulaCell = (formula, cached) => ({ formula, cached });
+  const valueOf = value => value && typeof value === 'object' && value.formula ? value.cached : value;
   const ROAD_SPEC = {
     primary:      {lux:34, defWidth:7.0}, secondary:    {lux:26, defWidth:6.0},
     tertiary:     {lux:17, defWidth:5.5}, residential:  {lux:13, defWidth:4.5},
@@ -8645,7 +8812,7 @@ function _doExportZoneExcel(id, zone, ways, lang) {
         'Superficie (m²)','Pavimento OSM','Acera',
         'Interdistancia (m)','Nº farolas','Potencia/farola (W)','Potencia segmento (kW)',
         'Consumo LED anual (kWh)','Consumo LED+Adaptive (kWh)',
-        'Latitud','Longitud','Ver en mapa'],
+        'Latitud','Longitud','Luminaria seleccionada','Ver en mapa'],
       roadLabels: {primary:'Primaria',secondary:'Secundaria',tertiary:'Terciaria',residential:'Residencial',
         unclassified:'Sin clasificar',living_street:'Residencial calmada',pedestrian:'Peatonal',service:'Servicio'},
       noName:'(sin nombre)', single:'Simple', double:'Doble', estimated:'estimado',
@@ -8658,7 +8825,7 @@ function _doExportZoneExcel(id, zone, ways, lang) {
         'Surface area (m²)','OSM pavement','Footway',
         'Pole spacing (m)','No. poles','Power/pole (W)','Segment power (kW)',
         'LED annual consumption (kWh)','LED+Adaptive consumption (kWh)',
-        'Latitude','Longitude','View on map'],
+        'Latitude','Longitude','Selected luminaire','View on map'],
       roadLabels: {primary:'Primary',secondary:'Secondary',tertiary:'Tertiary',residential:'Residential',
         unclassified:'Unclassified',living_street:'Living street',pedestrian:'Pedestrian',service:'Service road'},
       noName:'(unnamed)', single:'Single', double:'Dual', estimated:'estimated',
@@ -8671,7 +8838,7 @@ function _doExportZoneExcel(id, zone, ways, lang) {
         'Superfície (m²)','Pavimento OSM','Passeio',
         'Interdistância (m)','Nº luminárias','Potência/luminária (W)','Potência segmento (kW)',
         'Consumo LED anual (kWh)','Consumo LED+Adaptive (kWh)',
-        'Latitude','Longitude','Ver no mapa'],
+        'Latitude','Longitude','Luminária selecionada','Ver no mapa'],
       roadLabels: {primary:'Primária',secondary:'Secundária',tertiary:'Terciária',residential:'Residencial',
         unclassified:'Sem classificação',living_street:'Rua residencial calma',pedestrian:'Pedonal',service:'Via de serviço'},
       noName:'(sem nome)', single:'Simples', double:'Dupla', estimated:'estimado',
@@ -8683,7 +8850,7 @@ function _doExportZoneExcel(id, zone, ways, lang) {
         'Surface (m²)','Revêtement OSM','Trottoir','Éclairement EN 13201 (lux)',
         'Interdistance (m)','Nb mâts','Puissance/mât (W)','Puissance segment (kW)',
         'Conso. LED annuelle (kWh)','Conso. LED+Adaptatif (kWh)',
-        'Latitude','Longitude','Voir sur la carte'],
+        'Latitude','Longitude','Luminaire sélectionné','Voir sur la carte'],
       roadLabels: {primary:'Primaire',secondary:'Secondaire',tertiary:'Tertiaire',residential:'Résidentielle',
         unclassified:'Non classée',living_street:'Zone résidentielle apaisée',pedestrian:'Piétonne',service:'Voie de service'},
       noName:'(sans nom)', single:'Simple', double:'Double', estimated:'estimé',
@@ -8744,16 +8911,19 @@ function _doExportZoneExcel(id, zone, ways, lang) {
     const wm    = wmRaw + 4; // +2m each side (survey correction)
     const surf  = +(lenM * wm).toFixed(0);
     const lums  = Math.round(lenM / sp);
-    const wPerLum = +(spec.lux * wm * sp / EFFICACY).toFixed(1);
-    const totalKW = +(spec.lux * wm * lenM / EFFICACY / 1000).toFixed(3);
+    const wPerLum = +(spec.lux * wm * sp / PROJECT_EFF).toFixed(1);
+    const totalKW = +(spec.lux * wm * lenM / PROJECT_EFF / 1000).toFixed(3);
     const kwhLED  = +(totalKW * 12 * 365).toFixed(0);
     const kwhAdap = +(kwhLED * 0.5).toFixed(0);
+    const xlRow = i + 2;
     const streetKey = w.name || unnamedLabel[i] || '?';
     const streetKm  = streetTotals[streetKey] ? +streetTotals[streetKey].toFixed(3) : '';
     const widthSrcLabel = w.widthSrc === 'estimado' ? T.estimated : (w.widthSrc || T.estimated);
     const displayName = w.name || unnamedLabel[i] || T.noName;
     const lat = w.startLat || null;
     const lon = w.startLon || null;
+    const selectedModel = _reportWayModel(id, w);
+    const modelDisplay = selectedModel ? LUMINAIRE_MODELS[selectedModel].name : (lang === 'es' ? 'Sin definir' : lang === 'pt' ? 'Por definir' : lang === 'fr' ? 'Non défini' : 'Not defined');
     const mapUrl = lat && lon
       ? `https://www.google.com/maps?q=${lat},${lon}&z=18`
       : null;
@@ -8769,12 +8939,17 @@ function _doExportZoneExcel(id, zone, ways, lang) {
     return [
       zone.name, displayName, w.type, T.roadLabels[w.type] || w.type,
       lc.cls, lc.cdm2 || '', spec.lux,
-      lenM, streetKm, wmRaw.toFixed(1), wm.toFixed(1), widthSrcLabel,
+       lenM, formulaCell(`SUMIF($B:$B,B${xlRow},$H:$H)/1000`, streetKm || 0), wmRaw.toFixed(1), formulaCell(`J${xlRow}+4`, wm), widthSrcLabel,
       w.lanes || '', w.width || '',
       w.dual ? T.double : T.single,
-      surf, w.surface || '', w.sidewalk || '',
-      sp, lums, wPerLum, totalKW, kwhLED, kwhAdap,
-      lat !== null ? lat : '', lon !== null ? lon : '', mapUrl || '',
+       formulaCell(`H${xlRow}*K${xlRow}`, surf),
+      w.surface || '', w.sidewalk || '',
+      formulaCell(`ROUND(H${xlRow}/S${xlRow},0)`, lums),
+      formulaCell(`IFERROR(V${xlRow}*1000/T${xlRow},0)`, wPerLum),
+      formulaCell(`G${xlRow}*P${xlRow}/${PROJECT_EFF}/1000`, totalKW),
+      formulaCell(`V${xlRow}*12*365`, kwhLED),
+      formulaCell(`W${xlRow}*0.5`, kwhAdap),
+      lat !== null ? lat : '', lon !== null ? lon : '', modelDisplay, mapUrl || '',
       ...photoVals
     ];
   });
@@ -8802,13 +8977,13 @@ function _doExportZoneExcel(id, zone, ways, lang) {
     border: allBorders
   };
   // base col indices (0-based) that are numeric
-  const baseNumCols = new Set([4,5,6,8,9,11,14,15,16,17,18,19,20,21,22]);
+  const baseNumCols = new Set([5,6,7,8,9,10,12,13,15,18,19,20,21,22,23,24,25]);
   // photometric numeric cols start at index 27: power(29),lm(30),uo(31),ui(32),ti(33),sr(34),phi(35)
   const photoNumOffset = T.headers.length; // = 27
   const photoNumCols = hasPhoto ? [2,3,4,5,6,7,8].map(n => photoNumOffset + n) : [];
   const numCols = new Set([...baseNumCols, ...photoNumCols]);
   const photoHdrOffset = T.headers.length; // first col index of photometric section
-  const linkCol = 23;
+  const linkCol = 27;
   const fullHeaders = [...T.headers, ...photoHeaders];
   const allData = [fullHeaders, ...rows];
   const nRows = allData.length, nCols = fullHeaders.length;
@@ -8816,7 +8991,7 @@ function _doExportZoneExcel(id, zone, ways, lang) {
   try {
     // ── Column widths in EMUs (characters × 9 approx) ───────────────
     const photoColWidths = hasPhoto ? [30,10,14,10,10,10,10,10,12,10,20] : [];
-    const colWidths = [16,28,13,20,16,18,14,12,11,11,10,13,13,10,20,14,10,14,18,20,22,12,12,10,...photoColWidths];
+    const colWidths = [16,28,13,20,16,18,14,12,11,11,10,13,13,10,20,14,10,14,18,20,22,12,12,12,12,24,24,10,...photoColWidths];
 
     // ── Styles XML ──────────────────────────────────────────────────
     const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -8867,8 +9042,10 @@ function _doExportZoneExcel(id, zone, ways, lang) {
       row.forEach((val, ci) => {
         const cellRef = colLetters[ci] + (ri+1);
         const isPhotoCol = hasPhoto && ci >= photoHdrOffset;
-        const isNum = !isHeader && numCols.has(ci) && val !== '' && val != null;
-        const isLink = !isHeader && ci === linkCol && val;
+        const isFormula = !isHeader && val && typeof val === 'object' && val.formula;
+        const rawVal = isFormula ? val.cached : val;
+        const isNum = !isHeader && numCols.has(ci) && rawVal !== '' && rawVal != null;
+        const isLink = !isHeader && ci === linkCol && rawVal;
         let sIdx, cellXml;
         if (isHeader) {
           sIdx = isPhotoCol ? 6 : 1;
@@ -8876,9 +9053,12 @@ function _doExportZoneExcel(id, zone, ways, lang) {
         } else if (isLink) {
           sIdx = isEven ? 3 : 2;
           cellXml = `<c r="${cellRef}" s="${sIdx}" t="s"><v>${sharedStrIdx('Ver mapa')}</v></c>`;
+        } else if (isFormula) {
+          sIdx = isPhotoCol ? 7 : (isEven ? 5 : 4);
+          cellXml = `<c r="${cellRef}" s="${sIdx}"><f>${escXml(val.formula)}</f><v>${Number(val.cached) || 0}</v></c>`;
         } else if (isNum) {
           sIdx = isPhotoCol ? 7 : (isEven ? 5 : 4);
-          cellXml = `<c r="${cellRef}" s="${sIdx}"><v>${Number(val)}</v></c>`;
+          cellXml = `<c r="${cellRef}" s="${sIdx}"><v>${Number(rawVal)}</v></c>`;
         } else {
           sIdx = isPhotoCol ? 7 : (isEven ? 3 : 2);
           cellXml = `<c r="${cellRef}" s="${sIdx}" t="s"><v>${sharedStrIdx(escXml(val==null?'':val))}</v></c>`;
@@ -8916,6 +9096,56 @@ function _doExportZoneExcel(id, zone, ways, lang) {
       ? sheetXml.replace('</worksheet>', `<hyperlinks>${hlinkXml}</hyperlinks></worksheet>`)
       : sheetXml;
 
+    // ── Grouped summary sheet (pivot-style, filterable in Excel) ────
+    const summaryHeaders = lang === 'es'
+      ? ['Tipo de vía','Luminaria seleccionada','Nombre de vía','Segmentos','Longitud total (km)','Nº puntos','Potencia (kW)']
+      : lang === 'pt'
+        ? ['Tipo de via','Luminária selecionada','Nome da via','Segmentos','Comprimento total (km)','Nº pontos','Potência (kW)']
+        : lang === 'fr'
+          ? ['Type de voie','Luminaire sélectionné','Nom de la voie','Segments','Longueur totale (km)','Nb points','Puissance (kW)']
+          : ['Road type','Selected luminaire','Road name','Segments','Total length (km)','No. points','Power (kW)'];
+    const summaryGroups = {};
+    rows.forEach(row => {
+      const groupKey = [row[3], row[26], row[1]].join('|||');
+      if (!summaryGroups[groupKey]) summaryGroups[groupKey] = { type:row[3], model:row[26], name:row[1], segments:0, km:0, points:0, kw:0 };
+      const g = summaryGroups[groupKey];
+      g.segments += 1;
+      g.km += Number(valueOf(row[7])) || 0;
+      g.points += Number(valueOf(row[19])) || 0;
+      g.kw += Number(valueOf(row[21])) || 0;
+    });
+    const grouped = {};
+    Object.values(summaryGroups).forEach(g => {
+      const key = g.type + '|||' + g.model;
+      (grouped[key] ||= { type:g.type, model:g.model, rows:[] }).rows.push(g);
+    });
+    const summaryData = [summaryHeaders];
+    Object.values(grouped).sort((a,b) => `${a.type}${a.model}`.localeCompare(`${b.type}${b.model}`)).forEach(group => {
+      const total = group.rows.reduce((a,g) => ({ segments:a.segments+g.segments, km:a.km+g.km, points:a.points+g.points, kw:a.kw+g.kw }), {segments:0,km:0,points:0,kw:0});
+      summaryData.push([group.type, group.model, lang === 'es' ? 'TOTAL' : 'TOTAL', total.segments, +total.km.toFixed(3), total.points, +total.kw.toFixed(3)]);
+      group.rows.sort((a,b) => a.name.localeCompare(b.name)).forEach(g => summaryData.push([g.type, g.model, g.name, g.segments, +g.km.toFixed(3), g.points, +g.kw.toFixed(3)]));
+    });
+    const summaryLetters = Array.from({length:summaryHeaders.length},(_,i)=>colIndexToLetter(i));
+    const summaryRowsXml = summaryData.map((row, ri) => {
+      const isHeader = ri === 0, isGroup = ri > 0 && row[2] === 'TOTAL';
+      const cells = row.map((val, ci) => {
+        const ref = summaryLetters[ci] + (ri + 1);
+        const isNum = !isHeader && ci >= 3;
+        const style = isHeader ? 1 : isGroup ? 6 : (isNum ? (ri % 2 ? 4 : 5) : (ri % 2 ? 2 : 3));
+        return isNum
+          ? `<c r="${ref}" s="${style}"><v>${Number(val) || 0}</v></c>`
+          : `<c r="${ref}" s="${style}" t="s"><v>${sharedStrIdx(escXml(val))}</v></c>`;
+      }).join('');
+      return `<row r="${ri+1}"${isHeader?' ht="36" customHeight="1"':''}${isGroup?' outlineLevel="0"':''}>${cells}</row>`;
+    }).join('');
+    const summaryLast = summaryLetters[summaryHeaders.length - 1] + summaryData.length;
+    const summarySheetXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
+  <sheetFormatPr defaultRowHeight="15"/><cols><col min="1" max="1" width="22"/><col min="2" max="2" width="25"/><col min="3" max="3" width="30"/><col min="4" max="7" width="16"/></cols>
+  <sheetData>${summaryRowsXml}</sheetData><autoFilter ref="A1:${summaryLast}"/>
+</worksheet>`;
+
     // ── Shared strings ──────────────────────────────────────────────
     const ssXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" count="${ssCount}" uniqueCount="${ssArr.length}">
@@ -8924,14 +9154,15 @@ ${ssArr.map(s=>`<si><t xml:space="preserve">${s}</t></si>`).join('')}
 
     // ── Assemble ZIP ────────────────────────────────────────────────
     const zip = new JSZip();
-    zip.file('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>`);
+    zip.file('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>`);
     zip.file('_rels/.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`);
-    zip.file('xl/workbook.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="${escXml(zone.name.substring(0,31))}" sheetId="1" r:id="rId1"/></sheets></workbook>`);
-    zip.file('xl/_rels/workbook.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/></Relationships>`);
+    zip.file('xl/workbook.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><calcPr calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"/><sheets><sheet name="${escXml(zone.name.substring(0,31))}" sheetId="1" r:id="rId1"/><sheet name="Resumen" sheetId="2" r:id="rId4"/></sheets></workbook>`);
+    zip.file('xl/_rels/workbook.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/><Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/></Relationships>`);
     zip.file('xl/styles.xml', stylesXml);
     zip.file('xl/sharedStrings.xml', ssXml);
     zip.file('xl/worksheets/sheet1.xml', sheetXmlFinal);
     zip.file('xl/worksheets/_rels/sheet1.xml.rels', relsXml);
+    zip.file('xl/worksheets/sheet2.xml', summarySheetXml);
 
     zip.generateAsync({type:'blob', mimeType:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'})
       .then(blob => {
@@ -8963,6 +9194,119 @@ function colIndexToLetter(n) {
   n++;
   while (n > 0) { n--; s = String.fromCharCode(65 + n%26) + s; n = Math.floor(n/26); }
   return s;
+}
+
+function _reportEsc(value) {
+  return String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function _reportWayModel(zoneId, way) {
+  const model = way?.luxParams?.luminaireModel;
+  return LUMINAIRE_MODELS[model] ? model : getTypeLuminaireModel(zoneId, way?.type);
+}
+
+function _reportWayPoints(way, spacing, maxPoints) {
+  const geom = way?.geom || [];
+  if (geom.length < 2) return [];
+  const out = [];
+  let acc = 0, next = Math.max(5, spacing || 30) / 2;
+  for (let i = 1; i < geom.length && out.length < maxPoints; i++) {
+    const p0 = geom[i - 1], p1 = geom[i];
+    const seg = haversine(p0.lat, p0.lon, p1.lat, p1.lon) * 1000;
+    while (next <= acc + seg && out.length < maxPoints) {
+      const t = seg ? (next - acc) / seg : 0.5;
+      out.push({ lat:p0.lat + t * (p1.lat - p0.lat), lon:p0.lon + t * (p1.lon - p0.lon) });
+      next += Math.max(5, spacing || 30);
+    }
+    acc += seg;
+  }
+  return out;
+}
+
+function _reportMapSVG(zone, d, mode, typeFilter) {
+  const ways = (d?.ways || []).filter(w => w.geom && w.geom.length >= 2 && (!typeFilter || w.type === typeFilter));
+  const W = 920, H = 500, pad = 28;
+  if (!ways.length) return `<div class="report-map-empty">No street geometry is available. Load OSM data before generating the report.</div>`;
+  let minLon = Infinity, maxLon = -Infinity, minLat = Infinity, maxLat = -Infinity;
+  ways.forEach(w => w.geom.forEach(p => {
+    minLon = Math.min(minLon, p.lon); maxLon = Math.max(maxLon, p.lon);
+    minLat = Math.min(minLat, p.lat); maxLat = Math.max(maxLat, p.lat);
+  }));
+  const lonSpan = Math.max(0.0001, maxLon - minLon), latSpan = Math.max(0.0001, maxLat - minLat);
+  const scale = Math.min((W - pad * 2) / lonSpan, (H - pad * 2 - 42) / latSpan);
+  const project = p => [pad + (p.lon - minLon) * scale, H - pad - 34 - (p.lat - minLat) * scale];
+  // Keep every selected street; only thin vertices within long polylines.
+  const drawnWays = ways;
+  const paths = drawnWays.map(w => {
+    const cfg = ROAD_CFG[w.type] || ROAD_CFG.unclassified;
+    const model = _reportWayModel(zone.id, w);
+    const color = mode === 'proposal' ? luminaireModelColor(model) : cfg.color;
+    const opacity = mode === 'proposal' && !model ? 0.42 : 0.8;
+    const pts = w.geom.filter((_, i) => i === 0 || i === w.geom.length - 1 || i % 3 === 0);
+    return `<path d="${pts.map((p,i)=>{const q=project(p);return (i?'L':'M')+q[0].toFixed(1)+','+q[1].toFixed(1)}).join(' ')}" fill="none" stroke="${color}" stroke-width="${Math.max(0.8, Math.min(4, (cfg.weight || 1) * (mode === 'proposal' ? 1.15 : 0.8))).toFixed(1)}" stroke-opacity="${opacity}" stroke-linecap="round"/>`;
+  }).join('');
+  let markers = '';
+  if (mode === 'proposal') {
+    const actual = [];
+    Object.entries(streetLumLayers).forEach(([key, pts]) => {
+      if (segmentLightingInfo[key]?.zoneId !== zone.id || !Array.isArray(pts)) return;
+      const model = getSegmentLuminaireModel(key);
+      pts.forEach(item => {
+        const c = Array.isArray(item) ? item : item.c;
+        if (c && model) actual.push({ lon:c[0], lat:c[1], model });
+      });
+    });
+    const fallback = [];
+    if (!actual.length) {
+      ways.forEach(w => {
+        if (fallback.length >= 2500) return;
+        const model = _reportWayModel(zone.id, w);
+        if (!model) return;
+        _reportWayPoints(w, zoneTypeSpacing[zone.id]?.[w.type] || zoneSpacing[zone.id] || 30, 40).forEach(p => {
+          if (fallback.length < 2500) fallback.push({ ...p, model });
+        });
+      });
+    }
+    const points = (actual.length ? actual : fallback);
+    const stride = Math.max(1, Math.ceil(points.length / 1800));
+    markers = points.filter((_, i) => i % stride === 0).map(p => {
+      const q = project({lon:p.lon,lat:p.lat});
+      return `<circle cx="${q[0].toFixed(1)}" cy="${q[1].toFixed(1)}" r="2.1" fill="${luminaireModelColor(p.model)}" stroke="#fff" stroke-width="0.55"/>`;
+    }).join('');
+  }
+  const legend = mode === 'proposal'
+    ? `<g transform="translate(20,${H-27})">${Object.entries(LUMINAIRE_MODELS).map(([mk,m],i)=>`<circle cx="${5+i*112}" cy="0" r="4" fill="${luminaireModelColor(mk)}"/><text x="${14+i*112}" y="4">${m.name}</text>`).join('')}<circle cx="${5+Object.keys(LUMINAIRE_MODELS).length*112}" cy="0" r="4" fill="#9aa5a0"/><text x="${14+Object.keys(LUMINAIRE_MODELS).length*112}" y="4">Not defined</text></g>`
+    : `<g transform="translate(20,${H-35})" font-size="9">${[['primary','Primary'],['secondary','Secondary'],['tertiary','Tertiary'],['residential','Residential'],['unclassified','Unclassified'],['living_street','Living street'],['pedestrian','Pedestrian'],['service','Service'],['tunnel','Tunnel']].map(([k,label],i)=>`<circle cx="${5+(i%5)*174}" cy="${i>=5?14:0}" r="4" fill="${(ROAD_CFG[k]||ROAD_CFG.unclassified).color}"/><text x="${14+(i%5)*174}" y="${i>=5?18:4}">${label}</text>`).join('')}</g>`;
+  return `<svg class="report-map" viewBox="0 0 ${W} ${H}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${mode==='proposal'?'Proposed luminaire model map':typeFilter?'Road type map':'General road category map'}"><rect width="${W}" height="${H}" rx="8" fill="#edf3f0"/><g>${paths}</g>${markers}<g font-family="Arial,sans-serif" font-size="11" fill="#254238">${legend}<text x="${W-42}" y="24" font-size="18" font-weight="700">N</text><path d="M${W-36},46 L${W-36},28 M${W-36},28 l-5,8 h10 z" fill="#254238"/></g></svg>`;
+}
+
+function _reportProductFigure(modelKey) {
+  const m = LUMINAIRE_MODELS[modelKey];
+  const tint = luminaireModelColor(modelKey);
+  const panel = m.system === 'solar' ? `<rect x="22" y="20" width="88" height="48" rx="4" fill="#243b52" stroke="${tint}" stroke-width="3" transform="rotate(-10 22 20)"/>` : '';
+  const lamp = m.system === 'solar' ? '<path d="M110 58 H235 Q252 58 252 68 Q252 78 235 78 H112 Z"' : '<path d="M48 58 H235 Q252 58 252 68 Q252 78 235 78 H48 Z"';
+  return `<svg viewBox="0 0 280 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="${m.name} luminaire">${panel}${lamp} fill="${tint}"/><path d="M120 78 H226 L216 91 H130 Z" fill="#f7f4dc"/><path d="M184 78 V112" stroke="#37474f" stroke-width="5"/><path d="M168 112 H200" stroke="#37474f" stroke-width="5"/></svg>`;
+}
+
+function _reportSvgToPng(markup, className) {
+  if (!markup || markup.indexOf('<svg') < 0) return Promise.resolve(markup);
+  return new Promise(resolve => {
+    const svgBlob = new Blob([markup], {type:'image/svg+xml;charset=utf-8'});
+    const objectUrl = URL.createObjectURL(svgBlob);
+    const image = new Image();
+    image.onload = () => {
+      try {
+        const canvas = document.createElement('canvas');
+        canvas.width = className === 'product-figure' ? 560 : 1840;
+        canvas.height = className === 'product-figure' ? 240 : 1000;
+        canvas.getContext('2d').drawImage(image, 0, 0);
+        resolve(`<img class="${className || 'report-map'}" src="${canvas.toDataURL('image/png')}"/>`);
+      } catch (_) { resolve(markup); }
+      URL.revokeObjectURL(objectUrl);
+    };
+    image.onerror = () => { URL.revokeObjectURL(objectUrl); resolve(markup); };
+    image.src = objectUrl;
+  });
 }
 
 function generateZoneReport(id) {
@@ -9004,7 +9348,7 @@ function generateZoneReport(id) {
   };
 }
 
-function _doGenerateZoneReport(id, cfg) {
+async function _doGenerateZoneReport(id, cfg) {
   const costRepInput = null;
   const costNewInput = cfg?.costUnit || null;
   try {
@@ -9012,12 +9356,14 @@ function _doGenerateZoneReport(id, cfg) {
     if (!zone) return;
     const d = zoneData[id] || {};
     const km = d.kmByType || zone.est || {};
+    _loadZoneTypeModels(id);
     const sp = zoneSpacing[id] || 30;
     const lang = cfg?.lang || 'es';
     const numLocale = {es:'es-ES', en:'en-US', pt:'pt-PT', fr:'fr-FR', ca:'ca-ES'}[lang] || 'es-ES';
     const today = new Date().toLocaleDateString(numLocale, { year:'numeric', month:'long', day:'numeric' });
     const HOURS = 12;
-    const EFFICACY = 90;
+    const EFFICACY = LAMP_EFFICACY;
+    const PROJECT_EFF = PROJECT_EFFICIENCY;
     const CO2_FACTOR = 0.5; // kgCO2/kWh Angola grid estimate
     const HPS_FACTOR = 2.5;
     const COST_KWH = cfg?.costKwh || 0.10;
@@ -9043,7 +9389,7 @@ function _doGenerateZoneReport(id, cfg) {
     };
 
     const totalKm = Object.values(km).reduce((a,b)=>a+b,0);
-    const source = d.source === 'osm' ? 'Datos en vivo (OpenStreetMap)' : 'Datos estimados';
+    const source = d.source === 'osm' ? 'Datos en vivo (OpenStreetMap)' : d.source === 'db' ? 'Datos OSM almacenados en la base de datos' : d.source === 'inventory' ? 'Inventario importado' : 'Datos estimados';
 
     // Declare these early — used throughout the function
     const projType  = cfg?.projType  || null;
@@ -9054,27 +9400,40 @@ function _doGenerateZoneReport(id, cfg) {
     const showEcon  = !cfg?.noEcon;
 
     // Per-type calculations using actual segment widths
-    // P_total per segment = len(m) × Em(lux) × width(m) / efficacy(lm/W)
-    // (interdistance cancels: N_lum = len/sp, P_lum = Em×width×sp/eff → P_total = N_lum×P_lum = len×Em×width/eff)
+     // Preliminary project power = illuminance × illuminated surface / 90 lux·m²/W.
     const segWays = d.ways || [];
     const typeData = Object.entries(km).filter(([,v])=>v>0).map(([type, v]) => {
       const spec = ROAD_SPEC[type] || ROAD_SPEC.unclassified;
-      const lums = Math.round(v * 1000 / sp);
+      const typeSpacing = zoneTypeSpacing[id]?.[type] || zoneSpacing[id] || sp;
+      const lums = Math.round(v * 1000 / typeSpacing * (distFactor(id, type)));
       // Sum power per segment using real widths; fall back to spec.width if no segment data
       const segsOfType = segWays.filter(w => w.type === type);
       let totalW, totalSurface;
       if (segsOfType.length > 0) {
         totalW = segsOfType.reduce((acc, w) => {
           const wm = (w.estWidth || spec.width) + 4; // +2m each side
-          return acc + (w.len * 1000 * spec.lux * wm / EFFICACY);
+          return acc + (w.len * 1000 * spec.lux * wm / PROJECT_EFF);
         }, 0);
         totalSurface = segsOfType.reduce((acc, w) => acc + (w.len * 1000 * ((w.estWidth || spec.width) + 4)), 0);
       } else {
-        totalW = lums * (spec.lux * (spec.width + 4) * sp) / EFFICACY;
+         totalW = lums * (spec.lux * (spec.width + 4) * typeSpacing) / PROJECT_EFF;
         totalSurface = v * 1000 * (spec.width + 4);
       }
-      const wPerLum = lums > 0 ? totalW / lums : 0;
-      return { type, label: ROAD_LABELS[type]||type, km: v, lums, wPerLum, totalW, totalSurface, phase: spec.phase };
+       const modelCounts = Object.fromEntries([...Object.keys(LUMINAIRE_MODELS), 'undefined'].map(k => [k, 0]));
+       const modelWays = segsOfType.filter(w => w.geom && w.geom.length >= 2);
+       const modelLengths = Object.fromEntries([...Object.keys(LUMINAIRE_MODELS), 'undefined'].map(k => [k, 0]));
+       modelWays.forEach(w => {
+         const model = _reportWayModel(id, w);
+         modelLengths[model || 'undefined'] += (w.len || 0);
+       });
+       Object.keys(modelCounts).forEach(k => { modelCounts[k] = Math.round(modelLengths[k] * 1000 / typeSpacing * distFactor(id, type)); });
+       if (!modelWays.length) modelCounts[getTypeLuminaireModel(id, type) || 'undefined'] = lums;
+       else {
+         const assigned = Object.values(modelCounts).reduce((a,b)=>a+b,0);
+         modelCounts[getTypeLuminaireModel(id, type) || 'undefined'] += lums - assigned;
+       }
+       const selectedModel = getTypeLuminaireModel(id, type);
+       return { type, label: ROAD_LABELS[type]||type, km: v, lums, wPerLum: lums > 0 ? totalW / lums : 0, totalW, totalSurface, phase: spec.phase, model:selectedModel, modelCounts };
     });
 
     const totalLum = typeData.reduce((a,t)=>a+t.lums, 0);
@@ -9120,8 +9479,8 @@ function _doGenerateZoneReport(id, cfg) {
                         : null;
 
     const SOLAR_NOTE_TXT = {
-      es: `<b>⚡ Proyecto solar autónomo:</b> Dado que la red de distribución eléctrica es débil o no llega a la zona, se recomienda el uso de luminarias solares autónomas con batería integrada. Esta solución elimina la dependencia de la red eléctrica, reduce los costes de obra civil de canalización y permite una implantación progresiva sin necesidad de infraestructura eléctrica previa.`,
-      en: `<b>⚡ Autonomous solar project:</b> Since the electricity distribution network is weak or unavailable in the area, autonomous solar luminaires with integrated battery are recommended. This eliminates grid dependency, reduces cabling civil works costs, and allows a progressive rollout without prior electrical infrastructure.`,
+       es: `<b>⚡ Proyecto solar autónomo:</b> Dado que la red de distribución eléctrica es débil o no llega a la zona, se propone estudiar luminarias solares autónomas con batería integrada. Puede reducir la dependencia de la red y facilitar una implantación progresiva, pero la autonomía y la fiabilidad deben confirmarse con el estudio solar específico, el perfil nocturno, las sombras y las condiciones estacionales del emplazamiento.`,
+       en: `<b>⚡ Autonomous solar project:</b> Since the electricity distribution network is weak or unavailable in the area, autonomous solar luminaires with integrated battery are proposed for study. They may reduce grid dependency and enable a phased rollout, but autonomy and reliability must be confirmed through a site-specific solar study, operating profile, shading assessment and seasonal analysis.`,
       pt: `<b>⚡ Projeto solar autónomo:</b> Uma vez que a rede de distribuição elétrica é fraca ou inexistente na zona, recomenda-se o uso de luminárias solares autónomas com bateria integrada. Esta solução elimina a dependência da rede elétrica e permite uma implantação progressiva sem infraestrutura elétrica prévia.`,
       fr: `<b>⚡ Projet solaire autonome:</b> Le réseau de distribution électrique étant faible ou absent dans la zone, l'utilisation de luminaires solaires autonomes à batterie intégrée est recommandée. Cette solution élimine la dépendance au réseau et permet un déploiement progressif sans infrastructure électrique préalable.`,
     };
@@ -9143,15 +9502,23 @@ function _doGenerateZoneReport(id, cfg) {
     };
     const currentConsumptionNote = gridType === 'dedicated' ? `<p class="kv">${CONSUMPTION_NOTE_TXT[lang]||CONSUMPTION_NOTE_TXT.es}</p>` : '';
 
+    const undefinedModelLabel = {es:'Sin definir', en:'Not defined', pt:'Por definir', fr:'Non défini', ca:'Sense definir'}[lang] || 'Not defined';
     const totalSurface = typeData.reduce((a,t)=>a+(t.totalSurface||0),0);
-    const tableRows = typeData.map(t => `<tr>
-      <td style="padding:7px 10px;border:1px solid #ccc;">${t.label}</td>
-      <td style="padding:7px 10px;border:1px solid #ccc;text-align:center;">${t.km.toFixed(2)}</td>
-      <td style="padding:7px 10px;border:1px solid #ccc;text-align:center;">${Math.round(t.totalSurface||0).toLocaleString(numLocale)}</td>
-      <td style="padding:7px 10px;border:1px solid #ccc;text-align:center;">${t.lums.toLocaleString(numLocale)}</td>
-      <td style="padding:7px 10px;border:1px solid #ccc;text-align:center;">${Math.round(t.wPerLum)}</td>
-      <td style="padding:7px 10px;border:1px solid #ccc;text-align:center;">${Math.round(t.totalW/1000)}</td>
-    </tr>`).join('');
+    const tableRows = typeData.map(t => {
+      const modelMix = Object.entries(t.modelCounts).filter(([,n])=>n>0).map(([mk,n]) => `${mk==='undefined'?undefinedModelLabel:LUMINAIRE_MODELS[mk]?.name}: ${n.toLocaleString(numLocale)}`).join('<br>') || undefinedModelLabel;
+      return `<tr>
+       <td style="padding:7px 10px;border:1px solid #ccc;">${t.label}</td>
+       <td style="padding:7px 10px;border:1px solid #ccc;">${modelMix}</td>
+       <td style="padding:7px 10px;border:1px solid #ccc;text-align:center;">${t.km.toFixed(2)}</td>
+       <td style="padding:7px 10px;border:1px solid #ccc;text-align:center;">${Math.round(t.totalSurface||0).toLocaleString(numLocale)}</td>
+       <td style="padding:7px 10px;border:1px solid #ccc;text-align:center;">${t.lums.toLocaleString(numLocale)}</td>
+       <td style="padding:7px 10px;border:1px solid #ccc;text-align:center;">${Math.round(t.wPerLum)}</td>
+       <td style="padding:7px 10px;border:1px solid #ccc;text-align:center;">${Math.round(t.totalW/1000)}</td>
+     </tr>`;
+    }).join('');
+    const totalModelCounts = Object.fromEntries([...Object.keys(LUMINAIRE_MODELS), 'undefined'].map(k => [k, 0]));
+    typeData.forEach(t => Object.keys(totalModelCounts).forEach(k => { totalModelCounts[k] += t.modelCounts[k] || 0; }));
+    const totalModelMix = Object.entries(totalModelCounts).filter(([,n])=>n>0).map(([mk,n]) => `${mk==='undefined'?undefinedModelLabel:LUMINAIRE_MODELS[mk]?.name}: ${n.toLocaleString(numLocale)}`).join('<br>') || undefinedModelLabel;
 
     const PHASE_SUFFIX = {
       es: ['','— Vías primarias y secundarias','— Vías terciarias y residenciales','— Resto de vías'],
@@ -9178,23 +9545,56 @@ function _doGenerateZoneReport(id, cfg) {
         </tr>`).join('')
       : `<tr><td colspan="4" style="padding:10px;text-align:center;color:#999;border:1px solid #ccc;">${{es:'Datos disponibles tras actualizar calles con OSM',en:'Data available after loading streets from OSM',pt:'Dados disponíveis após atualizar ruas com OSM',fr:'Données disponibles après mise à jour des rues OSM',ca:'Dades disponibles després d\'actualitzar carrers amb OSM'}[lang]||'Data available after OSM update'}</td></tr>`;
 
+    const modelLabel = {es:'Modelo', en:'Model', pt:'Modelo', fr:'Modèle', ca:'Model'}[lang] || 'Model';
+    const projectEfficiencyLabel = {es:'Eficiencia global de estimación de potencia', en:'Global project power-estimation efficiency', pt:'Eficiência global de estimativa de potência', fr:'Efficacité globale d\'estimation de puissance', ca:'Eficiència global d\'estimació de potència'}[lang] || 'Global project power-estimation efficiency';
+    const reportCopy = lang === 'es' ? {
+      context:'Contexto para la decisión', lead:'Este informe preliminar está diseñado para ayudar al cliente a decidir. No sustituye el estudio luminotécnico, estructural, solar ni la inspección de campo necesarios antes de contratar.', estimated:'Qué se estima', choose:'Qué puede elegir el cliente', verify:'Qué debe verificarse', map:'Mapa de categorías viarias', proposal:'Propuesta preliminar de luminarias', options:'Opciones para el cliente', optionsLead:'Estas alternativas son marcos de decisión, no ofertas cerradas. Utilizan las hipótesis GIS actuales y pueden recalcularse cuando el cliente seleccione la cobertura preferida.', products:'Opciones de producto', mapCaption:'segmentos viarios cartografiados', representative:' (geometría representativa para facilitar la lectura)', proposalCaption:'Los colores muestran la selección realizada por tipo de vía o por tramo. El gris indica que no se ha seleccionado un modelo.'
+    } : {
+      context:'Decision context', lead:'This preliminary report is intended to support a client decision. It does not replace the detailed lighting, structural, solar-yield or site survey required before procurement.', estimated:'What is estimated', choose:'What the client can choose', verify:'What must be verified', map:'Road category map', proposal:'Preliminary luminaire proposal', options:'Client options', optionsLead:'The following alternatives are decision frames, not fixed offers. They use the current GIS assumptions and can be recalculated after the client selects the preferred coverage.', products:'Product options', mapCaption:'mapped road segments', representative:' (representative geometry shown for readability)', proposalCaption:'Model colours show the selection made by road type or by individual segment. Grey indicates that no model has been selected.'
+    };
+    const waysForReportCount = segWays.filter(w => w.geom && w.geom.length >= 2).length;
+    const waySamplingNote = waysForReportCount > 2200 ? reportCopy.representative : '';
+    const categoryMapSVG = await _reportSvgToPng(_reportMapSVG(zone, d, 'categories'), 'report-map');
+    const proposalMapSVG = await _reportSvgToPng(_reportMapSVG(zone, d, 'proposal'), 'report-map');
+    const roadTypeMapPages = (await Promise.all(typeData.map(async t => {
+      const modelMix = Object.entries(t.modelCounts).filter(([,n])=>n>0).map(([mk,n]) => `${mk==='undefined'?undefinedModelLabel:LUMINAIRE_MODELS[mk]?.name}: ${n.toLocaleString(numLocale)}`).join(' · ') || undefinedModelLabel;
+      const mapImage = await _reportSvgToPng(_reportMapSVG(zone, d, 'categories', t.type), 'report-map');
+      return `<div class="report-map-page"><h2 class="section">${t.label}</h2><div class="figure-caption">${t.km.toFixed(2)} km · ${t.lums.toLocaleString(numLocale)} estimated points · ${modelLabel}: ${modelMix}</div>${mapImage}</div>`;
+    }))).join('');
+    const scenarioDefs = [
+      { name:'Priority corridors', types:['motorway','trunk','motorway_link','trunk_link','primary','secondary'] },
+      { name:'Urban network', types:['motorway','trunk','motorway_link','trunk_link','primary','secondary','tertiary','residential'] },
+      { name:'Full analysed network', types:typeData.map(t => t.type) }
+    ];
+    const scenarioRows = scenarioDefs.map((scenario, index) => {
+      const rows = typeData.filter(t => scenario.types.includes(t.type));
+      const stats = Object.fromEntries([...Object.keys(LUMINAIRE_MODELS), 'undefined'].map(k => [k, 0]));
+      rows.forEach(t => Object.keys(stats).forEach(k => { stats[k] += t.modelCounts[k] || 0; }));
+      const lumCount = Object.values(stats).reduce((a,b)=>a+b,0);
+      const kw = rows.reduce((a,t)=>a+t.totalW,0) / 1000;
+      const productMix = Object.entries(stats).filter(([,n])=>n>0).map(([k,n]) => `${k==='undefined'?undefinedModelLabel:LUMINAIRE_MODELS[k]?.name}: ${n.toLocaleString(numLocale)}`).join('<br>') || undefinedModelLabel;
+      return `<tr class="${index % 2 ? 'alt' : ''}"><td><b>${scenario.name}</b><br><span style="font-size:9pt;color:#666">${rows.length} road categories</span></td><td style="text-align:center">${rows.reduce((a,t)=>a+t.km,0).toFixed(1)}</td><td style="text-align:center">${lumCount.toLocaleString(numLocale)}</td><td style="text-align:center">${kw.toFixed(1)}</td><td>${productMix}</td><td style="text-align:center">${costNew ? (lumCount * costNew).toLocaleString(numLocale) : '—'}</td></tr>`;
+    }).join('');
+    const scenarioTable = `<table class="data scenario-table"><thead><tr><th>Decision frame</th><th class="num">km</th><th class="num">Points</th><th class="num">Indicative kW</th><th>Model mix</th><th class="num">CAPEX (USD)</th></tr></thead><tbody>${scenarioRows}</tbody></table>`;
+    const productCards = (await Promise.all(Object.entries(LUMINAIRE_MODELS).map(async ([mk,m]) => `<div class="product-card">${await _reportSvgToPng(_reportProductFigure(mk), 'product-figure')}<h3>${m.name}</h3><p>${m.system === 'solar' ? 'Autonomous solar configuration.' : 'Grid-connected luminaire option.'}</p>${m.system === 'solar' ? `<b>PV ${m.panelWp} Wp · battery ${m.batteryWh} Wh</b><br><span>${m.family} · mounting height ${m.height} · ${m.spigot}</span>` : '<span>Technical performance and final configuration to be confirmed in the lighting study and product data sheet.</span>'}<br><a href="${m.url}">SALVI product information</a></div>`))).join('');
+
     // ── Translation dictionary ────────────────────────────────────
     const LANG = {
       es: {
         docTitle:'Informe Técnico de Alumbrado Público',
         subtitle:'Informe Técnico de Alumbrado Público',
-        headerOrg:'C.M. SALVI · Alumbrado Público · Angola',
-        headerClient:'Ministerio de Energía y Minas de Angola',
+         headerOrg:'C.M. SALVI · Alumbrado Público',
+         headerClient:'Proyecto de alumbrado público',
         kpiNet:'Red viaria analizada', kpiLum:'Luminarias estimadas',
         kpiPower:'Potencia instalada', kpiSurface:'Superficie iluminada',
         s1:'1. Datos del Proyecto', s2:'2. Red Viaria y Puntos de Luz',
         s3:'3. Potencia, Energía y Consumo', s4:'4. Propuesta de Fases',
         s5:'5. Principales Arterias Viarias', s6:'6. Análisis Técnico del Sistema',
         s7:'7. Impacto Medioambiental', s8:'8. Estimación Económica', s9:'9. Conclusiones y Recomendaciones',
-        savingsIntro:'Análisis por capas de eficiencia energética: cada capa reduce el consumo de forma acumulativa. La base de cálculo es la potencia LED instalada según normativa EN 13201 con eficacia de 90 lm/W.',
+         savingsIntro:'Análisis por capas de eficiencia energética: cada capa reduce el consumo de forma acumulativa. La estimación preliminar utiliza 150 lm/W de eficacia de luminaria y 90 lux·m²/W de eficiencia global de proyecto.',
         layerCol:'Nivel de eficiencia', layerPow:'Potencia (kW)', layerKwh:'Consumo anual (MWh)', layerSaving:'Ahorro vs HPS',
         layer0:'Referencia — Sodio convencional (HPS)', layer0desc:'Instalación existente de vapor de sodio de alta presión. Base de comparación = 100%.',
-        layer1:'Capa 1 — LED (EN 13201 · 90 lm/W)', layer1desc:'Sustitución directa por LED de alta eficiencia. Reducción del 60% sobre HPS.',
+         layer1:'Capa 1 — LED (EN 13201 · 150 lm/W)', layer1desc:'Estimación preliminar mediante 150 lm/W de eficacia de luminaria y 90 lux·m²/W de eficiencia global de proyecto.',
         layer2:'Capa 2 — LED + Smartec (dimming habilitado)', layer2desc:'Instalación del sistema Smartec con capacidad de regulación de flujo. Reducción del 30% sobre el consumo LED base. Consumo equivalente al 28% del HPS convencional. −72% vs. HPS.',
         layer3:'Capa 3 — LED + Smartec + Adaptive Lighting', layer3desc:'Iluminación adaptativa: regulación inteligente según presencia y movimiento. Reducción del 50% sobre la capa 2 (LED+Smartec). Consumo final equivalente al 14% del HPS convencional. −86% vs. HPS.',
         thType:'Tipo de vía', thKm:'km', thSurface:'Superficie (m²)', thLum:'Luminarias', thWLum:'W/luminaria', thKwTotal:'kW total',
@@ -9217,25 +9617,25 @@ function _doGenerateZoneReport(id, cfg) {
         conclusionText: (zone, totalKm, totalLum, totalKW, isSolar, projType, gridType) => `
           <p>El análisis de la red viaria de <b>${zone.name}</b> confirma una infraestructura de alumbrado público con un potencial significativo de modernización. Con <b>${totalKm.toFixed(1)} km</b> de red analizada y <b>${totalLum.toLocaleString('es-ES')} puntos de luz estimados</b>, la intervención propuesta supone una potencia instalada de <b>${totalKW.toFixed(1)} kW</b> mediante tecnología LED de alta eficiencia.</p>
           ${projType==='replacement'?'<p>Al tratarse de un proyecto de <b>reposición de alumbrado existente</b>, se aprovechará la infraestructura actual (postes, acometidas, cuadros eléctricos) para la instalación del nuevo sistema LED, reduciendo significativamente los costes de obra civil.</p>':''}
-          ${isSolar?'<p>La solución solar autónoma propuesta permitirá dotar de alumbrado público a la zona con independencia de la red de distribución eléctrica, garantizando un suministro fiable y un mantenimiento reducido.</p>':''}
+           ${isSolar?'<p>La solución solar autónoma propuesta puede dotar de alumbrado público a la zona sin depender de una red de distribución disponible. El suministro, la autonomía y el mantenimiento deberán confirmarse mediante un estudio específico de cada emplazamiento.</p>':''}
           <p>Se recomienda abordar la intervención por fases priorizando las vías primarias y secundarias (Fase 1) para maximizar el impacto en seguridad vial y visibilidad desde el primer momento.</p>`,
       },
       en: {
         docTitle:'Public Lighting Technical Report',
         subtitle:'Public Lighting Technical Report',
-        headerOrg:'C.M. SALVI · Public Lighting · Angola',
-        headerClient:'Ministry of Energy and Mines of Angola',
+         headerOrg:'C.M. SALVI · Public Lighting',
+         headerClient:'Public lighting project',
         kpiNet:'Analysed road network', kpiLum:'Estimated luminaires',
         kpiPower:'Installed power', kpiSurface:'Illuminated surface',
         s1:'1. Project Data', s2:'2. Road Network & Light Points',
         s3:'3. Power, Energy & Consumption', s4:'4. Phased Rollout Proposal',
         s5:'5. Main Road Arteries', s6:'6. Technical System Analysis',
         s7:'7. Environmental Impact', s8:'8. Economic Estimate', s9:'9. Conclusions & Recommendations',
-        savingsIntro:'Energy efficiency layer analysis: each layer reduces consumption cumulatively. The baseline is LED installed power per EN 13201 standard at 90 lm/W efficacy.',
+         savingsIntro:'Energy efficiency layer analysis: each layer reduces consumption cumulatively. The preliminary estimate uses 150 lm/W luminaire efficacy and 90 lux·m²/W global project efficiency.',
         layerCol:'Efficiency level', layerPow:'Power (kW)', layerKwh:'Annual consumption (MWh)', layerSaving:'Saving vs HPS',
-        layer1:'Layer 1 — LED (baseline, EN 13201 · 90 lm/W)', layer1desc:'Direct LED replacement at high efficacy. ~60% reduction vs. conventional HPS sodium.',
+         layer1:'Layer 1 — LED (baseline, EN 13201 · 150 lm/W)', layer1desc:'Preliminary estimate using 150 lm/W luminaire efficacy and 90 lux·m²/W global project efficiency.',
         layer0:'Reference — Conventional HPS (sodium)', layer0desc:'Existing high-pressure sodium installation. Comparison baseline = 100%.',
-        layer1:'Layer 1 — LED (EN 13201 · 90 lm/W)', layer1desc:'Direct LED replacement at high efficacy. 60% reduction vs. HPS.',
+         layer1:'Layer 1 — LED (EN 13201 · 150 lm/W)', layer1desc:'Preliminary estimate using 150 lm/W luminaire efficacy and 90 lux·m²/W global project efficiency. Detailed validation remains pending.',
         layer2:'Layer 2 — LED + Smartec (dimming enabled)', layer2desc:'Smartec system with flux regulation. 30% reduction over LED baseline. Consumption equivalent to 28% of conventional HPS. −72% vs. HPS.',
         layer3:'Layer 3 — LED + Smartec + Adaptive Lighting', layer3desc:'Adaptive regulation based on presence and movement. 50% reduction over Layer 2 (LED+Smartec). Final consumption equivalent to 14% of conventional HPS. −86% vs. HPS.',
         thType:'Road type', thKm:'km', thSurface:'Surface (m²)', thLum:'Luminaires', thWLum:'W/luminaire', thKwTotal:'kW total',
@@ -9258,25 +9658,25 @@ function _doGenerateZoneReport(id, cfg) {
         conclusionText: (zone, totalKm, totalLum, totalKW, isSolar, projType, gridType) => `
           <p>The road network analysis of <b>${zone.name}</b> confirms significant modernisation potential for the public lighting infrastructure. With <b>${totalKm.toFixed(1)} km</b> of analysed network and <b>${totalLum.toLocaleString('en-US')} estimated light points</b>, the proposed intervention represents an installed power of <b>${totalKW.toFixed(1)} kW</b> using high-efficiency LED technology.</p>
           ${projType==='replacement'?'<p>As this is a <b>replacement project</b>, existing infrastructure (poles, connections, electrical panels) will be reused, significantly reducing civil works costs.</p>':''}
-          ${isSolar?'<p>The proposed autonomous solar solution will provide public lighting independent of the electricity distribution network, ensuring reliable supply and reduced maintenance.</p>':''}
+           ${isSolar?'<p>The proposed autonomous solar solution can provide public lighting without relying on an available electricity distribution network. Supply reliability, autonomy and maintenance requirements must be confirmed through a site-specific study.</p>':''}
           <p>It is recommended to implement the intervention in phases, prioritising primary and secondary roads (Phase 1) to maximise road safety and visibility impact from the outset.</p>`,
       },
       pt: {
         docTitle:'Relatório Técnico de Iluminação Pública',
         subtitle:'Relatório Técnico de Iluminação Pública',
-        headerOrg:'C.M. SALVI · Iluminação Pública · Angola',
-        headerClient:'Ministério da Energia e Minas de Angola',
+         headerOrg:'C.M. SALVI · Iluminação Pública',
+         headerClient:'Projeto de iluminação pública',
         kpiNet:'Rede viária analisada', kpiLum:'Luminárias estimadas',
         kpiPower:'Potência instalada', kpiSurface:'Superfície iluminada',
         s1:'1. Dados do Projeto', s2:'2. Rede Viária e Pontos de Luz',
         s3:'3. Potência, Energia e Consumo', s4:'4. Proposta de Fases',
         s5:'5. Principais Artérias Viárias', s6:'6. Análise Técnica do Sistema',
         s7:'7. Impacto Ambiental', s8:'8. Estimativa Económica', s9:'9. Conclusões e Recomendações',
-        savingsIntro:'Análise por camadas de eficiência energética: cada camada reduz o consumo de forma acumulativa. A base de cálculo é a potência LED instalada segundo a norma EN 13201 com eficácia de 90 lm/W.',
+         savingsIntro:'Análise por camadas de eficiência energética: cada camada reduz o consumo de forma acumulativa. A estimativa preliminar utiliza 150 lm/W de eficácia da luminária e 90 lux·m²/W de eficiência global do projeto.',
         layerCol:'Nível de eficiência', layerPow:'Potência (kW)', layerKwh:'Consumo anual (MWh)', layerSaving:'Poupança vs HPS',
-        layer1:'Camada 1 — LED (base, EN 13201 · 90 lm/W)', layer1desc:'Substituição direta por LED de alta eficiência. Redução de ~60% face ao sódio convencional (HPS).',
+         layer1:'Camada 1 — LED (base, EN 13201 · 150 lm/W)', layer1desc:'Estimativa preliminar utilizando 150 lm/W de eficácia da luminária e 90 lux·m²/W de eficiência global do projeto.',
         layer0:'Referência — Sódio convencional (HPS)', layer0desc:'Instalação existente de vapor de sódio de alta pressão. Base de comparação = 100%.',
-        layer1:'Camada 1 — LED (EN 13201 · 90 lm/W)', layer1desc:'Substituição direta por LED de alta eficiência. Redução de 60% face ao HPS.',
+         layer1:'Camada 1 — LED (EN 13201 · 150 lm/W)', layer1desc:'Estimativa preliminar com 150 lm/W de eficácia da luminária e 90 lux·m²/W de eficiência global do projeto.',
         layer2:'Camada 2 — LED + Smartec (dimming ativado)', layer2desc:'Sistema Smartec com regulação de fluxo. Redução de 30% face ao consumo LED base. Consumo equivalente a 28% do HPS convencional. −72% face ao HPS.',
         layer3:'Camada 3 — LED + Smartec + Adaptive Lighting', layer3desc:'Regulação adaptativa por presença e movimento. Redução de 50% face à camada 2 (LED+Smartec). Consumo final equivalente a 14% do HPS convencional. −86% face ao HPS.',
         thType:'Tipo de via', thKm:'km', thSurface:'Superfície (m²)', thLum:'Luminárias', thWLum:'W/luminária', thKwTotal:'kW total',
@@ -9305,19 +9705,19 @@ function _doGenerateZoneReport(id, cfg) {
       fr: {
         docTitle:'Rapport Technique d\'Éclairage Public',
         subtitle:'Rapport Technique d\'Éclairage Public',
-        headerOrg:'C.M. SALVI · Éclairage Public · Angola',
-        headerClient:'Ministère de l\'Énergie et des Mines d\'Angola',
+         headerOrg:'C.M. SALVI · Éclairage Public',
+         headerClient:'Projet d\'éclairage public',
         kpiNet:'Réseau routier analysé', kpiLum:'Luminaires estimés',
         kpiPower:'Puissance installée', kpiSurface:'Surface éclairée',
         s1:'1. Données du Projet', s2:'2. Réseau Routier & Points Lumineux',
         s3:'3. Puissance, Énergie & Consommation', s4:'4. Proposition par Phases',
         s5:'5. Principales Artères Routières', s6:'6. Analyse Technique du Système',
         s7:'7. Impact Environnemental', s8:'8. Estimation Économique', s9:'9. Conclusions & Recommandations',
-        savingsIntro:'Analyse par couches d\'efficacité énergétique: chaque couche réduit la consommation de façon cumulative. La base de calcul est la puissance LED installée selon la norme EN 13201 avec une efficacité de 90 lm/W.',
+         savingsIntro:'Analyse par couches d\'efficacité énergétique: chaque couche réduit la consommation de façon cumulative. L\'estimation préliminaire utilise 150 lm/W d\'efficacité du luminaire et 90 lux·m²/W d\'efficacité globale du projet.',
         layerCol:'Niveau d\'efficacité', layerPow:'Puissance (kW)', layerKwh:'Consommation annuelle (MWh)', layerSaving:'Économie vs HPS',
-        layer1:'Couche 1 — LED (base, EN 13201 · 90 lm/W)', layer1desc:'Remplacement direct par LED haute efficacité. Réduction de ~60% par rapport au sodium conventionnel (HPS).',
+         layer1:'Couche 1 — LED (base, EN 13201 · 150 lm/W)', layer1desc:'Estimation préliminaire utilisant 150 lm/W d\'efficacité du luminaire et 90 lux·m²/W d\'efficacité globale du projet.',
         layer0:'Référence — Sodium conventionnel (HPS)', layer0desc:'Installation existante au sodium haute pression. Base de comparaison = 100%.',
-        layer1:'Couche 1 — LED (EN 13201 · 90 lm/W)', layer1desc:'Remplacement direct par LED haute efficacité. Réduction de 60% par rapport au HPS.',
+         layer1:'Couche 1 — LED (EN 13201 · 150 lm/W)', layer1desc:'Estimation préliminaire avec 150 lm/W d\'efficacité du luminaire et 90 lux·m²/W d\'efficacité globale du projet.',
         layer2:'Couche 2 — LED + Smartec (gradation activée)', layer2desc:'Système Smartec avec régulation de flux. Réduction de 30% sur la consommation LED base. Consommation équivalente à 28% du HPS conventionnel. −72% vs. HPS.',
         layer3:'Couche 3 — LED + Smartec + Éclairage Adaptatif', layer3desc:'Régulation adaptative par présence et mouvement. Réduction de 50% sur la couche 2 (LED+Smartec). Consommation finale équivalente à 14% du HPS conventionnel. −86% vs. HPS.',
         thType:'Type de voie', thKm:'km', thSurface:'Surface (m²)', thLum:'Luminaires', thWLum:'W/luminaire', thKwTotal:'kW total',
@@ -9376,6 +9776,20 @@ function _doGenerateZoneReport(id, cfg) {
     .kpi-unit { font-size:9pt; color:#888; }
     .note { font-size:9pt; color:#888; font-style:italic; margin-top:10px; }
     .highlight { background:#fff8e6; border-left:3px solid #e8a800; padding:8px 12px; margin:10px 0; font-size:10pt; }
+    .context-lead { font-size:10.5pt; color:#333; margin:8px 0 12px; }
+    .decision-grid { display:table; width:100%; border-collapse:separate; border-spacing:6px 0; margin:8px -6px 14px; }
+    .decision-grid > div { display:table-cell; width:33.33%; vertical-align:top; background:#f2faf5; border:1px solid #d0e8d8; padding:9px 10px; font-size:9pt; color:#40534a; }
+    .figure-caption { font-size:9pt; color:#777; margin:4px 0 7px; }
+    .report-map { width:100%; height:auto; display:block; border:1px solid #d0e8d8; }
+    .report-map-page { page-break-before:always; break-before:page; min-height:220mm; }
+    .report-map-empty { border:1px solid #ddd; color:#888; padding:24px; text-align:center; }
+    .product-grid { display:block; width:100%; margin:0 -3px 12px; }
+    .product-card { display:inline-block; width:31.5%; min-height:176px; box-sizing:border-box; vertical-align:top; margin:0 1% 8px 0; border:1px solid #d0e8d8; background:#f8fcf8; padding:8px 10px; font-size:8.5pt; color:#40534a; }
+    .product-card svg, .product-card img { width:100%; height:72px; display:block; object-fit:contain; }
+    .product-card h3 { color:#1a3a2a; margin:2px 0 4px; font-size:12pt; }
+    .product-card p { margin:3px 0 5px; }
+    .product-card a { color:#1a6a3a; font-size:8pt; }
+    .scenario-table td { vertical-align:top; }
     .footer-bar { border-top: 1px solid #ccc; margin-top: 40px; padding-top: 6px; font-size: 8pt; color: #999; text-align: center; }
   </style>
 </head>
@@ -9421,14 +9835,41 @@ function _doGenerateZoneReport(id, cfg) {
   <p class="kv"><b>${T.hoursLabel}:</b> ${HOURS} h/night (${(HOURS*365).toLocaleString(numLocale)} h/year)</p>
   <p class="kv"><b>${T.standardLabel}:</b> EN 13201</p>
   <p class="kv"><b>${T.efficacyLabel}:</b> ${EFFICACY} lm/W</p>
+  <p class="kv"><b>${projectEfficiencyLabel}:</b> ${PROJECT_EFFICIENCY} lux·m²/W</p>
   <p class="kv"><b>${T.dateLabel}:</b> ${today}</p>
   ${solarNote}
+
+  <h2 class="section">${reportCopy.context}</h2>
+  <p class="context-lead">${reportCopy.lead}</p>
+  <div class="decision-grid">
+    <div><b>${reportCopy.estimated}</b><br>Road length, road category, spacing, indicative lighting demand and preliminary point count from the available GIS data.</div>
+    <div><b>${reportCopy.choose}</b><br>Coverage scenario, priority corridors, SIL L / SIL M / grid luminaire mix, operating profile and phased rollout.</div>
+    <div><b>${reportCopy.verify}</b><br>Road widths, pole positions, shadows, coastal exposure, solar autonomy, photometric compliance, civil works and final pricing.</div>
+  </div>
+
+  <h2 class="section">${reportCopy.map} · General network</h2>
+  <div class="figure-caption">${source} · ${waysForReportCount} ${reportCopy.mapCaption}${waySamplingNote}</div>
+  ${categoryMapSVG}
+
+  <h2 class="section">${reportCopy.proposal}</h2>
+  <div class="figure-caption">${reportCopy.proposalCaption}</div>
+  ${proposalMapSVG}
+
+  ${roadTypeMapPages}
+
+  <h2 class="section">${reportCopy.options}</h2>
+  <p class="context-lead">${reportCopy.optionsLead}</p>
+  ${scenarioTable}
+
+  <h2 class="section">${reportCopy.products}</h2>
+  <div class="product-grid">${productCards}</div>
 
   <h2 class="section">${T.s2}</h2>
   <table class="data">
     <thead>
       <tr>
         <th>${T.thType}</th>
+        <th>${modelLabel}</th>
         <th class="num">${T.thKm}</th>
         <th class="num">${T.thSurface}</th>
         <th class="num">${T.thLum}</th>
@@ -9439,8 +9880,9 @@ function _doGenerateZoneReport(id, cfg) {
     <tbody>
       ${tableRows}
       <tr class="total">
-        <td>${T.totRow}</td>
-        <td style="text-align:center">${totalKm.toFixed(2)}</td>
+         <td>${T.totRow}</td>
+         <td style="text-align:center">${totalModelMix}</td>
+         <td style="text-align:center">${totalKm.toFixed(2)}</td>
         <td style="text-align:center">${Math.round(totalSurface).toLocaleString(numLocale)}</td>
         <td style="text-align:center">${totalLum.toLocaleString(numLocale)}</td>
         <td style="text-align:center">—</td>

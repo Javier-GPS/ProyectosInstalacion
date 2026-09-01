@@ -8793,22 +8793,45 @@ function _doExportZoneExcel(id, zone, ways, lang) {
   ssArr = []; ssMap = {}; ssCount = 0;
   _loadZoneTypeModels(id);
   const sp = zoneSpacing[id] || 30;
+  const wayKeyByGeom = new Map(
+    Object.entries(streetGeomStore)
+      .filter(([key]) => segmentLightingInfo[key]?.zoneId === id)
+      .map(([key, geom]) => [geom, key])
+  );
+  const wayKeyFor = way => wayKeyByGeom.get(way.geom) || null;
+  const effectiveSpacing = (way, wKey) => wKey
+    ? getSegmentSpacing(wKey, id, way.type)
+    : (Number(way.luxParams?.spacing) || zoneTypeSpacing[id]?.[way.type] || sp);
+  const effectiveDistribution = (way, wKey) => wKey
+    ? getSegmentDist(wKey)
+    : (way.luxParams?.distribution || zoneTypeDistribution[id]?.[way.type] || DIST_DEFAULTS[way.type] || 'unilateral_r');
+  const effectiveClass = (way, wKey) => {
+    const cls = (wKey && segmentLightingClassOverride[wKey])
+      || way.luxParams?.lightingClass
+      || zoneTypeLightingClass[id]?.[way.type]
+      || LIGHTING_CLASS[way.type]?.cls
+      || LIGHTING_CLASS.unclassified.cls;
+    return ALL_LC[cls] || LIGHTING_CLASS[way.type] || LIGHTING_CLASS.unclassified;
+  };
   const EFFICACY = LAMP_EFFICACY; // 150 lm/W: luminaire efficacy
   const PROJECT_EFF = PROJECT_EFFICIENCY; // 90 lux·m²/W: project estimate
   const formulaCell = (formula, cached) => ({ formula, cached });
   const valueOf = value => value && typeof value === 'object' && value.formula ? value.cached : value;
   const ROAD_SPEC = {
+    motorway:      {lux:34, defWidth:11.0}, trunk:         {lux:34, defWidth:9.0},
+    motorway_link: {lux:26, defWidth:5.0},  trunk_link:    {lux:26, defWidth:5.0},
     primary:      {lux:34, defWidth:7.0}, secondary:    {lux:26, defWidth:6.0},
     tertiary:     {lux:17, defWidth:5.5}, residential:  {lux:13, defWidth:4.5},
     unclassified: {lux:9,  defWidth:4.0}, living_street:{lux:10, defWidth:4.0},
-    pedestrian:   {lux:10, defWidth:3.5}, service:      {lux:7,  defWidth:3.0}
+    pedestrian:   {lux:10, defWidth:3.5}, service:      {lux:7,  defWidth:3.0},
+    tunnel:       {lux:50, defWidth:7.0}
   };
 
   const T = {
     es: {
       headers: ['Zona','Nombre vía','Tipo OSM','Tipo de vía','Clase EN 13201','cd/m²','Lux requerido',
         'Long. segmento (m)','Long. total calle (km)',
-        'Ancho OSM (m)','Ancho efectivo (m)','Fuente ancho','Carriles OSM','Ancho OSM bruto (m)','Calzada',
+        'Ancho OSM (m)','Ancho efectivo (m)','Fuente ancho','Carriles OSM','Ancho OSM bruto (m)','Calzada','Disposición',
         'Superficie (m²)','Pavimento OSM','Acera',
         'Interdistancia (m)','Nº farolas','Potencia/farola (W)','Potencia segmento (kW)',
         'Consumo LED anual (kWh)','Consumo LED+Adaptive (kWh)',
@@ -8816,12 +8839,13 @@ function _doExportZoneExcel(id, zone, ways, lang) {
       roadLabels: {primary:'Primaria',secondary:'Secundaria',tertiary:'Terciaria',residential:'Residencial',
         unclassified:'Sin clasificar',living_street:'Residencial calmada',pedestrian:'Peatonal',service:'Servicio'},
       noName:'(sin nombre)', single:'Simple', double:'Doble', estimated:'estimado',
+      arrangements: {unilateral_r:'Unilateral derecha',unilateral_l:'Unilateral izquierda',bilateral_pareado:'Bilateral pareado',bilateral_tresbolillo:'Bilateral tresbolillo',centrada_mediana:'Centrada en mediana',mediana_compartida:'Mediana compartida'},
       filePrefix:'Segmentos', toastMsg: n => `✓ ${n} segmentos exportados`
     },
     en: {
       headers: ['Zone','Road name','OSM type','Road type','EN 13201 class','cd/m²','Required lux',
         'Segment length (m)','Total street length (km)',
-        'OSM width (m)','Effective width (m)','Width source','OSM lanes','OSM width raw (m)','Carriageway',
+        'OSM width (m)','Effective width (m)','Width source','OSM lanes','OSM width raw (m)','Carriageway','Arrangement',
         'Surface area (m²)','OSM pavement','Footway',
         'Pole spacing (m)','No. poles','Power/pole (W)','Segment power (kW)',
         'LED annual consumption (kWh)','LED+Adaptive consumption (kWh)',
@@ -8829,12 +8853,13 @@ function _doExportZoneExcel(id, zone, ways, lang) {
       roadLabels: {primary:'Primary',secondary:'Secondary',tertiary:'Tertiary',residential:'Residential',
         unclassified:'Unclassified',living_street:'Living street',pedestrian:'Pedestrian',service:'Service road'},
       noName:'(unnamed)', single:'Single', double:'Dual', estimated:'estimated',
+      arrangements: {unilateral_r:'Unilateral right',unilateral_l:'Unilateral left',bilateral_pareado:'Bilateral paired',bilateral_tresbolillo:'Bilateral staggered',centrada_mediana:'Median-centred',mediana_compartida:'Shared median'},
       filePrefix:'Segments', toastMsg: n => `✓ ${n} segments exported`
     },
     pt: {
       headers: ['Zona','Nome da via','Tipo OSM','Tipo de via','Classe EN 13201','cd/m²','Lux requerido',
         'Comp. segmento (m)','Comp. total rua (km)',
-        'Largura OSM (m)','Largura efectiva (m)','Fonte largura','Vias OSM','Largura OSM bruta (m)','Faixa de rodagem',
+        'Largura OSM (m)','Largura efectiva (m)','Fonte largura','Vias OSM','Largura OSM bruta (m)','Faixa de rodagem','Disposição',
         'Superfície (m²)','Pavimento OSM','Passeio',
         'Interdistância (m)','Nº luminárias','Potência/luminária (W)','Potência segmento (kW)',
         'Consumo LED anual (kWh)','Consumo LED+Adaptive (kWh)',
@@ -8842,22 +8867,24 @@ function _doExportZoneExcel(id, zone, ways, lang) {
       roadLabels: {primary:'Primária',secondary:'Secundária',tertiary:'Terciária',residential:'Residencial',
         unclassified:'Sem classificação',living_street:'Rua residencial calma',pedestrian:'Pedonal',service:'Via de serviço'},
       noName:'(sem nome)', single:'Simples', double:'Dupla', estimated:'estimado',
+      arrangements: {unilateral_r:'Unilateral direita',unilateral_l:'Unilateral esquerda',bilateral_pareado:'Bilateral pareada',bilateral_tresbolillo:'Bilateral tresbolillo',centrada_mediana:'Centrada na mediana',mediana_compartida:'Mediana partilhada'},
       filePrefix:'Segmentos', toastMsg: n => `✓ ${n} segmentos exportados`
     },
     fr: {
       headers: ['Zone','Nom de la voie','Type OSM','Type de voie','Classe EN 13201','cd/m²','Éclairement requis',
         'Long. segment (m)','Long. totale rue (km)','Largeur OSM (m)','Largeur effective (m)','Source largeur',
-        'Voies OSM','Largeur OSM brute (m)','Chaussée','Surface (m²)','Revêtement OSM','Trottoir',
+        'Voies OSM','Largeur OSM brute (m)','Chaussée','Disposition','Surface (m²)','Revêtement OSM','Trottoir',
         'Interdistance (m)','Nb mâts','Puissance/mât (W)','Puissance segment (kW)',
         'Conso. LED annuelle (kWh)','Conso. LED+Adaptatif (kWh)','Latitude','Longitude',
         'Luminaire sélectionné','Voir sur la carte'],
       roadLabels: {primary:'Primaire',secondary:'Secondaire',tertiary:'Tertiaire',residential:'Résidentielle',
         unclassified:'Non classée',living_street:'Zone résidentielle apaisée',pedestrian:'Piétonne',service:'Voie de service'},
       noName:'(sans nom)', single:'Simple', double:'Double', estimated:'estimé',
+      arrangements: {unilateral_r:'Unilatérale droite',unilateral_l:'Unilatérale gauche',bilateral_pareado:'Bilatérale face à face',bilateral_tresbolillo:'Bilatérale quinconce',centrada_mediana:'Centrée sur médiane',mediana_compartida:'Médiane partagée'},
       filePrefix:'Segments', toastMsg: n => `✓ ${n} segments exportés`
     }
   }[lang] || {
-    headers:[], roadLabels:{}, noName:'(unnamed)', single:'Single', double:'Dual', estimated:'estimated',
+    headers:[], roadLabels:{}, noName:'(unnamed)', single:'Single', double:'Dual', estimated:'estimated', arrangements:{},
     filePrefix:'Segments', toastMsg: n => `✓ ${n} segments exported`
   };
 
@@ -8904,15 +8931,18 @@ function _doExportZoneExcel(id, zone, ways, lang) {
   ] : [];
 
   const rows = ways.map((w, i) => {
+    const wKey = wayKeyFor(w);
     const spec = ROAD_SPEC[w.type] || ROAD_SPEC.unclassified;
-    const lc   = LIGHTING_CLASS[w.type] || LIGHTING_CLASS.unclassified;
+    const lc   = effectiveClass(w, wKey);
+    const waySpacing = effectiveSpacing(w, wKey);
+    const distribution = effectiveDistribution(w, wKey);
     const lenM  = +(w.len * 1000).toFixed(1);
     const wmRaw = w.estWidth || spec.defWidth;
     const wm    = wmRaw + 4; // +2m each side (survey correction)
     const surf  = +(lenM * wm).toFixed(0);
-    const lums  = Math.round(lenM / sp);
-    const wPerLum = +(spec.lux * wm * sp / PROJECT_EFF).toFixed(1);
-    const totalKW = +(spec.lux * wm * lenM / PROJECT_EFF / 1000).toFixed(3);
+    const lums  = Math.round(lenM / waySpacing * (DIST_FACTOR[distribution] ?? 1));
+    const wPerLum = +(lc.lux * wm * waySpacing / PROJECT_EFF).toFixed(1);
+    const totalKW = +(lc.lux * wm * lenM / PROJECT_EFF / 1000).toFixed(3);
     const kwhLED  = +(totalKW * 12 * 365).toFixed(0);
     const kwhAdap = +(kwhLED * 0.5).toFixed(0);
     const xlRow = i + 2;
@@ -8924,12 +8954,13 @@ function _doExportZoneExcel(id, zone, ways, lang) {
     const lon = w.startLon || null;
     const selectedModel = _reportWayModel(id, w);
     const modelDisplay = selectedModel ? LUMINAIRE_MODELS[selectedModel].name : (lang === 'es' ? 'Sin definir' : lang === 'pt' ? 'Por definir' : lang === 'fr' ? 'Non défini' : 'Not defined');
+    const arrangementDisplay = T.arrangements[distribution] || distribution;
     const mapUrl = lat && lon
       ? `https://www.google.com/maps?q=${lat},${lon}&z=18`
       : null;
 
     // Photometric data for this segment
-    const ph = hasPhoto ? getPhotometric(id, w.type, +(w.estWidth || spec.defWidth), sp) : null;
+    const ph = hasPhoto ? getPhotometric(id, w.type, +(w.estWidth || spec.defWidth), waySpacing) : null;
     const photoVals = hasPhoto ? [
       ph?.model || '', ph?.lente || '', ph?.power_w ?? '',
       ph?.lm_em ?? '', ph?.uo ?? '', ph?.ui ?? '', ph?.ti ?? '',
@@ -8938,18 +8969,18 @@ function _doExportZoneExcel(id, zone, ways, lang) {
 
     return [
       zone.name, displayName, w.type, T.roadLabels[w.type] || w.type,
-      lc.cls, lc.cdm2 || '', spec.lux,
+      lc.cls, lc.cdm2 || '', lc.lux,
        lenM, formulaCell(`SUMIF($B:$B,B${xlRow},$H:$H)/1000`, streetKm || 0), wmRaw.toFixed(1), formulaCell(`J${xlRow}+4`, wm), widthSrcLabel,
       w.lanes || '', w.width || '',
-      w.dual ? T.double : T.single,
+      w.dual ? T.double : T.single, arrangementDisplay,
        formulaCell(`H${xlRow}*K${xlRow}`, surf),
       w.surface || '', w.sidewalk || '',
-       sp,
-       formulaCell(`ROUND(H${xlRow}/S${xlRow},0)`, lums),
-       formulaCell(`IFERROR(V${xlRow}*1000/T${xlRow},0)`, wPerLum),
-      formulaCell(`G${xlRow}*P${xlRow}/${PROJECT_EFF}/1000`, totalKW),
-      formulaCell(`V${xlRow}*12*365`, kwhLED),
-      formulaCell(`W${xlRow}*0.5`, kwhAdap),
+       waySpacing,
+        formulaCell(`ROUND(H${xlRow}/T${xlRow},0)`, lums),
+        formulaCell(`IFERROR(W${xlRow}*1000/U${xlRow},0)`, wPerLum),
+       formulaCell(`G${xlRow}*Q${xlRow}/${PROJECT_EFF}/1000`, totalKW),
+       formulaCell(`W${xlRow}*12*365`, kwhLED),
+       formulaCell(`X${xlRow}*0.5`, kwhAdap),
       lat !== null ? lat : '', lon !== null ? lon : '', modelDisplay, mapUrl || '',
       ...photoVals
     ];
@@ -8978,13 +9009,13 @@ function _doExportZoneExcel(id, zone, ways, lang) {
     border: allBorders
   };
   // base col indices (0-based) that are numeric
-  const baseNumCols = new Set([5,6,7,8,9,10,12,13,15,18,19,20,21,22,23,24,25]);
-  // photometric numeric cols start at index 27: power(29),lm(30),uo(31),ui(32),ti(33),sr(34),phi(35)
-  const photoNumOffset = T.headers.length; // = 27
+  const baseNumCols = new Set([5,6,7,8,9,10,12,13,16,19,20,21,22,23,24,25,26]);
+  // photometric numeric cols start after the 29 base columns: power(31),lm(32),uo(33),ui(34),ti(35),sr(36),phi(37)
+  const photoNumOffset = T.headers.length; // = 29
   const photoNumCols = hasPhoto ? [2,3,4,5,6,7,8].map(n => photoNumOffset + n) : [];
   const numCols = new Set([...baseNumCols, ...photoNumCols]);
   const photoHdrOffset = T.headers.length; // first col index of photometric section
-  const linkCol = 27;
+  const linkCol = 28;
   const fullHeaders = [...T.headers, ...photoHeaders];
   const allData = [fullHeaders, ...rows];
   const nRows = allData.length, nCols = fullHeaders.length;
@@ -8992,7 +9023,7 @@ function _doExportZoneExcel(id, zone, ways, lang) {
   try {
     // ── Column widths in EMUs (characters × 9 approx) ───────────────
     const photoColWidths = hasPhoto ? [30,10,14,10,10,10,10,10,12,10,20] : [];
-    const colWidths = [16,28,13,20,16,18,14,12,11,11,10,13,13,10,20,14,10,14,18,20,22,12,12,12,12,24,24,10,...photoColWidths];
+    const colWidths = [16,28,13,20,16,18,14,12,11,11,10,13,13,10,20,24,14,10,14,18,20,22,12,12,12,12,24,24,10,...photoColWidths];
 
     // ── Styles XML ──────────────────────────────────────────────────
     const stylesXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -9109,13 +9140,13 @@ function _doExportZoneExcel(id, zone, ways, lang) {
           : ['Road type','Selected luminaire','Road name','Segments','Total length (km)','No. points','Power (kW)'];
     const summaryGroups = {};
     rows.forEach(row => {
-      const groupKey = [row[3], row[26], row[1]].join('|||');
-      if (!summaryGroups[groupKey]) summaryGroups[groupKey] = { type:row[3], model:row[26], name:row[1], segments:0, km:0, points:0, kw:0 };
+      const groupKey = [row[3], row[27], row[1]].join('|||');
+      if (!summaryGroups[groupKey]) summaryGroups[groupKey] = { type:row[3], model:row[27], name:row[1], segments:0, km:0, points:0, kw:0 };
       const g = summaryGroups[groupKey];
       g.segments += 1;
       g.km += Number(valueOf(row[7])) || 0;
-      g.points += Number(valueOf(row[19])) || 0;
-      g.kw += Number(valueOf(row[21])) || 0;
+      g.points += Number(valueOf(row[20])) || 0;
+      g.kw += Number(valueOf(row[22])) || 0;
     });
     const grouped = {};
     Object.values(summaryGroups).forEach(g => {

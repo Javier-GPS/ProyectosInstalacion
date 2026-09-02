@@ -78,6 +78,8 @@ const StepVias: React.FC = () => {
   const [showSelectedTramos, setShowSelectedTramos] = useState(false);
   const [staleReady, setStaleReady] = useState(false);
   const [loadingOsm, setLoadingOsm] = useState(false);
+  const [satRefreshing, setSatRefreshing] = useState(false);
+  const satRefreshRef = useRef(0);
   const [buildingStatus, setBuildingStatus] = useState<string | null>(null);
   const osmLoadRef = useRef<AbortController | null>(null);
   const inventoryEtagRef = useRef<string | null>(null);
@@ -396,14 +398,19 @@ const StepVias: React.FC = () => {
     if (selectedZoneId) legacyRefreshAttemptedRef.current.delete(selectedZoneId);
     setReloadKey(v => v + 1);
   };
-  const loadOsm = async () => {
+  const loadOsm = async (force = false) => {
     if (!selectedZoneId || loadingOsm) return;
     const controller = new AbortController();
     osmLoadRef.current = controller;
     setLoadingOsm(true); setMessage('');
     try {
-      await loadPlanningOsm(selectedZoneId, controller.signal);
+      await loadPlanningOsm(selectedZoneId, controller.signal, force);
       setReloadKey(value => value + 1);
+      if (force) {
+        // Poll inventory ~60s while satellite measures widths in background
+        setSatRefreshing(true);
+        satRefreshRef.current = 15;
+      }
     } catch (error) {
       if ((error as Error).name === 'AbortError') return;
       setMessage((error as Error).message || 'No se pudieron cargar las vías OSM');
@@ -414,6 +421,19 @@ const StepVias: React.FC = () => {
       }
     }
   };
+
+  useEffect(() => {
+    if (!satRefreshing) return;
+    const timer = setInterval(() => {
+      if (satRefreshRef.current <= 0) {
+        setSatRefreshing(false);
+        return;
+      }
+      satRefreshRef.current -= 1;
+      setReloadKey(v => v + 1);
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [satRefreshing]);
   const startArea = () => {
     if (!selectedZoneId || !inventory || !zone) return;
     setRoadSelection(selectedZoneId, {
@@ -550,8 +570,8 @@ const StepVias: React.FC = () => {
     <div className="gis-panel rounded-xl p-5 text-center text-sm text-salvi-grey">
       <p>Esta zona todavía no tiene vías OSM.</p>
       {message && <p role="alert" className="mt-2 text-xs text-state-danger">{message}</p>}
-      <button onClick={loadOsm} disabled={loadingOsm} className="mt-3 rounded bg-salvi-black px-3 py-1.5 text-xs text-white disabled:opacity-50">
-        {loadingOsm ? 'Consultando OpenStreetMap…' : 'Cargar vías OSM'}
+      <button onClick={() => loadOsm()} disabled={loadingOsm} className="mt-3 rounded bg-salvi-black px-3 py-1.5 text-xs text-white disabled:opacity-50">
+        {loadingOsm ? 'Cargando calles y aceras…' : 'Cargar calles y aceras'}
       </button>
     </div>
   );
@@ -661,9 +681,29 @@ const StepVias: React.FC = () => {
           <span className="rounded bg-salvi-surface px-1.5 py-0.5">{inventory.counts.distinct_name_count ?? inventory.counts.named_street_count} calles</span>
           <span className="rounded bg-salvi-surface px-1.5 py-0.5">{inventory.counts.segment_count} tramos</span>
           <span className="rounded bg-salvi-surface px-1.5 py-0.5">{inventory.counts.geometry_available} con geometría</span>
+          {(() => {
+            const satCount = inventory.targets.filter(t => t.widthSrc === 'satellite').length;
+            const totalCount = inventory.targets.length;
+            const pct = totalCount ? Math.round((satCount / totalCount) * 100) : 0;
+            if (satRefreshing) {
+              return <span className="rounded bg-state-info/10 px-1.5 py-0.5 text-state-info">🛰 Midiendo anchos…</span>;
+            }
+            if (satCount === 0) {
+              return <span className="rounded bg-salvi-surface px-1.5 py-0.5 text-salvi-muted">🛰 0 tramos medidos</span>;
+            }
+            return <span className="rounded bg-state-success/10 px-1.5 py-0.5 text-state-success">🛰 {satCount}/{totalCount} tramos medidos ({pct}%)</span>;
+          })()}
           {buildingStatus === 'computing' && <span className="rounded bg-salvi-surface px-1.5 py-0.5 text-state-info">🏛 Computando anchos…</span>}
           {buildingStatus === 'unavailable' && <span className="rounded bg-salvi-surface px-1.5 py-0.5 text-state-warning">🏛 Anchos no disponibles</span>}
         </div>
+        <button
+          onClick={() => loadOsm(true)}
+          disabled={loadingOsm}
+          className="mt-2 w-full rounded border border-salvi-line bg-white px-2 py-1 text-[11px] font-medium text-salvi-black hover:bg-salvi-surface disabled:opacity-40"
+          title="Vuelve a consultar calles y aceras y mide los anchos con más precisión (satélite)."
+        >
+          {loadingOsm ? 'Calculando calles y aceras…' : '🛰 Recalcular calles y aceras con precisión'}
+        </button>
       </div>
 
       <div className="flex-1 space-y-3 overflow-y-auto p-3 gis-scroll">

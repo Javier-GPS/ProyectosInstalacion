@@ -27,11 +27,12 @@ from typing import Any
 SOURCE_PRIORITY = {
     "osm": 0,
     "overture": 1,
-    "mapillary": 2,
-    "ign_rt": 3,
-    "osm_buildings": 4,  # facade-to-facade from OSM footprints (real)
-    "catastro": 5,        # legacy facade-to-facade (source retired, kept for cache)
-    "survey": 6,
+    "satellite": 2,       # Esri/PNOA Canny ray-casting (mundial, CPU)
+    "mapillary": 3,
+    "ign_rt": 4,
+    "osm_buildings": 5,  # facade-to-facade from OSM footprints (real)
+    "catastro": 6,        # legacy facade-to-facade (source retired, kept for cache)
+    "survey": 7,
 }
 
 # ponytail: urban lane standard; upgrade to per-country/per-road-type table
@@ -322,6 +323,23 @@ def overture_profile(props: Mapping) -> dict[str, Any]:
     return p
 
 
+def satellite_profile(props: Mapping) -> dict[str, Any]:
+    """Profile from satellite Canny ray-casting (mundial, CPU OpenCV).
+
+    `width` is carriageway edge-to-edge (parking incluido si mismo asfalto).
+    Confidence 0..1 (ray casting validos). Solo se usa si conf>=0.6 y no hay
+    Overture/IGN mas autoritativo.
+    """
+    props = props if isinstance(props, Mapping) else {}
+    p: dict[str, Any] = {"__source__": "satellite"}
+    width = props.get("width")
+    if isinstance(width, (int, float)) and 2.5 <= width <= 35:
+        p["width"] = round(float(width), 2)
+        p["widthSrc"] = "satellite"
+    # confidence se guarda en sources pero no como attr geometria
+    return p
+
+
 def resolve_way(record: Mapping) -> dict[str, Any]:
     """Resolve the authoritative geometry for one way across all sources.
 
@@ -363,6 +381,20 @@ def resolve_way(record: Mapping) -> dict[str, Any]:
         if base.get("widthSrc") == "osm_width":
             overture = {k: v for k, v in overture.items() if k != "width"} | {"widthSrc": None}
         profiles.append(overture_profile(overture))
+
+    sat = record.get("satelliteProfile")
+    if isinstance(sat, Mapping) and sat:
+        # OSM directo y Overture autoritativo ganan a satellite; filtrar si conf baja
+        conf = sat.get("confidence", 1)
+        if isinstance(conf, (int, float)) and conf < 0.6:
+            pass
+        elif base.get("widthSrc") == "osm_width":
+            pass
+        else:
+            # si overture ya aporta width, satellite solo como fallback (prioridad menor)
+            has_overture_width = any(p.get("__source__") == "overture" and "width" in p for p in profiles)
+            if not has_overture_width:
+                profiles.append(satellite_profile(sat))
 
     section_width = record.get("sectionWidth")
     section_src = record.get("sectionWidthSrc")

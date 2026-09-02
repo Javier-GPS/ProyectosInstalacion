@@ -9,6 +9,7 @@ from .gis import (
     GisZone, GisZoneConfig, GisZoneOsmData, GisZoneTrees,
     GisLuminaire, GisInventoryLuminaire, GisPhotometricResult,
     GisProjectUiConfig, GisPlanningDraft, GisRoadWorkScope, GisZoneSelection,
+    GisZoneAlignment,
     ensure_gis_tables,
 )
 
@@ -17,6 +18,7 @@ __all__ = [
     "GisZone", "GisZoneConfig", "GisZoneOsmData", "GisZoneTrees",
     "GisLuminaire", "GisInventoryLuminaire", "GisPhotometricResult",
     "GisProjectUiConfig", "GisPlanningDraft", "GisRoadWorkScope", "GisZoneSelection",
+    "GisZoneAlignment",
     "ensure_gis_tables",
     "GisProjectMembership", "GisLuxJob", "GisLuxJobItem", "GisLuxOutbox",
     "GisLuxMaterialization",

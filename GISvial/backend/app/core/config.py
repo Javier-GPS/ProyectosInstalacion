@@ -47,5 +47,9 @@ class Settings:
     # Redis
     redis_url: str = os.getenv("REDIS_URL", "")
 
+    # Satellite width (mundial CPU OpenCV)
+    satellite_width_enabled: bool = os.getenv("SATELLITE_WIDTH_ENABLED", "true").lower() in ("1", "true", "yes")
+    satellite_tile_provider: str = os.getenv("SATELLITE_TILE_PROVIDER", "esri")  # esri worldwide, pnoa auto-spain
+
 
 settings = Settings()

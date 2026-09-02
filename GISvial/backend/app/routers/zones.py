@@ -39,6 +39,7 @@ router = APIRouter()
 _building_tasks: dict[str, asyncio.Task] = {}
 _ign_tasks: dict[str, asyncio.Task] = {}
 _overture_tasks: dict[str, asyncio.Task] = {}
+_satellite_tasks: dict[str, asyncio.Task] = {}
 
 DEFAULT_COLORS = [
     '#4caf82', '#e67e22', '#3498db', '#9b59b6', '#e74c3c',
@@ -251,6 +252,8 @@ async def gis_zone_osm_load(
     if cached_row and cached_row.ways and not force:
         logger.info("Using cached OSM data for zone %s (force=False)", zone_id)
         _ensure_ign_enrichment(zone_id, bbox, cached_row.ways)
+        _ensure_overture_enrichment(zone_id, bbox, cached_row.ways)
+        _ensure_satellite_enrichment(zone_id, bbox, cached_row.ways)
         if not cached_row.buildings:
             # Trigger background enrichment without blocking response
             task = _building_tasks.get(zone_id)
@@ -325,6 +328,7 @@ async def gis_zone_osm_load(
     )
     _ensure_ign_enrichment(zone_id, bbox, ways)
     _ensure_overture_enrichment(zone_id, bbox, ways)
+    _ensure_satellite_enrichment(zone_id, bbox, ways)
 
     return normalize_inventory(zone_id, ways)
 
@@ -403,6 +407,42 @@ async def _enrich_overture_background(zone_id: str, bbox: str, ways: list) -> No
         logger.warning("Overture enrichment failed for zone %s: %s", zone_id, exc)
     finally:
         _overture_tasks.pop(zone_id, None)
+
+
+def _ensure_satellite_enrichment(zone_id: str, bbox: str, ways: list) -> None:
+    """Kick off non-blocking satellite width (Esri/PNOA + OpenCV Canny)."""
+    from ..services.satellite_width import enrich_satellite, has_satellite_profiles
+    if has_satellite_profiles(ways):
+        return
+    task = _satellite_tasks.get(zone_id)
+    if task is None or task.done():
+        _satellite_tasks[zone_id] = asyncio.create_task(
+            _enrich_satellite_background(zone_id, bbox, ways)
+        )
+
+
+async def _enrich_satellite_background(zone_id: str, bbox: str, ways: list) -> None:
+    """Fetch tiles, measure widths via OpenCV, persist."""
+    from ..services.satellite_width import enrich_satellite
+    try:
+        enriched = await enrich_satellite(ways, bbox)
+        if not enriched:
+            return
+        db = SessionLocal()
+        try:
+            row = db.get(GisZoneOsmData, zone_id)
+            if row:
+                row.ways = ways
+                db.commit()
+                logger.info("Satellite enrichment completed for zone %s (%d ways)", zone_id, enriched)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Satellite DB update failed for zone %s: %s", zone_id, exc)
+        finally:
+            db.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Satellite enrichment failed for zone %s: %s", zone_id, exc)
+    finally:
+        _satellite_tasks.pop(zone_id, None)
 
 
 async def _enrich_buildings_background(zone_id: str, bbox: str, ways: list) -> None:

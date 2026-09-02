@@ -10,6 +10,7 @@ redis>=5.2
 overturemaps>=1.0.2
 Pillow>=10
 numpy>=1.24
+opencv-python-headless>=4.9  # satellite Canny/CLAHE CPU (optional, graceful fallback if missing)
 
 # --- GISvial version ---
 # v0.3.2 — Overture Maps global widths, OSM buildings section widths, IGN-RT lanes

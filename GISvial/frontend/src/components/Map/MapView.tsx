@@ -800,7 +800,12 @@ const MapView: React.FC<{ mapContainerId?: string }> = ({ mapContainerId = 'gis-
             </span>
             <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-salvi-muted">
               <span>{hover.target.length_m == null ? '—' : `${Math.round(hover.target.length_m)} m`}</span>
-              {hover.target.estWidth != null && <span>Calzada {hover.target.estWidth} m</span>}
+              {hover.target.estWidth != null && (
+                <span>
+                  Calzada {hover.target.estWidth} m
+                  {hover.target.widthSrc === 'satellite' && <span className="ml-0.5 text-state-success">🛰️</span>}
+                </span>
+              )}
               {hover.target.highway && <span>highway={hover.target.highway}</span>}
             </div>
           </div>

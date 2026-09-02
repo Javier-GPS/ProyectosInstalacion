@@ -4,12 +4,12 @@ import type { GisPlanningInventoryTarget } from '../../types';
 
 const SRC_ICON: Record<string, string> = {
   osm_width: '📏', lanes: '🔢', default: '⚠', ign_rt: '🛰', mapillary: '📷',
-  catastro: '🏛', survey: '✅', osm_buildings: '🏠', overture: '🌐',
+  catastro: '🏛', survey: '✅', osm_buildings: '🏠', overture: '🌐', satellite: '🛰️',
 };
 const SRC_LABEL: Record<string, string> = {
   osm_width: 'OSM directo', lanes: 'carriles×3.0', default: 'estimado por tipo',
   ign_rt: 'IGN IGR-RT', mapillary: 'Mapillary', catastro: 'Catastro', survey: 'campo',
-  osm_buildings: 'OSM edificios', overture: 'Overture Maps',
+  osm_buildings: 'OSM edificios', overture: 'Overture Maps', satellite: 'Satélite (preciso)',
 };
 
 export const SegmentGeometryInfo: React.FC<{
@@ -20,7 +20,7 @@ export const SegmentGeometryInfo: React.FC<{
   const swL = target.sidewalkWidthLeft ?? ((target.sidewalk === 'both' || target.sidewalk === 'left') ? 2.0 : null);
   const swR = target.sidewalkWidthRight ?? ((target.sidewalk === 'both' || target.sidewalk === 'right') ? 2.0 : null);
   const hasSidewalk = swL != null || swR != null || target.sidewalk != null;
-  const widthIsEst = target.widthSrc && target.widthSrc !== 'osm_width' && target.widthSrc !== 'ign_rt' && target.widthSrc !== 'mapillary' && target.widthSrc !== 'overture';
+  const widthIsEst = target.widthSrc && !['osm_width', 'ign_rt', 'mapillary', 'overture', 'satellite'].includes(target.widthSrc);
   const src = (target.widthSrc && SRC_ICON[target.widthSrc]) || '❓';
   const srcLbl = (target.widthSrc && SRC_LABEL[target.widthSrc]) || 'desconocido';
   const srcByAttr = target.geomSources || {};
@@ -84,6 +84,7 @@ export const SegmentGeometryInfo: React.FC<{
       </div>
 
       {widthIsEst && <div className="mt-0.5 text-[9px] text-state-warning">⚠ Calzada estimada — verificar in situ</div>}
+      {!widthIsEst && target.widthSrc === 'satellite' && <div className="mt-0.5 text-[9px] text-state-success">✓ Calzada medida por satélite</div>}
 
       {/* Provenance: which source provided each measured attribute */}
       {Object.keys(srcByAttr).length > 0 && !compact && (

@@ -1286,6 +1286,117 @@
   </div>
 </div>
 
+
+<!-- Project export modal (Excel + Word, con selección de zonas) -->
+<div id="projectExportModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.65);z-index:9999;align-items:flex-start;justify-content:center;overflow-y:auto;padding:24px 0">
+  <div style="background:var(--bg3);border:1px solid var(--border1);border-radius:10px;padding:24px 26px;width:520px;box-shadow:var(--shadow-panel);margin:auto">
+    <div style="font-size:15px;font-weight:700;color:var(--salvi-black);margin-bottom:2px">📦 Exportar proyecto</div>
+    <div style="font-size:11px;color:var(--text3);margin-bottom:16px">Selecciona las zonas y los formatos. Se genera un único archivo combinado por formato.</div>
+
+    <!-- Zonas -->
+    <div style="margin-bottom:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+        <div style="font-size:12px;font-weight:600;color:var(--text)">Zonas a incluir</div>
+        <div style="display:flex;gap:6px">
+          <button onclick="_peSetAllZones(true)" style="background:var(--bg4);border:1px solid var(--border2);color:var(--text2);border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px">Todas</button>
+          <button onclick="_peSetAllZones(false)" style="background:var(--bg4);border:1px solid var(--border2);color:var(--text2);border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px">Ninguna</button>
+        </div>
+      </div>
+      <div id="peZoneList" style="max-height:190px;overflow-y:auto;border:1px solid var(--border1);border-radius:6px;padding:6px 10px;background:var(--bg4)"></div>
+    </div>
+
+    <!-- Formatos -->
+    <div style="margin-bottom:14px">
+      <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:8px">Formatos</div>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:6px">
+        <input type="checkbox" id="peOutExcel" checked>
+        <span style="font-size:12px;color:var(--text2)">📊 <b>Excel de calles/segmentos</b> — una hoja con todas las zonas + resumen por zona</span>
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="peOutWord" checked onchange="_peSyncWordCfg()">
+        <span style="font-size:12px;color:var(--text2)">📄 <b>Documento Word</b> — un informe con portada y una sección por zona</span>
+      </label>
+    </div>
+
+    <!-- Configuración del informe Word -->
+    <div id="peWordCfg" style="border-top:1px solid var(--border1);padding-top:14px;margin-bottom:14px">
+      <div style="font-size:11px;color:var(--text3);margin-bottom:12px">Opciones del informe Word (se aplican a todas las zonas):</div>
+
+      <div style="margin-bottom:12px">
+        <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px">1. Tipo de proyecto</div>
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;margin-bottom:5px">
+          <input type="radio" name="peProjType" value="replacement" onchange="_peSyncGrid()" style="margin-top:3px">
+          <span style="font-size:12px;color:var(--text2)"><b>Reposición</b> — sustitución de alumbrado existente</span></label>
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+          <input type="radio" name="peProjType" value="newinstall" onchange="_peSyncGrid()" style="margin-top:3px">
+          <span style="font-size:12px;color:var(--text2)"><b>Instalación nueva</b> — sin alumbrado actual</span></label>
+      </div>
+
+      <div id="peGridBlock" style="display:none;margin-bottom:12px;padding:10px;background:var(--bg4);border-radius:6px;border:1px solid var(--border1)">
+        <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px">2. Red eléctrica del alumbrado existente</div>
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;margin-bottom:5px">
+          <input type="radio" name="peGridType" value="dedicated" style="margin-top:3px">
+          <span style="font-size:12px;color:var(--text2)"><b>Red dedicada</b> — consumo medible</span></label>
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+          <input type="radio" name="peGridType" value="shared" style="margin-top:3px">
+          <span style="font-size:12px;color:var(--text2)"><b>Red general</b> — cobro por potencia instalada</span></label>
+      </div>
+
+      <div style="margin-bottom:12px">
+        <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px">3. Situación de la red eléctrica en la zona</div>
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;margin-bottom:5px">
+          <input type="radio" name="peEnergy" value="grid" style="margin-top:3px">
+          <span style="font-size:12px;color:var(--text2)"><b>Red estable</b> → <span style="color:#4caf82">LED conectado a red</span></span></label>
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+          <input type="radio" name="peEnergy" value="solar" style="margin-top:3px">
+          <span style="font-size:12px;color:var(--text2)"><b>Red débil o inexistente</b> → <span style="color:#ffd700">Solar autónomo</span></span></label>
+      </div>
+
+      <div style="margin-bottom:12px">
+        <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px">4. Estimación económica</div>
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer;margin-bottom:6px">
+          <input type="radio" name="peEcon" value="none" checked onchange="_peSyncCost()" style="margin-top:3px">
+          <span style="font-size:12px;color:var(--text2)"><b>Sin cálculo económico</b></span></label>
+        <label style="display:flex;align-items:flex-start;gap:8px;cursor:pointer">
+          <input type="radio" name="peEcon" value="with" onchange="_peSyncCost()" style="margin-top:3px">
+          <span style="font-size:12px;color:var(--text2)"><b>Con estimación de coste</b> — coste por punto de luz</span></label>
+        <div id="peCostBlock" style="display:none;margin-top:8px;padding:8px 10px;background:var(--bg4);border-radius:6px;border:1px solid var(--border1)">
+          <div style="display:flex;align-items:center;gap:10px">
+            <input id="peCostNew" type="number" min="0" placeholder="ej. 1500" style="flex:1;background:var(--bg4);border:1px solid var(--border1);color:var(--text);border-radius:5px;padding:6px 9px;font-size:13px"/>
+            <span style="font-size:11px;color:var(--text3);white-space:nowrap">USD / punto de luz</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:4px">
+        <div style="font-size:12px;font-weight:600;color:var(--text);margin-bottom:6px">5. Coste de la energía</div>
+        <div style="display:flex;align-items:center;gap:10px;background:var(--bg4);border:1px solid var(--border1);border-radius:6px;padding:8px 10px">
+          <input id="peCostKwh" type="number" min="0" step="0.01" value="0.10" style="width:80px;background:var(--bg4);border:1px solid var(--border1);color:var(--text);border-radius:5px;padding:6px 9px;font-size:13px;font-weight:700;text-align:center"/>
+          <span style="font-size:12px;color:var(--text2)">USD / kWh</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Idioma -->
+    <div style="margin-bottom:16px">
+      <div style="font-size:12px;color:var(--salvi-black);font-weight:700;margin-bottom:8px">🌐 Idioma</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#c0ccd8"><input type="radio" name="peLang" value="es" checked style="margin:0"> Español</label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#c0ccd8"><input type="radio" name="peLang" value="en" style="margin:0"> English</label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#c0ccd8"><input type="radio" name="peLang" value="pt" style="margin:0"> Português</label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer;font-size:12px;color:#c0ccd8"><input type="radio" name="peLang" value="fr" style="margin:0"> Français</label>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px">
+      <button onclick="document.getElementById('projectExportModal').style.display='none'"
+        style="flex:1;padding:8px;background:transparent;border:1px solid var(--border2);color:var(--text2);border-radius:6px;cursor:pointer;font-size:12px">Cancelar</button>
+      <button onclick="_peRunExport()"
+        style="flex:2;padding:9px;background:var(--salvi-black);border:1px solid var(--salvi-black);color:#FFFFFF;border-radius:6px;cursor:pointer;font-size:13px;font-weight:700">✓ Generar</button>
+    </div>
+  </div>
+</div>
+
 <!-- Debug panel -->
 <div id="debugPanel" style="display:none;position:fixed;bottom:50px;right:16px;background:var(--bg3);border:1px solid var(--border1);border-radius:8px;padding:14px;width:340px;z-index:9998;font-size:12px;max-height:280px;overflow-y:auto">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -2778,11 +2889,76 @@ function getTypeDist(zoneId, type) {
   return (zoneTypeDistribution[zoneId]&&zoneTypeDistribution[zoneId][type]) || DIST_DEFAULTS[type] || 'unilateral_r';
 }
 function distFactor(zoneId, type) { return DIST_FACTOR[getTypeDist(zoneId,type)] ?? 1; }
+// Lista unica de tipos de via de la tabla de analisis (fuente de verdad para filas Y totales)
+const ZONE_DETAIL_ROW_TYPES = [
+  ['🔴','motorway'],['🟠','trunk'],
+  ['🔴','motorway_link'],['🟠','trunk_link'],
+  ['🔴','primary'],['🟡','secondary'],
+  ['🟢','tertiary'],['🔵','residential'],
+  ['🟪','living_street'],['🚶','pedestrian'],
+  ['⚪','unclassified'],['🟣','service'],
+  ['🚇','tunnel'],
+];
+function _roadRowLabel(k){ const s=t('road.'+k); return (s==='road.'+k)?((typeof ROAD_CFG!=='undefined'&&ROAD_CFG[k]&&ROAD_CFG[k].label)||k):s; }
+// Total de luminarias estimadas de una zona sobre sus tipos de via con fila (mismo conjunto que la tabla)
+function _isTypeVisible(zoneId, type){ return !(zoneTypeVisibility[zoneId] && zoneTypeVisibility[zoneId][type] === false); }
+function _zoneLumTotal(zoneId, km, onlyVisible){
+  const vis = zoneTypeVisibility[zoneId] || {};
+  const sp  = zoneSpacing[zoneId] || 30;
+  let total = 0;
+  ZONE_DETAIL_ROW_TYPES.forEach(([,k])=>{
+    if ((km[k]||0)<=0) return;
+    if (onlyVisible && vis[k]===false) return;
+    const tsp = (zoneTypeSpacing[zoneId]&&zoneTypeSpacing[zoneId][k]) || sp;
+    total += Math.round((km[k]||0)*1000/tsp*(DIST_FACTOR[getTypeDist(zoneId,k)]??1));
+  });
+  return total;
+}
+// Total de km de una zona sobre sus tipos de via con fila
+function _zoneKmTotal(zoneId, km, onlyVisible){
+  const vis = zoneTypeVisibility[zoneId] || {};
+  let total = 0;
+  ZONE_DETAIL_ROW_TYPES.forEach(([,k])=>{
+    if ((km[k]||0)<=0) return;
+    if (onlyVisible && vis[k]===false) return;
+    total += (km[k]||0);
+  });
+  return total;
+}
+// Recalcula EN VIVO las celdas de luminarias por fila + stat boxes + fila SUBTOTAL/TOTAL
+// (sin re-renderizar la tabla, para no perder el foco al escribir la interdistancia)
+function updateZoneDetailTotals(zoneId){
+  const d = (typeof zoneData!=='undefined') ? zoneData[zoneId] : null;
+  if (!d) return;
+  const km = d.kmByType || {};
+  const vis = zoneTypeVisibility[zoneId] || {};
+  const sp  = zoneSpacing[zoneId] || 30;
+  const anyHidden = ZONE_DETAIL_ROW_TYPES.some(([,k]) => (km[k]||0)>0 && vis[k]===false);
+  // celdas de luminarias por fila
+  ZONE_DETAIL_ROW_TYPES.forEach(([,k])=>{
+    const cell = document.getElementById('zdlk_'+zoneId+'_'+k);
+    if (!cell) return;
+    const tsp = (zoneTypeSpacing[zoneId]&&zoneTypeSpacing[zoneId][k]) || sp;
+    const lk = Math.round((km[k]||0)*1000/tsp*(DIST_FACTOR[getTypeDist(zoneId,k)]??1));
+    cell.textContent = lk.toLocaleString();
+  });
+  // stat boxes superiores
+  const lumStat = document.getElementById('zdLumStat_'+zoneId);
+  if (lumStat) lumStat.textContent = _zoneLumTotal(zoneId, km, true).toLocaleString();
+  const kmStat = document.getElementById('zdKmStat_'+zoneId);
+  if (kmStat) kmStat.innerHTML = (anyHidden?_zoneKmTotal(zoneId,km,true):_zoneKmTotal(zoneId,km,false)).toFixed(0)+'<small> km</small>';
+  // fila SUBTOTAL/TOTAL
+  const subKm = document.getElementById('zdSubKm_'+zoneId);
+  if (subKm) subKm.textContent = _zoneKmTotal(zoneId, km, true).toFixed(2);
+  const subLum = document.getElementById('zdSubLum_'+zoneId);
+  if (subLum) subLum.textContent = _zoneLumTotal(zoneId, km, true).toLocaleString();
+}
 function setZoneTypeDistribution(zoneId, type, val) {
   if (!zoneTypeDistribution[zoneId]) zoneTypeDistribution[zoneId] = {};
   zoneTypeDistribution[zoneId][type] = val;
   _saveZoneUiState(zoneId);
   renderZoneCards();
+  if (typeof updateZoneDetailTotals === 'function') updateZoneDetailTotals(zoneId);
 }
 let segmentLightingInfo = {}; // { [wKey]: { zoneId, type, lux, effW, _lenM } }
 let segmentCustomSpacing    = {}; // { [wKey]: number }  — spacing overridden in popup
@@ -3798,20 +3974,67 @@ function selectLumIds(ids, additive) {
   ids.forEach(id => selectedLumIds.add(id));
 }
 
+// Umbrales de resaltado para NO colgar MapLibre con selecciones masivas.
+// - pocas luminarias → un círculo por punto (preciso).
+// - muchas → en vez de pintar miles de líneas (que satura ale navegador), se dibuja
+//   SOLO el contorno (bbox) del conjunto seleccionado: un par de features diminutos,
+//   imposibles de saturar el mapa sea cual sea el tamaño de la selección.
+const SELECT_LUM_POINT_THRESHOLD = 1200;   // máx de círculos por punto
+
 function _refreshSelectionLayer(zoneId) {
   if (!zoneId) return;
-  const features = [];
-  selectedLumIds.forEach(id => {
-    const sep = id.lastIndexOf('__');
-    const wKey = id.slice(0, sep);
-    const idx  = +id.slice(sep + 2);
-    if (segmentLightingInfo[wKey]?.zoneId !== zoneId) return;
-    const item = streetLumLayers[wKey]?.[idx];
-    if (!item) return;
-    const coords = Array.isArray(item) ? item : item.c;
-    features.push({ type:'Feature', geometry:{ type:'Point', coordinates: coords }, properties:{} });
-  });
-  _setSourceData('selected-lum-'+zoneId, { type:'FeatureCollection', features });
+  try {
+    // Selección pequeña → círculos por punto (preciso y ligero)
+    if (selectedLumIds.size <= SELECT_LUM_POINT_THRESHOLD) {
+      const features = [];
+      selectedLumIds.forEach(id => {
+        const sep = id.lastIndexOf('__');
+        const wKey = id.slice(0, sep);
+        if (segmentLightingInfo[wKey]?.zoneId !== zoneId) return;
+        const item = streetLumLayers[wKey]?.[+id.slice(sep + 2)];
+        if (!item) return;
+        const coords = Array.isArray(item) ? item : item.c;
+        features.push({ type:'Feature', geometry:{ type:'Point', coordinates: coords }, properties:{} });
+      });
+      _setSourceData('selected-lum-'+zoneId, { type:'FeatureCollection', features });
+      setLayerVisibility('selected-lum-'+zoneId, 'visible');
+      setLayerVisibility('selected-lum-line-'+zoneId, 'none');
+      return;
+    }
+
+    // Selección grande → dibujar el contorno (bbox) del conjunto, mínimo y seguro.
+    // Se recorre toda la selección para calcular el rectángulo envolvente (O(n), rápido)
+    // y NO se añaden más de un puñado de coordenadas al mapa.
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    let has = false;
+    selectedLumIds.forEach(id => {
+      const sep = id.lastIndexOf('__');
+      const wKey = id.slice(0, sep);
+      if (segmentLightingInfo[wKey]?.zoneId !== zoneId) return;
+      const item = streetLumLayers[wKey]?.[+id.slice(sep + 2)];
+      if (!item) return;
+      const c = Array.isArray(item) ? item : item.c;
+      if (c[0] < minX) minX = c[0]; if (c[0] > maxX) maxX = c[0];
+      if (c[1] < minY) minY = c[1]; if (c[1] > maxY) maxY = c[1];
+      has = true;
+    });
+    if (!has) { _setSourceData('selected-lum-'+zoneId, { type:'FeatureCollection', features:[] }); return; }
+    // Rectángulo envolvente como un único LineString cerrado (5 coordenadas)
+    const bboxRing = [[minX,minY],[minX,maxY],[maxX,maxY],[maxX,minY],[minX,minY]];
+    _setSourceData('selected-lum-'+zoneId, {
+      type:'FeatureCollection',
+      features:[{ type:'Feature', geometry:{ type:'LineString', coordinates: bboxRing }, properties:{_bbox:true} }]
+    });
+    setLayerVisibility('selected-lum-'+zoneId, 'none');
+    setLayerVisibility('selected-lum-line-'+zoneId, 'visible');
+  } catch (e) {
+    // Nunca bloquear el flujo por un fallo de resaltado
+    try { _setSourceData('selected-lum-'+zoneId, { type:'FeatureCollection', features:[] }); } catch (_) {}
+  }
+}
+
+function setLayerVisibility(lid, vis) {
+  try { if (map.getLayer(lid)) map.setLayoutProperty(lid, 'visibility', vis); } catch (e) {}
 }
 
 function _onSelectionChanged() {
@@ -3861,6 +4084,55 @@ function setDetailSelectionMode(mode) {
   } else if (mode === 'marquee') {
     _armMarquee();
   }
+}
+
+// Selecciona las luminarias colocadas de un tipo de vía en una zona concreta.
+function _selectLumsByType(zoneId, type, additive) {
+  const keys = (streetTypeIndex[zoneId] || {})[type] || [];
+  const ids = [];
+  keys.forEach(wKey => {
+    (streetLumLayers[wKey] || []).forEach((_, idx) => ids.push(_lumId(wKey, idx)));
+  });
+  if (!ids.length) { showToast('No hay luminarias colocadas para este tipo de vía', false); return; }
+  selectLumIds(ids, additive);
+  _onSelectionChanged();
+}
+
+// Selecciona todas las luminarias colocadas de una zona.
+function _selectAllZoneLums(zoneId, additive) {
+  const ids = [];
+  Object.values(streetTypeIndex[zoneId] || {}).forEach(keys => {
+    keys.forEach(wKey => {
+      (streetLumLayers[wKey] || []).forEach((_, idx) => ids.push(_lumId(wKey, idx)));
+    });
+  });
+  if (!ids.length) { showToast('No hay luminarias colocadas en esta zona', false); return; }
+  selectLumIds(ids, additive);
+  _onSelectionChanged();
+}
+
+// Selecciona luminarias de todas las zonas, pero solo de los tipos de vía que están
+// marcados (visibles) en la pestaña de Planificación (zoneTypeVisibility).
+function _selectAllVisibleAcrossZones() {
+  const ids = [];
+  const affected = new Set();
+  ZONES.forEach(z => {
+    const vis = zoneTypeVisibility[z.id] || {};
+    Object.entries(streetTypeIndex[z.id] || {}).forEach(([type, keys]) => {
+      if (vis[type] === false) return; // tipo desmarcado en Planificación → no seleccionar
+      keys.forEach(wKey => {
+        (streetLumLayers[wKey] || []).forEach((_, idx) => { ids.push(_lumId(wKey, idx)); affected.add(z.id); });
+      });
+    });
+  });
+  if (!ids.length) { showToast('No hay luminarias colocadas en los tipos visibles', false); return; }
+  selectedLumIds.clear();
+  ids.forEach(id => selectedLumIds.add(id));
+  _onSelectionChanged();
+  // Refresca la capa de resaltado de todas las zonas afectadas para ver la selección en el mapa
+  affected.forEach(zid => {
+    if (zid !== detailZoneId) _refreshSelectionLayer(zid);
+  });
 }
 
 // Marquesina: rectángulo de selección en coordenadas de pantalla (más simple que el lazo,
@@ -5125,7 +5397,7 @@ function _rebuildAllMapLayers() {
 
 function _rebuildZoneLayers(zone) {
   const zid = zone.id;
-  ['boundary-fill-','boundary-line-','streets-hit-','streets-tunnel-','streets-','compliance-','selected-lum-','luminaires-','zone-marker-'].forEach(prefix => {
+  ['boundary-fill-','boundary-line-','streets-hit-','streets-tunnel-','streets-','compliance-','selected-lum-','selected-lum-line-','luminaires-','zone-marker-'].forEach(prefix => {
     if (map.getLayer(prefix+zid)) map.removeLayer(prefix+zid);
   });
   ['boundary-','streets-','compliance-','selected-lum-','luminaires-','zone-marker-'].forEach(prefix => {
@@ -5163,6 +5435,10 @@ function _rebuildZoneLayers(zone) {
   map.addLayer({ id:'selected-lum-'+zid, type:'circle', source:'selected-lum-'+zid,
     paint:{ 'circle-radius':11, 'circle-color':'#ffe066', 'circle-opacity':0.35,
       'circle-stroke-color':'#ffe066', 'circle-stroke-width':2, 'circle-stroke-opacity':0.9 }});
+  // Resaltado por tramo (línea) para selecciones masivas — evita colgar con miles de círculos
+  map.addLayer({ id:'selected-lum-line-'+zid, type:'line', source:'selected-lum-'+zid,
+    layout:{ 'line-cap':'round', 'line-join':'round' },
+    paint:{ 'line-color':'#ffe066', 'line-width':7, 'line-opacity':0.55 }});
   map.addLayer({ id:'luminaires-'+zid, type:'symbol', source:'luminaires-'+zid,
     layout:{
       'icon-image': ['match', ['get','dist'], 'centrada_mediana', 'lamp-icon-double', 'lamp-icon'],
@@ -5642,10 +5918,11 @@ function updateProjectInfo() {
 
 async function switchProject(projectId) {
   if (projectId === activeProjectId) return;
+  zoneTotalsSel = null; // reset selección de totales al cambiar de proyecto
   // Remove all current zone layers from map
   ZONES.forEach(z => {
     // Remove ALL layers before any source — order matters (dependent layers first)
-    ['boundary-fill-','boundary-line-','streets-hit-','streets-tunnel-','streets-','compliance-','selected-lum-','luminaires-','zone-marker-'].forEach(prefix => {
+    ['boundary-fill-','boundary-line-','streets-hit-','streets-tunnel-','streets-','compliance-','selected-lum-','selected-lum-line-','luminaires-','zone-marker-'].forEach(prefix => {
       if (map.getLayer(prefix+z.id)) map.removeLayer(prefix+z.id);
     });
     ['boundary-','streets-','compliance-','selected-lum-','luminaires-','zone-marker-'].forEach(prefix => {
@@ -5742,7 +6019,7 @@ async function moveZoneToProject(zoneId, targetProjectId) {
 
   // If zone moved away from the active project, remove it from current view
   if (activeProjectId && targetProjectId !== activeProjectId) {
-    ['boundary-fill-','boundary-line-','streets-hit-','streets-','compliance-','selected-lum-','luminaires-','zone-marker-'].forEach(prefix => {
+    ['boundary-fill-','boundary-line-','streets-hit-','streets-','compliance-','selected-lum-','selected-lum-line-','luminaires-','zone-marker-'].forEach(prefix => {
       if (map.getLayer(prefix+zoneId)) map.removeLayer(prefix+zoneId);
     });
     ['boundary-','streets-','compliance-','selected-lum-','luminaires-','zone-marker-'].forEach(prefix => {
@@ -5903,24 +6180,34 @@ function renderDetailDocks() {
         Vuelve a Planificación y usa "Colocar tipo" para generarlas antes de seleccionar/editar.</div>`;
     } else {
       const nSel = selectedLumIds.size;
-      const selWKeys = new Set(Array.from(selectedLumIds).map(id => id.slice(0, id.lastIndexOf('__'))));
+      const selWKeys = new Set();
+      for (const id of selectedLumIds) selWKeys.add(id.slice(0, id.lastIndexOf('__')));
       h += `<div class="dock-section">
         <div class="dock-section-title">Selección</div>
         <div style="font-size:12px;color:var(--text)">${nSel} luminaria${nSel!==1?'s':''} seleccionada${nSel!==1?'s':''} · ${selWKeys.size} tramo${selWKeys.size!==1?'s':''}</div>
+        <div style="display:flex;flex-direction:column;gap:5px;margin-top:6px">
+          <button class="lux-btn primary" onclick="_selectAllZoneLums('${zone.id}', false)">Seleccionar todos de esta zona</button>
+          <button class="lux-btn ghost" onclick="_selectAllVisibleAcrossZones()">Seleccionar todos (tipos visibles)</button>
+          <button class="lux-btn ghost" onclick="selectedLumIds.clear();_onSelectionChanged();">Deseleccionar todo</button>
+        </div>
       </div>`;
     }
 
-    // Segments grouped by road type
+    // Segments grouped by road type → clic selecciona las luminarias del tipo
     if (ways.length) {
       const byType = {};
       ways.forEach(w => { const t = w.type||w.highway||'otro'; (byType[t]=byType[t]||[]).push(w); });
-      h += `<div class="dock-section"><div class="dock-section-title">Tramos por tipo</div>`;
+      h += `<div class="dock-section">
+        <div class="dock-section-title">Tramos por tipo <span style="font-size:9px;color:var(--text3)">(clic para seleccionar)</span></div>`;
       Object.entries(byType).forEach(([t, arr]) => {
-        h += `<div style="display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:5px;cursor:pointer;font-size:12px"
+        const nPlaced = (streetTypeIndex[zone.id]?.[t] || []).reduce((n, k) => n + ((streetLumLayers[k]||[]).length||0), 0);
+        h += `<div title="Seleccionar luminarias de tipo ${t}"
+          onclick="event.stopPropagation();_selectLumsByType('${zone.id}','${t}',event.shiftKey||event.ctrlKey||event.metaKey)"
+          style="display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:5px;cursor:pointer;font-size:12px"
           onmouseover="this.style.background='var(--bg3)'" onmouseout="this.style.background='none'">
           <span style="width:9px;height:9px;border-radius:2px;background:${(ROAD_CFG[t]&&ROAD_CFG[t].color)||'#888'};flex-shrink:0"></span>
-          <span style="flex:1;color:var(--text)">${t}</span>
-          <span style="color:var(--text3);font-size:11px">${arr.length}</span>
+          <span style="flex:1;color:var(--text)">${(ROAD_CFG[t]&&ROAD_CFG[t].label)||t}</span>
+          <span style="color:var(--text3);font-size:11px">${nPlaced} colocadas</span>
         </div>`;
       });
       h += `</div>`;
@@ -5941,21 +6228,36 @@ function renderDetailDocks() {
         <span style="font-size:11px;opacity:.8">(edición de campos — próxima fase)</span>
       </div>`;
     } else {
+      // Para selecciones gigantes no construimos un map de TODOS los tramos (evita colgar).
+      // Guardamos solo los primeros tramos para mostrar, y el total de tramos en un Set ligero.
+      const MAX_ROWS = 50;
+      const totalWays = new Set();
       const byWay = {};
+      let storedRows = 0;
       selectedLumIds.forEach(id => {
         const wKey = id.slice(0, id.lastIndexOf('__'));
-        byWay[wKey] = (byWay[wKey]||0) + 1;
+        totalWays.add(wKey);
+        if (storedRows < MAX_ROWS && byWay[wKey] === undefined) {
+          byWay[wKey] = (byWay[wKey]||0) + 1;
+          storedRows++;
+        }
       });
-      const rows = Object.entries(byWay).map(([wKey, count]) => {
+      const wayEntries = Object.entries(byWay);
+      const totalRows = totalWays.size;
+      const rowsShown = wayEntries.slice(0, MAX_ROWS).map(([wKey, count]) => {
         const info = segmentLightingInfo[wKey] || {};
-        return `<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0">
+        return `<div style="display:flex;justify-content:space-between;font-size:12px;padding:2px 0">
           <span style="color:var(--text)">${info.streetName || wKey}</span>
           <span style="color:var(--text3)">${count}</span>
         </div>`;
       }).join('');
+      const rows = totalRows > MAX_ROWS
+        ? `${rowsShown}<div style="font-size:11px;color:var(--text3);padding-top:3px">… y ${totalRows - MAX_ROWS} tramos más</div>`
+        : rowsShown;
 
       // Valores de partida para los inputs: los del primer punto seleccionado
-      const firstId = Array.from(selectedLumIds)[0];
+      // Primer punto seleccionado (sin materializar el Set completo en un array)
+      const firstId = selectedLumIds.values().next().value;
       const fSep = firstId.lastIndexOf('__');
       const fWKey = firstId.slice(0, fSep), fIdx = +firstId.slice(fSep + 2);
       const curWatts  = _lumFieldValue(fWKey, fIdx, 'watts');
@@ -5970,7 +6272,7 @@ function renderDetailDocks() {
         ? 'Arrastra el marcador en el mapa para mover esta luminaria.'
         : `Los cambios se aplican a las ${selectedLumIds.size} luminarias seleccionadas.`;
 
-      selectionHtml = `<div style="font-size:12px;font-weight:600;margin-bottom:4px">${selectedLumIds.size} luminarias seleccionadas</div>
+      selectionHtml = `<div style="font-size:12px;font-weight:600;margin-bottom:4px">${selectedLumIds.size} luminarias seleccionadas · ${totalRows} tramos</div>
         ${rows}
         <div style="font-size:11px;color:var(--text3);margin:8px 0">${hint}</div>
         <div style="display:flex;flex-direction:column;gap:6px">
@@ -6043,6 +6345,36 @@ function renderDetailDocks() {
   }
 }
 
+// Selección de zonas para el cálculo de totales de la pestaña Zonas (null = todas seleccionadas)
+let zoneTotalsSel = null;
+function _zoneTotSel(id){ return zoneTotalsSel === null || zoneTotalsSel.has(id); }
+function toggleZoneTotal(id, on){
+  if (zoneTotalsSel === null) zoneTotalsSel = new Set(ZONES.map(z=>z.id));
+  if (on) zoneTotalsSel.add(id); else zoneTotalsSel.delete(id);
+  updateZonesTotals();
+  const cb = document.getElementById('zoneSelAll');
+  if (cb) cb.checked = (typeof ZONES!=='undefined') && ZONES.length>0 && ZONES.every(z=>_zoneTotSel(z.id));
+}
+function setAllZoneTotals(on){
+  zoneTotalsSel = on ? null : new Set();
+  renderZoneCards();
+}
+function updateZonesTotals(){
+  const fz = zoneSearchFilter
+    ? ZONES.filter(z => z.name.toLowerCase().includes(zoneSearchFilter.toLowerCase()))
+    : ZONES;
+  let km = 0, lum = 0;
+  fz.forEach(z => {
+    if (!_zoneTotSel(z.id)) return;
+    const d = zoneData[z.id]; if (!d) return;
+    const kmt = d.kmByType || {};
+    km  += (typeof _zoneKmTotal === 'function') ? _zoneKmTotal(z.id, kmt, true) : Object.values(kmt).reduce((a,b)=>a+(+b||0),0);
+    lum += (typeof _zoneLumTotal === 'function') ? _zoneLumTotal(z.id, kmt, true) : 0;
+  });
+  const kEl = document.getElementById('zonesKmStat'); if (kEl) kEl.innerHTML = km.toFixed(0) + '<small> km</small>';
+  const lEl = document.getElementById('zonesLumStat'); if (lEl) lEl.textContent = lum.toLocaleString();
+}
+
 function renderZoneCards() {
   if (window.refreshValPanel) window.refreshValPanel();
   let html = '';
@@ -6061,17 +6393,44 @@ function renderZoneCards() {
     </button>
   </div>`;
 
-  html += `<div style="display:flex;align-items:center;padding:0 12px 3px;gap:8px;border-bottom:1px solid var(--border1);margin-bottom:4px">
-    <div style="width:9px;flex-shrink:0"></div>
-    <span style="flex:1;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px">Zona</span>
-    <span style="font-size:9px;font-weight:700;color:var(--text3);white-space:nowrap;letter-spacing:.4px">km · Lum.</span>
-    <span style="font-size:9px;font-weight:700;color:var(--text3);white-space:nowrap;letter-spacing:.4px">F</span>
-    <span style="width:15px;flex-shrink:0"></span>
+  html += `<div style="margin-bottom:10px">
+    <button onclick="openProjectExportModal()" style="width:100%;padding:8px;background:var(--green-bg);border:1px solid rgba(31,122,77,.35);color:var(--state-success);border-radius:6px;cursor:pointer;font-size:12px;font-weight:600">
+      📦 Exportar proyecto (Excel + Word)
+    </button>
   </div>`;
 
   const filteredZones = zoneSearchFilter
     ? ZONES.filter(z => z.name.toLowerCase().includes(zoneSearchFilter.toLowerCase()))
     : ZONES;
+
+  // Totales de las zonas SELECCIONADAS (checkbox de cada tarjeta) — como en la pestaña de detalle
+  let _projKm = 0, _projLum = 0;
+  filteredZones.forEach(z => {
+    if (!_zoneTotSel(z.id)) return;
+    const d = zoneData[z.id]; if (!d) return;
+    const km = d.kmByType || {};
+    _projKm  += (typeof _zoneKmTotal === 'function') ? _zoneKmTotal(z.id, km, true) : Object.values(km).reduce((a,b)=>a+(+b||0),0);
+    _projLum += (typeof _zoneLumTotal === 'function') ? _zoneLumTotal(z.id, km, true) : 0;
+  });
+  const allSel = filteredZones.length > 0 && filteredZones.every(z => _zoneTotSel(z.id));
+  html += `<div class="zone-stats">
+      <div class="stat-box">
+        <div class="stat-label">${t('card.km')} ${t('card.km_total')}</div>
+        <div class="stat-value" id="zonesKmStat">${_projKm.toFixed(0)}<small> km</small></div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">${t('card.lum')} ${t('card.lum_est')}</div>
+        <div class="stat-value green" id="zonesLumStat">${_projLum.toLocaleString()}</div>
+      </div>
+    </div>`;
+
+  html += `<div style="display:flex;align-items:center;padding:0 12px 3px;gap:8px;border-bottom:1px solid var(--border1);margin-bottom:4px">
+    <input type="checkbox" id="zoneSelAll" title="Seleccionar todas / ninguna" ${allSel?'checked':''} onclick="setAllZoneTotals(this.checked)" style="margin:0;cursor:pointer;flex-shrink:0;accent-color:var(--green)" />
+    <span style="flex:1;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.6px">Zona</span>
+    <span style="font-size:9px;font-weight:700;color:var(--text3);white-space:nowrap;letter-spacing:.4px">km · Lum.</span>
+    <span style="font-size:9px;font-weight:700;color:var(--text3);white-space:nowrap;letter-spacing:.4px">F</span>
+    <span style="width:15px;flex-shrink:0"></span>
+  </div>`;
 
   if (ZONES.length === 0 && activeProjectId) {
     html += `<div style="text-align:center;padding:30px 16px;color:var(--text3)">
@@ -6091,7 +6450,7 @@ function renderZoneCards() {
     const isVisType = k => vis[k] !== false;
     const sp = zoneSpacing[zone.id] || 30;
     const _tsp = tp => (zoneTypeSpacing[zone.id]&&zoneTypeSpacing[zone.id][tp]) || sp;
-    const totalKm = Object.values(km).reduce((a,b)=>a+b,0);
+    const totalKm = (typeof _zoneKmTotal === 'function') ? _zoneKmTotal(zone.id, km, true) : Object.values(km).reduce((a,b)=>a+b,0);
     const lum = Object.keys(km).filter(tp=>isVisType(tp)&&(km[tp]||0)>0)
       .reduce((a,tp)=>a+Math.round((km[tp]||0)*1000/_tsp(tp)*distFactor(zone.id,tp)),0);
     const isSelected = selectedZone === zone.id;
@@ -6100,6 +6459,7 @@ function renderZoneCards() {
     html += `<div class="zone-card" onclick="selectZone('${zone.id}')"
       style="border-color:${isSelected?zone.color:'var(--border1)'};${isSelected?'box-shadow:0 0 0 2px '+zone.color+'33;border-left:3px solid '+zone.color:''}">
       <div style="display:flex;align-items:center;gap:8px;padding:9px 12px;cursor:pointer">
+        <input type="checkbox" ${_zoneTotSel(zone.id)?'checked':''} onclick="event.stopPropagation();toggleZoneTotal('${zone.id}',this.checked)" title="Incluir en el total" style="margin:0;cursor:pointer;flex-shrink:0;accent-color:${zone.color}" />
         <div style="width:9px;height:9px;border-radius:50%;background:${zone.color};flex-shrink:0"></div>
         <span style="font-weight:600;font-size:13px;color:var(--salvi-black);flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${zone.name}</span>
         ${pending
@@ -6130,6 +6490,9 @@ function toggleZoneType(zoneId, type, checked) {
   _saveZoneUiState(zoneId);
   _applyZoneTypeVisibility(zoneId);
   renderZoneCards();
+  // Recalcular la tabla de analisis (subtotal, etiquetas SUBTOTAL/TOTAL y colores)
+  // segun los tipos de via seleccionados
+  if (typeof currentTab !== 'undefined' && currentTab === 'analysis') renderAnalysis();
 }
 
 // ── Lighting class helpers ────────────────────────────────────────────────
@@ -6242,8 +6605,7 @@ function renderZoneDetail(zoneId) {
   const isVisType = k => vis[k] !== false;
   const sp = zoneSpacing[zone.id] || 30;
   const _tsp = tp => (zoneTypeSpacing[zone.id]&&zoneTypeSpacing[zone.id][tp]) || sp;
-  const lum = Object.keys(km).filter(tp=>isVisType(tp)&&(km[tp]||0)>0)
-    .reduce((a,tp)=>a+Math.round((km[tp]||0)*1000/_tsp(tp)*distFactor(zone.id,tp)),0);
+  const lum = _zoneLumTotal(zone.id, km, true);
   const anyHidden = Object.keys(km).some(k => (km[k]||0) > 0 && !isVisType(k));
 
   const badge = d.source==='inventory'
@@ -6320,11 +6682,11 @@ function renderZoneDetail(zoneId) {
     html += `<div class="zone-stats">
       <div class="stat-box">
         <div class="stat-label">${t('card.km')}${anyHidden?` <span style="color:#e8a800;font-size:9px">(${t('card.km_filtered')})</span>`:` ${t('card.km_total')}`}</div>
-        <div class="stat-value">${anyHidden?Object.entries(km).filter(([k])=>isVisType(k)).reduce((a,[,v])=>a+v,0).toFixed(0):Object.values(km).reduce((a,b)=>a+b,0).toFixed(0)}<small> km</small></div>
+        <div class="stat-value" id="zdKmStat_${zone.id}">${(anyHidden?_zoneKmTotal(zone.id,km,true):_zoneKmTotal(zone.id,km,false)).toFixed(0)}<small> km</small></div>
       </div>
       <div class="stat-box">
         <div class="stat-label">${t('card.lum')}${anyHidden?` <span style="color:#e8a800;font-size:9px">${t('card.lum_sub')}</span>`:` ${t('card.lum_est')}`}</div>
-        <div class="stat-value green">${lum.toLocaleString()}</div>
+        <div class="stat-value green" id="zdLumStat_${zone.id}">${lum.toLocaleString()}</div>
       </div>
     </div>
     <div style="padding:0 12px 10px;display:flex;align-items:center;gap:8px">
@@ -6346,14 +6708,8 @@ function renderZoneDetail(zoneId) {
           <th style="padding:3px 4px;font-weight:600"></th>
         </tr></thead>
         <tbody>${(()=>{
-          return [
-            ['🔴',t('road.motorway'),'motorway'],['🟠',t('road.trunk'),'trunk'],
-            ['🔴',t('road.motorway_link'),'motorway_link'],['🟠',t('road.trunk_link'),'trunk_link'],
-            ['🔴',t('road.primary'),'primary'],['🟡',t('road.secondary'),'secondary'],
-            ['🟢',t('road.tertiary'),'tertiary'],['🔵',t('road.residential'),'residential'],
-            ['⚪',t('road.unclassified'),'unclassified'],['🟣',t('road.service'),'service'],
-            ['🚇',t('road.tunnel'),'tunnel'],
-          ].filter(([,,k])=>(km[k]||0)>0).map(([ico,label,k])=>{
+          return ZONE_DETAIL_ROW_TYPES.filter(([,k])=>(km[k]||0)>0).map(([ico,k])=>{
+            const label = _roadRowLabel(k);
             const tsp  = (zoneTypeSpacing[zone.id]&&zoneTypeSpacing[zone.id][k]) || sp;
             const dist = getTypeDist(zone.id, k);
             const dfac = DIST_FACTOR[dist] ?? 1;
@@ -6390,7 +6746,7 @@ function renderZoneDetail(zoneId) {
                 <input type="number" min="5" max="100" value="${tsp}"
                   style="width:44px;background:${isCustomSp?'var(--green-bg)':'var(--bg4)'};border:1px solid ${isCustomSp?'rgba(31,122,77,.4)':'var(--border1)'};color:${isCustomSp?'var(--state-success)':'var(--salvi-black)'};padding:2px 4px;border-radius:3px;font-size:11px;font-weight:700;text-align:center"
                   onclick="event.stopPropagation()"
-                  oninput="event.stopPropagation();setZoneTypeSpacing('${zone.id}','${k}',+this.value);this.style.background=this.value!='${sp}'?'var(--green-bg)':'var(--bg4)';this.style.borderColor=this.value!='${sp}'?'rgba(31,122,77,.4)':'var(--border1)';this.style.color=this.value!='${sp}'?'var(--state-success)':'var(--salvi-black)';(()=>{const df=DIST_FACTOR[getTypeDist('${zone.id}','${k}')]??1;this.closest('tr').querySelector('.lk-cell').textContent=Math.round(${(km[k]||0)*1000}/(+this.value||${sp})*df).toLocaleString()})()" />
+                  oninput="event.stopPropagation();setZoneTypeSpacing('${zone.id}','${k}',+this.value);this.style.background=this.value!='${sp}'?'var(--green-bg)':'var(--bg4)';this.style.borderColor=this.value!='${sp}'?'rgba(31,122,77,.4)':'var(--border1)';this.style.color=this.value!='${sp}'?'var(--state-success)':'var(--salvi-black)';updateZoneDetailTotals('${zone.id}')" />
                 <select onclick="event.stopPropagation()" onchange="event.stopPropagation();setZoneTypeDistribution('${zone.id}','${k}',this.value)"
                   style="width:100%;margin-top:2px;background:var(--bg4);border:1px solid ${dist!=='unilateral_r'&&dist!=(DIST_DEFAULTS[k]||'unilateral_r')?'var(--state-warning)':'var(--border1)'};color:${dist!=='unilateral_r'&&dist!=(DIST_DEFAULTS[k]||'unilateral_r')?'var(--state-warning)':'var(--salvi-black)'};border-radius:3px;padding:1px 2px;font-size:9px;cursor:pointer">
                   <option value="unilateral_r"          ${dist==='unilateral_r'         ?'selected':''}>Unilateral D</option>
@@ -6401,7 +6757,7 @@ function renderZoneDetail(zoneId) {
                   <option value="mediana_compartida"    ${dist==='mediana_compartida'   ?'selected':''}>Sin lum. (mediana compart.)</option>
                 </select>
               </td>
-              <td class="lk-cell" style="padding:3px 4px;text-align:right;color:#4caf82;font-weight:600">${lk.toLocaleString()}</td>
+              <td id="zdlk_${zone.id}_${k}" class="lk-cell" style="padding:3px 4px;text-align:right;color:#4caf82;font-weight:600">${lk.toLocaleString()}</td>
               <td style="padding:2px 3px;vertical-align:middle">
                 <div style="display:flex;gap:3px;flex-wrap:wrap;justify-content:flex-end;align-items:center">
                   <button id="typelumbtn_${zone.id}_${k}" onclick="event.stopPropagation();placeTypeLuminaires('${zone.id}','${k}')"
@@ -6431,18 +6787,15 @@ function renderZoneDetail(zoneId) {
               </td>
             </tr>`;
           }).join('') + (()=>{
-            const vKm=Object.entries(km).filter(([k])=>isVisType(k)).reduce((a,[,v])=>a+v,0);
-            const vLum=Object.entries(km).filter(([k])=>isVisType(k)).reduce((a,[k,v])=>{
-              const tsp=(zoneTypeSpacing[zone.id]&&zoneTypeSpacing[zone.id][k])||sp;
-              return a+Math.round(v*1000/tsp*(DIST_FACTOR[getTypeDist(zone.id,k)]??1));
-            },0);
+            const vKm=_zoneKmTotal(zone.id,km,true);
+            const vLum=_zoneLumTotal(zone.id,km,true);
             const lbl=anyHidden?t('card.subtotal'):t('card.total');
             const col=anyHidden?'var(--state-warning)':'var(--salvi-black)';
             return `<tr style="border-top:1px solid var(--border1)">
-              <td style="padding:4px 4px 2px;color:${col};font-weight:700">${lbl}</td>
-              <td style="padding:4px 4px 2px;text-align:right;color:${col};font-weight:700">${vKm.toFixed(2)}</td>
+              <td id="zdSubLabel_${zone.id}" style="padding:4px 4px 2px;color:${col};font-weight:700">${lbl}</td>
+              <td id="zdSubKm_${zone.id}" style="padding:4px 4px 2px;text-align:right;color:${col};font-weight:700">${vKm.toFixed(2)}</td>
               <td></td>
-              <td style="padding:4px 4px 2px;text-align:right;color:#e8b800;font-weight:700;font-size:13px">${vLum.toLocaleString()}</td>
+              <td id="zdSubLum_${zone.id}" style="padding:4px 4px 2px;text-align:right;color:#e8b800;font-weight:700;font-size:13px">${vLum.toLocaleString()}</td>
               <td></td></tr>`;
           })()
         })()}</tbody>
@@ -6485,7 +6838,7 @@ function deleteZone(id) {
   const zone = ZONES.find(z => z.id === id);
   if (!zone) return;
   // Remove map layers
-  ['boundary-fill-','boundary-line-','streets-hit-','streets-','compliance-','selected-lum-','luminaires-','zone-marker-'].forEach(prefix => {
+  ['boundary-fill-','boundary-line-','streets-hit-','streets-','compliance-','selected-lum-','selected-lum-line-','luminaires-','zone-marker-'].forEach(prefix => {
     if (map.getLayer(prefix+id)) map.removeLayer(prefix+id);
   });
   ['boundary-','streets-','compliance-','selected-lum-','luminaires-','zone-marker-'].forEach(prefix => {
@@ -8788,46 +9141,12 @@ function exportZoneExcel(id) {
   };
 }
 
-function _doExportZoneExcel(id, zone, ways, lang) {
-  // Reset shared string table for this export
-  ssArr = []; ssMap = {}; ssCount = 0;
-  _loadZoneTypeModels(id);
-  const sp = zoneSpacing[id] || 30;
-  const wayKeyByGeom = new Map(
-    Object.entries(streetGeomStore)
-      .filter(([key]) => segmentLightingInfo[key]?.zoneId === id)
-      .map(([key, geom]) => [geom, key])
-  );
-  const wayKeyFor = way => wayKeyByGeom.get(way.geom) || null;
-  const effectiveSpacing = (way, wKey) => wKey
-    ? getSegmentSpacing(wKey, id, way.type)
-    : (Number(way.luxParams?.spacing) || zoneTypeSpacing[id]?.[way.type] || sp);
-  const effectiveDistribution = (way, wKey) => wKey
-    ? getSegmentDist(wKey)
-    : (way.luxParams?.distribution || zoneTypeDistribution[id]?.[way.type] || DIST_DEFAULTS[way.type] || 'unilateral_r');
-  const effectiveClass = (way, wKey) => {
-    const cls = (wKey && segmentLightingClassOverride[wKey])
-      || way.luxParams?.lightingClass
-      || zoneTypeLightingClass[id]?.[way.type]
-      || LIGHTING_CLASS[way.type]?.cls
-      || LIGHTING_CLASS.unclassified.cls;
-    return ALL_LC[cls] || LIGHTING_CLASS[way.type] || LIGHTING_CLASS.unclassified;
-  };
-  const EFFICACY = LAMP_EFFICACY; // 150 lm/W: luminaire efficacy
-  const PROJECT_EFF = PROJECT_EFFICIENCY; // 90 lux·m²/W: project estimate
-  const formulaCell = (formula, cached) => ({ formula, cached });
-  const valueOf = value => value && typeof value === 'object' && value.formula ? value.cached : value;
-  const ROAD_SPEC = {
-    motorway:      {lux:34, defWidth:11.0}, trunk:         {lux:34, defWidth:9.0},
-    motorway_link: {lux:26, defWidth:5.0},  trunk_link:    {lux:26, defWidth:5.0},
-    primary:      {lux:34, defWidth:7.0}, secondary:    {lux:26, defWidth:6.0},
-    tertiary:     {lux:17, defWidth:5.5}, residential:  {lux:13, defWidth:4.5},
-    unclassified: {lux:9,  defWidth:4.0}, living_street:{lux:10, defWidth:4.0},
-    pedestrian:   {lux:10, defWidth:3.5}, service:      {lux:7,  defWidth:3.0},
-    tunnel:       {lux:50, defWidth:7.0}
-  };
+/* ===== Refactored segment-export helpers (project + zone) ===== */
+const _xlFormula = (formula, cached) => ({ formula, cached });
+const _xlValueOf = value => value && typeof value === 'object' && value.formula ? value.cached : value;
 
-  const T = {
+function _segmentT(lang) {
+    return {
     es: {
       headers: ['Zona','Nombre vía','Tipo OSM','Tipo de vía','Clase EN 13201','cd/m²','Lux requerido',
         'Long. segmento (m)','Long. total calle (km)',
@@ -8887,7 +9206,48 @@ function _doExportZoneExcel(id, zone, ways, lang) {
     headers:[], roadLabels:{}, noName:'(unnamed)', single:'Single', double:'Dual', estimated:'estimated', arrangements:{},
     filePrefix:'Segments', toastMsg: n => `✓ ${n} segments exported`
   };
+}
 
+// Filas (array-of-arrays) de los segmentos de UNA zona. xlRowStart = fila de hoja de la 1a fila de datos.
+// emitPhoto = si el libro lleva columnas fotométricas (fijo para toda la hoja).
+function _segmentRowsForZone(id, zone, ways, lang, xlRowStart, emitPhoto) {
+  ways = (ways || []).filter(w => _isTypeVisible(id, w.type)); // excluir tipos de vía deseleccionados
+  _loadZoneTypeModels(id);
+  const sp = zoneSpacing[id] || 30;
+  const wayKeyByGeom = new Map(
+    Object.entries(streetGeomStore)
+      .filter(([key]) => segmentLightingInfo[key]?.zoneId === id)
+      .map(([key, geom]) => [geom, key])
+  );
+  const wayKeyFor = way => wayKeyByGeom.get(way.geom) || null;
+  const effectiveSpacing = (way, wKey) => wKey
+    ? getSegmentSpacing(wKey, id, way.type)
+    : (Number(way.luxParams?.spacing) || zoneTypeSpacing[id]?.[way.type] || sp);
+  const effectiveDistribution = (way, wKey) => wKey
+    ? getSegmentDist(wKey)
+    : (way.luxParams?.distribution || zoneTypeDistribution[id]?.[way.type] || DIST_DEFAULTS[way.type] || 'unilateral_r');
+  const effectiveClass = (way, wKey) => {
+    const cls = (wKey && segmentLightingClassOverride[wKey])
+      || way.luxParams?.lightingClass
+      || zoneTypeLightingClass[id]?.[way.type]
+      || LIGHTING_CLASS[way.type]?.cls
+      || LIGHTING_CLASS.unclassified.cls;
+    return ALL_LC[cls] || LIGHTING_CLASS[way.type] || LIGHTING_CLASS.unclassified;
+  };
+  const EFFICACY = LAMP_EFFICACY; // 150 lm/W: luminaire efficacy
+  const PROJECT_EFF = PROJECT_EFFICIENCY; // 90 lux·m²/W: project estimate
+  const formulaCell = (formula, cached) => ({ formula, cached });
+  const valueOf = value => value && typeof value === 'object' && value.formula ? value.cached : value;
+  const ROAD_SPEC = {
+    motorway:      {lux:34, defWidth:11.0}, trunk:         {lux:34, defWidth:9.0},
+    motorway_link: {lux:26, defWidth:5.0},  trunk_link:    {lux:26, defWidth:5.0},
+    primary:      {lux:34, defWidth:7.0}, secondary:    {lux:26, defWidth:6.0},
+    tertiary:     {lux:17, defWidth:5.5}, residential:  {lux:13, defWidth:4.5},
+    unclassified: {lux:9,  defWidth:4.0}, living_street:{lux:10, defWidth:4.0},
+    pedestrian:   {lux:10, defWidth:3.5}, service:      {lux:7,  defWidth:3.0},
+    tunnel:       {lux:50, defWidth:7.0}
+  };
+  const T = _segmentT(lang);
   // ── Union-Find: group connected unnamed segments ─────────────────
   const parent = ways.map((_,i) => i);
   const rank   = ways.map(() => 0);
@@ -8924,12 +9284,7 @@ function _doExportZoneExcel(id, zone, ways, lang) {
     streetTotals[key] = (streetTotals[key]||0) + w.len;
   });
 
-  // ── Photometric lookup ───────────────────────────────────────────
-  const hasPhoto = !!(zonePhotometric[id] && zonePhotometric[id].length);
-  const photoHeaders = hasPhoto ? [
-    'Modelo luminaria*','Óptica*','Potencia calc (W)*','Lm/Em*','Uo*','UI*','TI*','SR*','Φ (lm)*','Cumple*','Notas*'
-  ] : [];
-
+  const zoneHasPhoto = !!(zonePhotometric[id] && zonePhotometric[id].length);
   const rows = ways.map((w, i) => {
     const wKey = wayKeyFor(w);
     const spec = ROAD_SPEC[w.type] || ROAD_SPEC.unclassified;
@@ -8945,7 +9300,7 @@ function _doExportZoneExcel(id, zone, ways, lang) {
     const totalKW = +(lc.lux * wm * lenM / PROJECT_EFF / 1000).toFixed(3);
     const kwhLED  = +(totalKW * 12 * 365).toFixed(0);
     const kwhAdap = +(kwhLED * 0.5).toFixed(0);
-    const xlRow = i + 2;
+    const xlRow = xlRowStart + i;
     const streetKey = w.name || unnamedLabel[i] || '?';
     const streetKm  = streetTotals[streetKey] ? +streetTotals[streetKey].toFixed(3) : '';
     const widthSrcLabel = w.widthSrc === 'estimado' ? T.estimated : (w.widthSrc || T.estimated);
@@ -8960,8 +9315,8 @@ function _doExportZoneExcel(id, zone, ways, lang) {
       : null;
 
     // Photometric data for this segment
-    const ph = hasPhoto ? getPhotometric(id, w.type, +(w.estWidth || spec.defWidth), waySpacing) : null;
-    const photoVals = hasPhoto ? [
+    const ph = zoneHasPhoto ? getPhotometric(id, w.type, +(w.estWidth || spec.defWidth), waySpacing) : null;
+    const photoVals = emitPhoto ? [
       ph?.model || '', ph?.lente || '', ph?.power_w ?? '',
       ph?.lm_em ?? '', ph?.uo ?? '', ph?.ui ?? '', ph?.ti ?? '',
       ph?.sr ?? '', ph?.phi_lm ?? '', ph?.cumple || '', ph?.notes || ''
@@ -8970,7 +9325,7 @@ function _doExportZoneExcel(id, zone, ways, lang) {
     return [
       zone.name, displayName, w.type, T.roadLabels[w.type] || w.type,
       lc.cls, lc.cdm2 || '', lc.lux,
-       lenM, formulaCell(`SUMIF($B:$B,B${xlRow},$H:$H)/1000`, streetKm || 0), wmRaw.toFixed(1), formulaCell(`J${xlRow}+4`, wm), widthSrcLabel,
+       lenM, formulaCell(`SUMIFS($H:$H,$B:$B,B${xlRow},$A:$A,A${xlRow})/1000`, streetKm || 0), wmRaw.toFixed(1), formulaCell(`J${xlRow}+4`, wm), widthSrcLabel,
       w.lanes || '', w.width || '',
       w.dual ? T.double : T.single, arrangementDisplay,
        formulaCell(`H${xlRow}*K${xlRow}`, surf),
@@ -8986,6 +9341,18 @@ function _doExportZoneExcel(id, zone, ways, lang) {
     ];
   });
 
+  return { rows, hasPhoto: zoneHasPhoto };
+}
+
+// Construye y descarga el libro .xlsx a partir de filas ya calculadas (1 o varias zonas).
+function _writeSegmentsWorkbook(allRows, emitPhoto, lang, sheetName, fileBase, toastN, includeZoneInSummary) {
+  ssArr = []; ssMap = {}; ssCount = 0;
+  const T = _segmentT(lang);
+  const valueOf = _xlValueOf;
+  const photoHeaders = emitPhoto ? [
+    'Modelo luminaria*','Óptica*','Potencia calc (W)*','Lm/Em*','Uo*','UI*','TI*','SR*','Φ (lm)*','Cumple*','Notas*'
+  ] : [];
+  const rows = allRows;
   // ── Styles ───────────────────────────────────────────────────────
   const borderThin = { style:'thin', color:{rgb:'B0C4B8'} };
   const allBorders = { top:borderThin, bottom:borderThin, left:borderThin, right:borderThin };
@@ -9012,7 +9379,7 @@ function _doExportZoneExcel(id, zone, ways, lang) {
   const baseNumCols = new Set([5,6,7,8,9,10,12,13,16,19,20,21,22,23,24,25,26]);
   // photometric numeric cols start after the 29 base columns: power(31),lm(32),uo(33),ui(34),ti(35),sr(36),phi(37)
   const photoNumOffset = T.headers.length; // = 29
-  const photoNumCols = hasPhoto ? [2,3,4,5,6,7,8].map(n => photoNumOffset + n) : [];
+  const photoNumCols = emitPhoto ? [2,3,4,5,6,7,8].map(n => photoNumOffset + n) : [];
   const numCols = new Set([...baseNumCols, ...photoNumCols]);
   const photoHdrOffset = T.headers.length; // first col index of photometric section
   const linkCol = 28;
@@ -9022,7 +9389,7 @@ function _doExportZoneExcel(id, zone, ways, lang) {
 
   try {
     // ── Column widths in EMUs (characters × 9 approx) ───────────────
-    const photoColWidths = hasPhoto ? [30,10,14,10,10,10,10,10,12,10,20] : [];
+    const photoColWidths = emitPhoto ? [30,10,14,10,10,10,10,10,12,10,20] : [];
     const colWidths = [16,28,13,20,16,18,14,12,11,11,10,13,13,10,20,24,14,10,14,18,20,22,12,12,12,12,24,24,10,...photoColWidths];
 
     // ── Styles XML ──────────────────────────────────────────────────
@@ -9074,7 +9441,7 @@ function _doExportZoneExcel(id, zone, ways, lang) {
       let cells = '';
       row.forEach((val, ci) => {
         const cellRef = colLetters[ci] + (ri+1);
-        const isPhotoCol = hasPhoto && ci >= photoHdrOffset;
+        const isPhotoCol = emitPhoto && ci >= photoHdrOffset;
         const isFormula = !isHeader && val && typeof val === 'object' && val.formula;
         const rawVal = isFormula ? val.cached : val;
          const isNum = !isHeader && numCols.has(ci) && rawVal !== '' && rawVal != null && Number.isFinite(Number(rawVal));
@@ -9138,10 +9505,13 @@ function _doExportZoneExcel(id, zone, ways, lang) {
         : lang === 'fr'
           ? ['Type de voie','Luminaire sélectionné','Nom de la voie','Segments','Longueur totale (km)','Nb points','Puissance (kW)']
           : ['Road type','Selected luminaire','Road name','Segments','Total length (km)','No. points','Power (kW)'];
+    const zonaHdr = lang === 'pt' ? 'Zona' : lang === 'fr' ? 'Zone' : lang === 'en' ? 'Zone' : 'Zona';
+    if (includeZoneInSummary) summaryHeaders.unshift(zonaHdr);
     const summaryGroups = {};
     rows.forEach(row => {
-      const groupKey = [row[3], row[27], row[1]].join('|||');
-      if (!summaryGroups[groupKey]) summaryGroups[groupKey] = { type:row[3], model:row[27], name:row[1], segments:0, km:0, points:0, kw:0 };
+      const zn = includeZoneInSummary ? row[0] : '';
+      const groupKey = [zn, row[3], row[27], row[1]].join('|||');
+      if (!summaryGroups[groupKey]) summaryGroups[groupKey] = { zone:zn, type:row[3], model:row[27], name:row[1], segments:0, km:0, points:0, kw:0 };
       const g = summaryGroups[groupKey];
       g.segments += 1;
       g.km += Number(valueOf(row[7])) || 0;
@@ -9150,21 +9520,24 @@ function _doExportZoneExcel(id, zone, ways, lang) {
     });
     const grouped = {};
     Object.values(summaryGroups).forEach(g => {
-      const key = g.type + '|||' + g.model;
-      (grouped[key] ||= { type:g.type, model:g.model, rows:[] }).rows.push(g);
+      const key = g.zone + '|||' + g.type + '|||' + g.model;
+      (grouped[key] ||= { zone:g.zone, type:g.type, model:g.model, rows:[] }).rows.push(g);
     });
     const summaryData = [summaryHeaders];
-    Object.values(grouped).sort((a,b) => `${a.type}${a.model}`.localeCompare(`${b.type}${b.model}`)).forEach(group => {
+    const withZona = (arr, zn) => includeZoneInSummary ? [zn, ...arr] : arr;
+    Object.values(grouped).sort((a,b) => `${a.zone}${a.type}${a.model}`.localeCompare(`${b.zone}${b.type}${b.model}`)).forEach(group => {
       const total = group.rows.reduce((a,g) => ({ segments:a.segments+g.segments, km:a.km+g.km, points:a.points+g.points, kw:a.kw+g.kw }), {segments:0,km:0,points:0,kw:0});
-      summaryData.push([group.type, group.model, lang === 'es' ? 'TOTAL' : 'TOTAL', total.segments, +total.km.toFixed(3), total.points, +total.kw.toFixed(3)]);
-      group.rows.sort((a,b) => a.name.localeCompare(b.name)).forEach(g => summaryData.push([g.type, g.model, g.name, g.segments, +g.km.toFixed(3), g.points, +g.kw.toFixed(3)]));
+      summaryData.push(withZona([group.type, group.model, 'TOTAL', total.segments, +total.km.toFixed(3), total.points, +total.kw.toFixed(3)], group.zone));
+      group.rows.sort((a,b) => a.name.localeCompare(b.name)).forEach(g => summaryData.push(withZona([g.type, g.model, g.name, g.segments, +g.km.toFixed(3), g.points, +g.kw.toFixed(3)], g.zone)));
     });
     const summaryLetters = Array.from({length:summaryHeaders.length},(_,i)=>colIndexToLetter(i));
+    const _nameCol = includeZoneInSummary ? 3 : 2;
+    const _numFrom = includeZoneInSummary ? 4 : 3;
     const summaryRowsXml = summaryData.map((row, ri) => {
-      const isHeader = ri === 0, isGroup = ri > 0 && row[2] === 'TOTAL';
+      const isHeader = ri === 0, isGroup = ri > 0 && row[_nameCol] === 'TOTAL';
       const cells = row.map((val, ci) => {
         const ref = summaryLetters[ci] + (ri + 1);
-        const isNum = !isHeader && ci >= 3;
+        const isNum = !isHeader && ci >= _numFrom;
         const style = isHeader ? 1 : isGroup ? 6 : (isNum ? (ri % 2 ? 4 : 5) : (ri % 2 ? 2 : 3));
         return isNum
           ? `<c r="${ref}" s="${style}"><v>${Number(val) || 0}</v></c>`
@@ -9177,7 +9550,7 @@ function _doExportZoneExcel(id, zone, ways, lang) {
 <worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
   <dimension ref="A1:${summaryLast}"/>
   <sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>
-  <sheetFormatPr defaultRowHeight="15"/><cols><col min="1" max="1" width="22"/><col min="2" max="2" width="25"/><col min="3" max="3" width="30"/><col min="4" max="7" width="16"/></cols>
+  <sheetFormatPr defaultRowHeight="15"/>${includeZoneInSummary ? '<cols><col min="1" max="1" width="20"/><col min="2" max="2" width="22"/><col min="3" max="3" width="25"/><col min="4" max="4" width="30"/><col min="5" max="8" width="16"/></cols>' : '<cols><col min="1" max="1" width="22"/><col min="2" max="2" width="25"/><col min="3" max="3" width="30"/><col min="4" max="7" width="16"/></cols>'}
   <sheetData>${summaryRowsXml}</sheetData><autoFilter ref="A1:${summaryLast}"/>
 </worksheet>`;
 
@@ -9191,7 +9564,7 @@ ${ssArr.map(s=>`<si><t xml:space="preserve">${s}</t></si>`).join('')}
     const zip = new JSZip();
     zip.file('[Content_Types].xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/worksheets/sheet2.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/><Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>`);
     zip.file('_rels/.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`);
-    zip.file('xl/workbook.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><calcPr calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"/><sheets><sheet name="${escXml(zone.name.substring(0,31))}" sheetId="1" r:id="rId1"/><sheet name="Resumen" sheetId="2" r:id="rId4"/></sheets></workbook>`);
+    zip.file('xl/workbook.xml', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><calcPr calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"/><sheets><sheet name="${escXml(sheetName.substring(0,31))}" sheetId="1" r:id="rId1"/><sheet name="Resumen" sheetId="2" r:id="rId4"/></sheets></workbook>`);
     zip.file('xl/_rels/workbook.xml.rels', `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/sharedStrings" Target="sharedStrings.xml"/><Relationship Id="rId4" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/></Relationships>`);
     zip.file('xl/styles.xml', stylesXml);
     zip.file('xl/sharedStrings.xml', ssXml);
@@ -9204,14 +9577,119 @@ ${ssArr.map(s=>`<si><t xml:space="preserve">${s}</t></si>`).join('')}
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = T.filePrefix + '_' + zone.name.replace(/\s+/g,'_') + '.xlsx';
+        a.download = fileBase + '.xlsx';
         document.body.appendChild(a); a.click(); document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        showToast(T.toastMsg(ways.length));
+        showToast(toastN);
       });
   } catch(e) {
     console.error('Excel export error:', e);
     showToast('Error generando Excel: ' + e.message, false);
+  }
+}
+
+function _doExportZoneExcel(id, zone, ways, lang) {
+  try {
+    const zoneHasPhoto = !!(zonePhotometric[id] && zonePhotometric[id].length);
+    const { rows, hasPhoto } = _segmentRowsForZone(id, zone, ways, lang, 2, zoneHasPhoto);
+    const T = _segmentT(lang);
+    _writeSegmentsWorkbook(rows, hasPhoto, lang, zone.name.substring(0,31),
+      T.filePrefix + '_' + zone.name.replace(/\s+/g,'_'), T.toastMsg(rows.length), false);
+  } catch(e) {
+    console.error('Excel export error:', e);
+    showToast('Error generando Excel: ' + e.message, false);
+  }
+}
+
+// Exporta un ÚNICO Excel combinado con los segmentos de las zonas seleccionadas del proyecto.
+function _doExportProjectExcel(zoneIds, lang) {
+  try {
+    const ctxs = (zoneIds||[]).map(zid => {
+      const zone = ZONES.find(z => z.id === zid);
+      if (!zone) return null;
+      const d = zoneData[zid] || {};
+      return { id: zid, zone, ways: (d.ways || []) };
+    }).filter(c => c && c.ways.length);
+    if (!ctxs.length) { showToast('Las zonas seleccionadas no tienen calles cargadas (botón 🔄 OSM)', false); return; }
+    const emitPhoto = ctxs.some(c => zonePhotometric[c.id] && zonePhotometric[c.id].length);
+    let allRows = [], xlRow = 2;
+    ctxs.forEach(c => {
+      const { rows } = _segmentRowsForZone(c.id, c.zone, c.ways, lang, xlRow, emitPhoto);
+      allRows = allRows.concat(rows);
+      xlRow += rows.length;
+    });
+    const T = _segmentT(lang);
+    const projName = (typeof PROJECTS!=='undefined' && (PROJECTS.find(p => p.id === activeProjectId)||{}).name) || 'Proyecto';
+    _writeSegmentsWorkbook(allRows, emitPhoto, lang, 'Segmentos',
+      T.filePrefix + '_' + projName.replace(/\s+/g,'_'), T.toastMsg(allRows.length), true);
+  } catch(e) {
+    console.error('Project Excel export error:', e);
+    showToast('Error generando Excel de proyecto: ' + e.message, false);
+  }
+}
+
+/* ===== UI: exportación a nivel de proyecto (selección de zonas) ===== */
+function openProjectExportModal(){
+  if (typeof ZONES === 'undefined' || !ZONES.length) { showToast('Este proyecto no tiene zonas', false); return; }
+  const list = document.getElementById('peZoneList');
+  if (list) list.innerHTML = ZONES.map(z=>{
+    const d = zoneData[z.id] || {};
+    const nW = (d.ways||[]).length;
+    const km = d.kmByType ? Object.values(d.kmByType).reduce((a,b)=>a+(+b||0),0).toFixed(0) : '0';
+    return `<label style="display:flex;align-items:center;gap:8px;padding:4px 2px;cursor:pointer;${nW?'':'opacity:.5'}">
+      <input type="checkbox" class="peZoneChk" value="${z.id}" ${nW?'checked':''} ${nW?'':'disabled'}>
+      <span style="width:9px;height:9px;border-radius:50%;background:${z.color};flex-shrink:0"></span>
+      <span style="flex:1;font-size:12px;color:var(--text)">${z.name}</span>
+      <span style="font-size:10px;color:var(--text3);white-space:nowrap">${km} km${nW?'':' · sin calles'}</span>
+    </label>`;
+  }).join('');
+  const exc = document.getElementById('peOutExcel'); if (exc) exc.checked = true;
+  const wrd = document.getElementById('peOutWord'); if (wrd) wrd.checked = true;
+  document.querySelectorAll('input[name="peProjType"],input[name="peGridType"],input[name="peEnergy"]').forEach(r=>r.checked=false);
+  const econNone = document.querySelector('input[name="peEcon"][value="none"]'); if (econNone) econNone.checked = true;
+  const cn = document.getElementById('peCostNew'); if (cn) cn.value = '';
+  const gb = document.getElementById('peGridBlock'); if (gb) gb.style.display = 'none';
+  const cb = document.getElementById('peCostBlock'); if (cb) cb.style.display = 'none';
+  _peSyncWordCfg();
+  const modal = document.getElementById('projectExportModal');
+  if (modal) modal.style.display = 'flex';
+}
+function _peSyncWordCfg(){
+  const w = document.getElementById('peWordCfg');
+  const on = document.getElementById('peOutWord');
+  if (w && on) w.style.display = on.checked ? 'block' : 'none';
+}
+function _peSyncGrid(){
+  const gb = document.getElementById('peGridBlock');
+  if (gb) gb.style.display = (document.querySelector('input[name="peProjType"]:checked')?.value === 'replacement') ? 'block' : 'none';
+}
+function _peSyncCost(){
+  const cb = document.getElementById('peCostBlock');
+  if (cb) cb.style.display = (document.querySelector('input[name="peEcon"]:checked')?.value === 'with') ? 'block' : 'none';
+}
+function _peSetAllZones(v){ document.querySelectorAll('.peZoneChk').forEach(c=>{ if(!c.disabled) c.checked = v; }); }
+function _peSelectedZones(){ return [...document.querySelectorAll('.peZoneChk')].filter(c=>c.checked && !c.disabled).map(c=>c.value); }
+async function _peRunExport(){
+  const zoneIds = _peSelectedZones();
+  if (!zoneIds.length) { showToast('Selecciona al menos una zona', false); return; }
+  const wantExcel = document.getElementById('peOutExcel')?.checked;
+  const wantWord  = document.getElementById('peOutWord')?.checked;
+  if (!wantExcel && !wantWord) { showToast('Selecciona al menos un formato (Excel o Word)', false); return; }
+  const lang = document.querySelector('input[name="peLang"]:checked')?.value || 'es';
+  const modal = document.getElementById('projectExportModal'); if (modal) modal.style.display = 'none';
+  if (wantExcel) _doExportProjectExcel(zoneIds, lang);
+  if (wantWord) {
+    const econMode = document.querySelector('input[name="peEcon"]:checked')?.value || 'none';
+    const cfg = {
+      projType: document.querySelector('input[name="peProjType"]:checked')?.value || null,
+      gridType: document.querySelector('input[name="peGridType"]:checked')?.value || null,
+      energy:   document.querySelector('input[name="peEnergy"]:checked')?.value || null,
+      costUnit: econMode === 'with' ? (parseInt(document.getElementById('peCostNew')?.value) || null) : null,
+      costKwh:  parseFloat(document.getElementById('peCostKwh')?.value) || 0.10,
+      noEcon:   econMode === 'none',
+      lang,
+    };
+    await _doGenerateProjectReport(zoneIds, cfg);
   }
 }
 
@@ -9258,8 +9736,76 @@ function _reportWayPoints(way, spacing, maxPoints) {
   return out;
 }
 
+// Captura REAL del mapa (con fondo) usando un MapLibre temporal fuera de pantalla.
+// Devuelve <img> PNG; si algo falla, cae al mapa SVG vectorial anterior.
+function _captureZoneMap(zone, d, opts){
+  opts = opts || {};
+  const mode = opts.mode || 'categories';
+  const typeFilter = opts.typeFilter || null;
+  const W = opts.width || 1400, H = opts.height || 800;
+  const id = zone.id;
+  const ways = ((d && d.ways) ? d.ways : []).filter(w => w.geom && w.geom.length >= 2 && (!typeFilter || w.type === typeFilter) && _isTypeVisible(id, w.type));
+  const fallbackSvg = () => _reportSvgToPng(_reportMapSVG(zone, d, mode, typeFilter), 'report-map');
+  if (!ways.length || typeof maplibregl === 'undefined') return fallbackSvg();
+  return new Promise(resolve => {
+    let settled = false, m = null, div = null, timer = null;
+    const done = (html) => { if (settled) return; settled = true; if (timer) clearTimeout(timer);
+      try { if (m) m.remove(); } catch(_){}
+      try { if (div && div.parentNode) div.parentNode.removeChild(div); } catch(_){}
+      resolve(html); };
+    const bail = () => { if (settled) return; fallbackSvg().then(done); };
+    try {
+      div = document.createElement('div');
+      div.style.cssText = 'position:absolute;left:-99999px;top:0;width:'+W+'px;height:'+H+'px;';
+      document.body.appendChild(div);
+      m = new maplibregl.Map({ container: div, style:'https://tiles.openfreemap.org/styles/liberty', attributionControl:false, interactive:false, preserveDrawingBuffer:true, fadeDuration:0 });
+    } catch(e){ return bail(); }
+    timer = setTimeout(bail, 15000);
+    let minLon=Infinity,maxLon=-Infinity,minLat=Infinity,maxLat=-Infinity;
+    ways.forEach(w=>w.geom.forEach(p=>{ if(p.lon<minLon)minLon=p.lon; if(p.lon>maxLon)maxLon=p.lon; if(p.lat<minLat)minLat=p.lat; if(p.lat>maxLat)maxLat=p.lat; }));
+    const lineFeatures = ways.map(w=>{
+      const model = _reportWayModel(id, w);
+      const color = mode==='proposal' ? luminaireModelColor(model) : (ROAD_CFG[w.type]||ROAD_CFG.unclassified).color;
+      return { type:'Feature', properties:{ color }, geometry:{ type:'LineString', coordinates: w.geom.map(p=>[p.lon,p.lat]) } };
+    });
+    let pointFeatures = [];
+    if (mode==='proposal') {
+      const actual = [];
+      Object.entries(streetLumLayers).forEach(([key,pts])=>{
+        if (!segmentLightingInfo[key] || segmentLightingInfo[key].zoneId !== id || !Array.isArray(pts)) return;
+        if (!_isTypeVisible(id, segmentLightingInfo[key].type)) return;
+        const model = getSegmentLuminaireModel(key);
+        pts.forEach(item=>{ const c=Array.isArray(item)?item:item.c; if(c&&model) actual.push({lon:c[0],lat:c[1],model}); });
+      });
+      let pts = actual;
+      if (!pts.length) {
+        const fb=[];
+        ways.forEach(w=>{ if(fb.length>=4000) return; const model=_reportWayModel(id,w); if(!model) return;
+          _reportWayPoints(w, (zoneTypeSpacing[id]&&zoneTypeSpacing[id][w.type])||zoneSpacing[id]||30, 60).forEach(p=>{ if(fb.length<4000) fb.push({lon:p.lon,lat:p.lat,model}); }); });
+        pts = fb;
+      }
+      pointFeatures = pts.map(p=>({ type:'Feature', properties:{ color:luminaireModelColor(p.model) }, geometry:{ type:'Point', coordinates:[p.lon,p.lat] } }));
+    }
+    m.on('load', ()=>{
+      try {
+        m.addSource('rep-lines',{type:'geojson',data:{type:'FeatureCollection',features:lineFeatures}});
+        m.addLayer({id:'rep-lines',type:'line',source:'rep-lines',layout:{'line-cap':'round','line-join':'round'},paint:{'line-color':['get','color'],'line-width':mode==='proposal'?2.2:3,'line-opacity':0.9}});
+        if (pointFeatures.length){
+          m.addSource('rep-pts',{type:'geojson',data:{type:'FeatureCollection',features:pointFeatures}});
+          m.addLayer({id:'rep-pts',type:'circle',source:'rep-pts',paint:{'circle-radius':2.6,'circle-color':['get','color'],'circle-stroke-color':'#ffffff','circle-stroke-width':0.6}});
+        }
+        if (isFinite(minLon)) m.fitBounds([[minLon,minLat],[maxLon,maxLat]],{padding:40,animate:false,duration:0});
+      } catch(e){}
+      m.once('idle', ()=>{
+        try { const url = m.getCanvas().toDataURL('image/png'); done('<img class="report-map" width="624" style="width:16.5cm;height:auto" src="'+url+'"/>'); }
+        catch(e){ bail(); }
+      });
+    });
+    m.on('error', ()=>{});
+  });
+}
 function _reportMapSVG(zone, d, mode, typeFilter) {
-  const ways = (d?.ways || []).filter(w => w.geom && w.geom.length >= 2 && (!typeFilter || w.type === typeFilter));
+  const ways = (d?.ways || []).filter(w => w.geom && w.geom.length >= 2 && (!typeFilter || w.type === typeFilter) && _isTypeVisible(zone?.id, w.type));
   const W = 920, H = 500, pad = 28;
   if (!ways.length) return `<div class="report-map-empty">No street geometry is available. Load OSM data before generating the report.</div>`;
   let minLon = Infinity, maxLon = -Infinity, minLat = Infinity, maxLat = -Infinity;
@@ -9285,6 +9831,7 @@ function _reportMapSVG(zone, d, mode, typeFilter) {
     const actual = [];
     Object.entries(streetLumLayers).forEach(([key, pts]) => {
       if (segmentLightingInfo[key]?.zoneId !== zone.id || !Array.isArray(pts)) return;
+      if (!_isTypeVisible(zone.id, segmentLightingInfo[key]?.type)) return;
       const model = getSegmentLuminaireModel(key);
       pts.forEach(item => {
         const c = Array.isArray(item) ? item : item.c;
@@ -9335,7 +9882,8 @@ function _reportSvgToPng(markup, className) {
         canvas.width = className === 'product-figure' ? 560 : 1840;
         canvas.height = className === 'product-figure' ? 240 : 1000;
         canvas.getContext('2d').drawImage(image, 0, 0);
-        resolve(`<img class="${className || 'report-map'}" src="${canvas.toDataURL('image/png')}"/>`);
+        const _st = (className && className !== 'report-map') ? '' : ' width="624" style="width:16.5cm;height:auto"';
+        resolve(`<img class="${className || 'report-map'}"${_st} src="${canvas.toDataURL('image/png')}"/>`);
       } catch (_) { resolve(markup); }
       URL.revokeObjectURL(objectUrl);
     };
@@ -9383,7 +9931,7 @@ function generateZoneReport(id) {
   };
 }
 
-async function _doGenerateZoneReport(id, cfg) {
+async function _doGenerateZoneReport(id, cfg, opts) {
   const costRepInput = null;
   const costNewInput = cfg?.costUnit || null;
   try {
@@ -9423,7 +9971,7 @@ async function _doGenerateZoneReport(id, cfg) {
       service:      { lux:7,  width:3.0, phase:3 },
     };
 
-    const totalKm = Object.values(km).reduce((a,b)=>a+b,0);
+    const totalKm = Object.entries(km).reduce((a,[_t,v])=>a+(_isTypeVisible(id,_t)?(+v||0):0),0);
     const source = d.source === 'osm' ? 'Datos en vivo (OpenStreetMap)' : d.source === 'db' ? 'Datos OSM almacenados en la base de datos' : d.source === 'inventory' ? 'Inventario importado' : 'Datos estimados';
 
     // Declare these early — used throughout the function
@@ -9437,7 +9985,7 @@ async function _doGenerateZoneReport(id, cfg) {
     // Per-type calculations using actual segment widths
      // Preliminary project power = illuminance × illuminated surface / 90 lux·m²/W.
     const segWays = d.ways || [];
-    const typeData = Object.entries(km).filter(([,v])=>v>0).map(([type, v]) => {
+    const typeData = Object.entries(km).filter(([type,v])=>v>0 && _isTypeVisible(id, type)).map(([type, v]) => {
       const spec = ROAD_SPEC[type] || ROAD_SPEC.unclassified;
       const typeSpacing = zoneTypeSpacing[id]?.[type] || zoneSpacing[id] || sp;
       const lums = Math.round(v * 1000 / typeSpacing * (distFactor(id, type)));
@@ -9492,9 +10040,17 @@ async function _doGenerateZoneReport(id, cfg) {
       // try to find name from roadTotals — use key lookup fallback
     });
     // Use zoneData road totals if available
-    const topStreets = d.roadTotals
-      ? Object.entries(d.roadTotals).sort((a,b)=>b[1]-a[1]).slice(0,10)
-      : [];
+    // Ranking de calles respetando los tipos de vía seleccionados:
+    // se agrega la longitud por nombre de calle sólo de los tramos visibles.
+    const _visStreetTotals = {};
+    (d.ways || []).forEach(w => {
+      if (!_isTypeVisible(id, w.type)) return;
+      const nm = w.name; if (!nm) return;
+      _visStreetTotals[nm] = (_visStreetTotals[nm] || 0) + (w.len || 0);
+    });
+    const topStreets = (d.ways && d.ways.length)
+      ? Object.entries(_visStreetTotals).sort((a,b)=>b[1]-a[1]).slice(0,10)
+      : (d.roadTotals ? Object.entries(d.roadTotals).sort((a,b)=>b[1]-a[1]).slice(0,10) : []);
 
     // CAPEX inputs (user-configurable via prompt dialog)
     const costRep = costRepInput || null;
@@ -9555,6 +10111,49 @@ async function _doGenerateZoneReport(id, cfg) {
     typeData.forEach(t => Object.keys(totalModelCounts).forEach(k => { totalModelCounts[k] += t.modelCounts[k] || 0; }));
     const totalModelMix = Object.entries(totalModelCounts).filter(([,n])=>n>0).map(([mk,n]) => `${mk==='undefined'?undefinedModelLabel:LUMINAIRE_MODELS[mk]?.name}: ${n.toLocaleString(numLocale)}`).join('<br>') || undefinedModelLabel;
 
+    // ── Tabla resumen de calles por tipo de vía ──────────────────────
+    const _distLabelsAll = {
+      es:{unilateral_r:'Unilateral D',unilateral_l:'Unilateral I',bilateral_pareado:'Bilateral',bilateral_tresbolillo:'Bilateral tresbolillo',centrada_mediana:'Centrada mediana',mediana_compartida:'Mediana compartida'},
+      en:{unilateral_r:'One-sided R',unilateral_l:'One-sided L',bilateral_pareado:'Bilateral',bilateral_tresbolillo:'Bilateral staggered',centrada_mediana:'Median-centred',mediana_compartida:'Shared median'},
+      pt:{unilateral_r:'Unilateral D',unilateral_l:'Unilateral E',bilateral_pareado:'Bilateral',bilateral_tresbolillo:'Bilateral tresbolilho',centrada_mediana:'Centrada na mediana',mediana_compartida:'Mediana partilhada'},
+      fr:{unilateral_r:'Unilatéral D',unilateral_l:'Unilatéral G',bilateral_pareado:'Bilatéral',bilateral_tresbolillo:'Bilatéral quinconce',centrada_mediana:'Centré sur médiane',mediana_compartida:'Médiane partagée'},
+    };
+    const _distLabels = _distLabelsAll[lang] || _distLabelsAll.es;
+    const _sumTx = ({
+      es:{title:'Resumen de calles por tipo de vía',type:'Tipo de vía',cls:'Clase EN 13201',width:'Ancho vía (m)',spacing:'Interdistancia (m)',dist:'Distribución',model:'Modelo seleccionado',km:'km',lums:'Nº luminarias'},
+      en:{title:'Street summary by road type',type:'Road type',cls:'EN 13201 class',width:'Road width (m)',spacing:'Spacing (m)',dist:'Arrangement',model:'Selected model',km:'km',lums:'No. luminaires'},
+      pt:{title:'Resumo de ruas por tipo de via',type:'Tipo de via',cls:'Classe EN 13201',width:'Largura via (m)',spacing:'Interdistância (m)',dist:'Disposição',model:'Modelo selecionado',km:'km',lums:'Nº luminárias'},
+      fr:{title:'Résumé des voies par type',type:'Type de voie',cls:'Classe EN 13201',width:'Largeur voie (m)',spacing:'Interdistance (m)',dist:'Disposition',model:'Modèle sélectionné',km:'km',lums:'Nb luminaires'},
+    })[lang] || {title:'Resumen de calles por tipo de vía',type:'Tipo de vía',cls:'Clase EN 13201',width:'Ancho vía (m)',spacing:'Interdistancia (m)',dist:'Distribución',model:'Modelo seleccionado',km:'km',lums:'Nº luminarias'};
+    const streetSummaryRows = typeData.map(t => {
+      const specS = ROAD_SPEC[t.type] || ROAD_SPEC.unclassified;
+      const segsW = segWays.filter(w => w.type===t.type && w.estWidth);
+      const avgW = segsW.length ? (segsW.reduce((a,w)=>a+(w.estWidth||specS.width),0)/segsW.length) : specS.width;
+      const spacingV = (zoneTypeSpacing[id]&&zoneTypeSpacing[id][t.type]) || zoneSpacing[id] || sp;
+      const distV = getTypeDist(id, t.type);
+      const clsV = (zoneTypeLightingClass[id] && zoneTypeLightingClass[id][t.type]) || (LIGHTING_CLASS[t.type]||LIGHTING_CLASS.unclassified).cls;
+      const modelName = t.model ? (LUMINAIRE_MODELS[t.model] ? LUMINAIRE_MODELS[t.model].name : t.model) : undefinedModelLabel;
+      return `<tr>
+        <td style="padding:6px 10px;border:1px solid #ccc;">${t.label}</td>
+        <td style="padding:6px 10px;border:1px solid #ccc;text-align:center;">${clsV}</td>
+        <td style="padding:6px 10px;border:1px solid #ccc;text-align:center;">${avgW.toFixed(1)}</td>
+        <td style="padding:6px 10px;border:1px solid #ccc;text-align:center;">${spacingV}</td>
+        <td style="padding:6px 10px;border:1px solid #ccc;">${_distLabels[distV]||distV}</td>
+        <td style="padding:6px 10px;border:1px solid #ccc;">${modelName}</td>
+        <td style="padding:6px 10px;border:1px solid #ccc;text-align:center;">${t.km.toFixed(2)}</td>
+        <td style="padding:6px 10px;border:1px solid #ccc;text-align:center;">${t.lums.toLocaleString(numLocale)}</td>
+      </tr>`;
+    }).join('');
+    const streetSummaryTable = `<h2 class="section">${_sumTx.title}</h2>
+  <table class="data">
+    <thead><tr>
+      <th>${_sumTx.type}</th><th class="num">${_sumTx.cls}</th><th class="num">${_sumTx.width}</th><th class="num">${_sumTx.spacing}</th><th>${_sumTx.dist}</th><th>${_sumTx.model}</th><th class="num">${_sumTx.km}</th><th class="num">${_sumTx.lums}</th>
+    </tr></thead>
+    <tbody>${streetSummaryRows}
+      <tr class="total"><td>TOTAL</td><td style="text-align:center">—</td><td style="text-align:center">—</td><td style="text-align:center">—</td><td>—</td><td>${totalModelMix}</td><td style="text-align:center">${totalKm.toFixed(2)}</td><td style="text-align:center">${totalLum.toLocaleString(numLocale)}</td></tr>
+    </tbody>
+  </table>`;
+
     const PHASE_SUFFIX = {
       es: ['','— Vías primarias y secundarias','— Vías terciarias y residenciales','— Resto de vías'],
       en: ['','— Primary & secondary roads','— Tertiary & residential roads','— Remaining roads'],
@@ -9589,13 +10188,14 @@ async function _doGenerateZoneReport(id, cfg) {
     };
     const waysForReportCount = segWays.filter(w => w.geom && w.geom.length >= 2).length;
     const waySamplingNote = waysForReportCount > 2200 ? reportCopy.representative : '';
-    const categoryMapSVG = await _reportSvgToPng(_reportMapSVG(zone, d, 'categories'), 'report-map');
-    const proposalMapSVG = await _reportSvgToPng(_reportMapSVG(zone, d, 'proposal'), 'report-map');
-    const roadTypeMapPages = (await Promise.all(typeData.map(async t => {
+    const categoryMapSVG = await _captureZoneMap(zone, d, {mode:'categories'});
+    const proposalMapSVG = await _captureZoneMap(zone, d, {mode:'proposal'});
+    let roadTypeMapPages = '';
+    for (const t of typeData) {
       const modelMix = Object.entries(t.modelCounts).filter(([,n])=>n>0).map(([mk,n]) => `${mk==='undefined'?undefinedModelLabel:LUMINAIRE_MODELS[mk]?.name}: ${n.toLocaleString(numLocale)}`).join(' · ') || undefinedModelLabel;
-      const mapImage = await _reportSvgToPng(_reportMapSVG(zone, d, 'categories', t.type), 'report-map');
-      return `<div class="report-map-page"><h2 class="section">${t.label}</h2><div class="figure-caption">${t.km.toFixed(2)} km · ${t.lums.toLocaleString(numLocale)} estimated points · ${modelLabel}: ${modelMix}</div>${mapImage}</div>`;
-    }))).join('');
+      const mapImage = await _captureZoneMap(zone, d, {mode:'categories', typeFilter:t.type});
+      roadTypeMapPages += `<div class="report-map-page"><h2 class="section">${t.label}</h2><div class="figure-caption">${t.km.toFixed(2)} km · ${t.lums.toLocaleString(numLocale)} estimated points · ${modelLabel}: ${modelMix}</div>${mapImage}</div>`;
+    }
     const scenarioDefs = [
       { name:'Priority corridors', types:['motorway','trunk','motorway_link','trunk_link','primary','secondary'] },
       { name:'Urban network', types:['motorway','trunk','motorway_link','trunk_link','primary','secondary','tertiary','residential'] },
@@ -9815,8 +10415,8 @@ async function _doGenerateZoneReport(id, cfg) {
     .decision-grid { display:table; width:100%; border-collapse:separate; border-spacing:6px 0; margin:8px -6px 14px; }
     .decision-grid > div { display:table-cell; width:33.33%; vertical-align:top; background:#f2faf5; border:1px solid #d0e8d8; padding:9px 10px; font-size:9pt; color:#40534a; }
     .figure-caption { font-size:9pt; color:#777; margin:4px 0 7px; }
-    .report-map { width:100%; height:auto; display:block; border:1px solid #d0e8d8; }
-    .report-map-page { page-break-before:always; break-before:page; min-height:220mm; }
+    .report-map { width:16.5cm; height:auto; display:block; margin:0 0 6px; }
+    .report-map-page { break-inside:avoid; page-break-inside:avoid; margin:0 0 12px; }
     .report-map-empty { border:1px solid #ddd; color:#888; padding:24px; text-align:center; }
     .product-grid { display:block; width:100%; margin:0 -3px 12px; }
     .product-card { display:inline-block; width:31.5%; min-height:176px; box-sizing:border-box; vertical-align:top; margin:0 1% 8px 0; border:1px solid #d0e8d8; background:#f8fcf8; padding:8px 10px; font-size:8.5pt; color:#40534a; }
@@ -9885,6 +10485,8 @@ async function _doGenerateZoneReport(id, cfg) {
   <h2 class="section">${reportCopy.map} · General network</h2>
   <div class="figure-caption">${source} · ${waysForReportCount} ${reportCopy.mapCaption}${waySamplingNote}</div>
   ${categoryMapSVG}
+
+  ${streetSummaryTable}
 
   <h2 class="section">${reportCopy.proposal}</h2>
   <div class="figure-caption">${reportCopy.proposalCaption}</div>
@@ -10097,6 +10699,8 @@ async function _doGenerateZoneReport(id, cfg) {
 </body>
 </html>`;
 
+    if (opts && opts.returnHtml) return html;
+
     const blob = new Blob([html], { type: 'application/msword;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -10110,6 +10714,67 @@ async function _doGenerateZoneReport(id, cfg) {
     showToast(`✓ Informe de ${zone.name} descargado`);
   } catch(e) {
     showToast('Error generando el informe: ' + e.message, false);
+    console.error(e);
+  }
+}
+
+
+// Genera UN ÚNICO informe Word (.doc) combinando las zonas seleccionadas del proyecto.
+async function _doGenerateProjectReport(zoneIds, cfg) {
+  try {
+    const lang = cfg?.lang || 'es';
+    let htmlOpen = '', head = '';
+    const parts = [];
+    const done = [];
+    for (const zid of (zoneIds || [])) {
+      const zone = ZONES.find(z => z.id === zid);
+      if (!zone) continue;
+      const full = await _doGenerateZoneReport(zid, cfg, { returnHtml: true });
+      if (!full) continue;
+      if (!head) {
+        htmlOpen = (full.match(/<html[\s\S]*?>/) || ['<html>'])[0];
+        head     = (full.match(/<head[\s\S]*?<\/head>/) || [''])[0];
+      }
+      const body = (full.match(/<body[^>]*>([\s\S]*?)<\/body>/) || [null, ''])[1];
+      parts.push(body);
+      done.push(zone.name);
+    }
+    if (!parts.length) { showToast('No hay zonas válidas (carga sus calles con 🔄 OSM)', false); return; }
+    const projName = (typeof PROJECTS !== 'undefined' && (PROJECTS.find(p => p.id === activeProjectId) || {}).name) || 'Proyecto';
+    const numLocale = {es:'es-ES', en:'en-US', pt:'pt-PT', fr:'fr-FR', ca:'ca-ES'}[lang] || 'es-ES';
+    const today = new Date().toLocaleDateString(numLocale, { year:'numeric', month:'long', day:'numeric' });
+    const coverTitle = {es:'Informe de proyecto', en:'Project report', pt:'Relatório de projeto', fr:'Rapport de projet', ca:'Informe de projecte'}[lang] || 'Project report';
+    const coverZones = {es:'Zonas incluidas', en:'Included zones', pt:'Zonas incluídas', fr:'Zones incluses', ca:'Zones incloses'}[lang] || 'Included zones';
+    const cover = `<div style="text-align:center;margin:40px 0 20px">
+      <h1 style="font-size:24pt;color:#1a1d2e;margin:0 0 6px">${coverTitle}</h1>
+      <h2 style="font-size:15pt;color:#1a6a3a;font-weight:normal;margin:0 0 18px">${projName}</h2>
+      <div style="font-size:10pt;color:#666">${today}</div>
+      <div style="margin:22px auto 0;max-width:70%;font-size:10.5pt;color:#40534a;text-align:left;border:1px solid #d0e8d8;background:#f2faf5;padding:12px 16px">
+        <b>${coverZones} (${done.length}):</b> ${done.join(' · ')}
+      </div>
+    </div>`;
+    const pageBreak = '<div style="page-break-before:always"></div>';
+    const combined = `${htmlOpen}
+${head}
+<body>
+${cover}
+${pageBreak}
+${parts.join('\n' + pageBreak + '\n')}
+</body>
+</html>`;
+    const blob = new Blob([combined], { type: 'application/msword;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const docPrefix = {es:'Informe', en:'Report', pt:'Relatorio', fr:'Rapport', ca:'Informe'}[lang] || 'Report';
+    a.download = docPrefix + '_' + projName.replace(/\s+/g, '_') + '.doc';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast(`✓ Informe de proyecto (${done.length} zonas) descargado`);
+  } catch(e) {
+    showToast('Error generando el informe de proyecto: ' + e.message, false);
     console.error(e);
   }
 }

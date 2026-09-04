@@ -52,6 +52,12 @@ Endpoints iniciales:
 - `POST /api/optimize`
 - `POST /api/optimizer/chat`
 
+El diálogo conversacional usa Ollama local con un modelo multimodal. Instala Ollama,
+descarga `qwen2.5vl:7b`, configura `.env` a partir de `.env.example` y reinicia el
+backend. El arranque local carga ese archivo automáticamente y la imagen no sale del
+equipo. Anthropic queda disponible como proveedor alternativo con
+`SALVI_AI_PROVIDER=anthropic` y `ANTHROPIC_API_KEY`.
+
 `/api/luminaire/compose` es una exportación opcional para documentar una
  solución. `/api/road/calculate` y `/api/optimize` calculan directamente la
  suma de las fuentes virtuales configuradas.

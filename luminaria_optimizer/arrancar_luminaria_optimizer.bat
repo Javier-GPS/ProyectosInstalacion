@@ -54,5 +54,5 @@ powershell -NoProfile -Command "$r = try { Invoke-WebRequest -Uri '%~1' -UseBasi
 exit /b %errorlevel%
 
 :check_backend
-powershell -NoProfile -Command "$r = try { Invoke-WebRequest -Uri 'http://127.0.0.1:8760/openapi.json' -UseBasicParsing -TimeoutSec 2 } catch { $null }; if ($r -and $r.StatusCode -eq 200 -and $r.Content -match '/api/cad/optimize-road-target') { exit 0 } else { exit 1 }" >nul 2>&1
+powershell -NoProfile -Command "$r = try { Invoke-WebRequest -Uri 'http://127.0.0.1:8760/api/health' -UseBasicParsing -TimeoutSec 2 } catch { $null }; if ($r -and $r.StatusCode -eq 200 -and $r.Content -match 'vision-staged-v11') { exit 0 } else { exit 1 }" >nul 2>&1
 exit /b %errorlevel%

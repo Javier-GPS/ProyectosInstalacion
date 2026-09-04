@@ -70,15 +70,18 @@ class SolidWorksSession:
             working = working_root / f"{source.stem}-{uuid.uuid4().hex[:8]}{source.suffix}"
             working.write_bytes(source.read_bytes())
         pythoncom.CoInitialize()
-        owns_application = True
+        owns_application = False
         try:
             try:
-                sw = win32.DispatchEx("SldWorks.Application.34")
-            except Exception as dispatch_error:
+                # Reuse the user's running SolidWorks instance when possible.
+                # Starting a second COM application for every candidate is slow
+                # and makes the visible document appear to close unexpectedly.
+                sw = win32.GetActiveObject("SldWorks.Application")
+            except Exception:
                 try:
-                    sw = win32.GetActiveObject("SldWorks.Application")
-                    owns_application = False
-                except Exception:
+                    sw = win32.DispatchEx("SldWorks.Application.34")
+                    owns_application = True
+                except Exception as dispatch_error:
                     raise dispatch_error
             sw.Visible = visible
             errors = win32.VARIANT(pythoncom.VT_BYREF | pythoncom.VT_I4, 0)
@@ -90,9 +93,12 @@ class SolidWorksSession:
                     f"(error {errors.value}, advertencia {warnings.value})."
                 )
             return cls(source, working, sw, model, document_type, owns_application)
-        except Exception:
+        except SolidWorksError:
             pythoncom.CoUninitialize()
             raise
+        except Exception as exc:
+            pythoncom.CoUninitialize()
+            raise SolidWorksError(f"SolidWorks no pudo iniciar o abrir el documento: {exc}") from exc
 
     def parameters(self) -> list[dict[str, object]]:
         result: list[dict[str, object]] = []
@@ -419,8 +425,8 @@ class SolidWorksSession:
         try:
             title = self.model.GetTitle
             self.sw.CloseDoc(title)
-            if self.owns_application:
-                self.sw.ExitApp()
+            # Keep SolidWorks itself running. The application is shared with the
+            # user and must remain available for the next CAD candidate.
         finally:
             try:
                 import pythoncom

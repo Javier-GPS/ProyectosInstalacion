@@ -47,9 +47,20 @@ type CadSession = { session_id: string; title: string; document_type?: 'part' | 
 type DialogueImage = { name: string; base64: string; dataUrl: string };
 type DialogueMessage = { role: 'user' | 'assistant'; content: string; image?: DialogueImage };
 type AssistantProposal = { id: string; title: string; strategy: string; summary: string; rationale: string; steps: string[]; requires_new_file: boolean; approval: string };
-type AssistantContext = { cad_filename?: string; trace?: GeometryTraceData['trace']; surface_energy?: SurfaceEnergy[]; selected_surface_index?: number; cad_parameters?: CadParameter[]; saved_cad_files?: string[] };
+type AssistantContext = { cad_filename?: string; trace?: GeometryTraceData['trace']; surface_energy?: SurfaceEnergy[]; selected_surface_index?: number; cad_parameters?: CadParameter[]; saved_cad_files?: string[]; execution_state?: ActiveCalculation };
 type Result = { feasible?: boolean; currents_ma: number[]; tilt_deg?: number; operating_point: OperatingPoint; metrics?: Metrics; reference_road?: ReferenceRoad | null; photometric_profile?: PhotometricProfile; visual_grid?: VisualGrid; group_ldt?: LdtDiagnostic; luminaire_ldt?: LdtDiagnostic; luminaire_ldt_base64?: string; luminaire_ldt_metadata?: { name: string; flux_lm: number; power_w: number; group_angles_deg: number[] }; reference_luminaire_ldt?: LdtDiagnostic | null; message?: string };
 type DefaultResources = { cad: { name: string }; rayset: { name: string }; rtable: { name: string; base64: string } };
+
+const isAutonomousInstruction = (message: string) => {
+  const lowered = message.toLowerCase();
+  return [
+    'de forma autónoma', 'de forma autonoma', 'modo autónomo', 'modo autonomo',
+    'sin mi intervención', 'sin mi intervencion', 'hazlo tú', 'hazlo tu',
+    'ejecuta la propuesta', 'modifica la lente', 'modificar la lente',
+    'corrige la lente', 'corregir la lente', 'haz las modificaciones',
+    'haz los cambios', 'realiza las modificaciones', 'aplica los cambios',
+  ].some(phrase => lowered.includes(phrase));
+};
 
 const encodeFile = (file: File): Promise<FilePayload> => new Promise((resolve, reject) => {
   const reader = new FileReader();
@@ -81,7 +92,7 @@ function OptimizerDialogue({ context, onExecuteProposal, executionState }: { con
   });
   const [draft, setDraft] = useState('');
   const [proposal, setProposal] = useState<AssistantProposal | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [chatBusy, setChatBusy] = useState(false);
   const [error, setError] = useState('');
   const [image, setImage] = useState<DialogueImage | null>(null);
   const [workflowState, setWorkflowState] = useState<'ready' | 'proposal' | 'completed' | 'blocked'>('ready');
@@ -89,7 +100,7 @@ function OptimizerDialogue({ context, onExecuteProposal, executionState }: { con
   useEffect(() => {
     const container = document.querySelector<HTMLElement>('.optimizer-dialogue .dialogue-messages');
     if (container) container.scrollTo({ top: container.scrollHeight, behavior: 'smooth' });
-  }, [messages.length, busy]);
+  }, [messages.length, chatBusy]);
   useEffect(() => {
     try {
       window.localStorage.setItem(DIALOGUE_STORAGE_KEY, JSON.stringify(messages.map(({ role, content }) => ({ role, content }))));
@@ -111,13 +122,15 @@ function OptimizerDialogue({ context, onExecuteProposal, executionState }: { con
 
   const sendMessage = async (value = draft) => {
     const attachedImage = image;
-    const content = value.trim() || (attachedImage ? `Croquis adjunto: ${attachedImage.name}` : '');
-    if (!content || busy) return;
+    const content = value.trim() || (attachedImage
+      ? `Revisa la imagen adjunta (${attachedImage.name}) y describe qué observas en los sistemas ópticos, sus rayos y sus direcciones.`
+      : '');
+    if (!content || chatBusy) return;
     setDraft('');
     setImage(null);
     setError('');
     setMessages(previous => [...previous, { role: 'user', content, image: attachedImage || undefined }]);
-    setBusy(true);
+    setChatBusy(true);
     try {
       const response = await fetch(`${API_URL}/api/optimizer/chat`, {
         method: 'POST',
@@ -125,29 +138,35 @@ function OptimizerDialogue({ context, onExecuteProposal, executionState }: { con
         body: JSON.stringify({
           message: content,
           history: messages.slice(-20).map(item => ({ role: item.role, content: item.content })),
-          context,
+           context: { ...context, execution_state: executionState },
           image_base64: attachedImage?.base64,
           image_name: attachedImage?.name,
         }),
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data.detail || 'El diálogo no está disponible.');
-      setMessages(previous => [...previous, { role: 'assistant', content: String(data.message || '') }]);
-      setProposal(data.proposal || null);
-      setWorkflowState(data.proposal ? 'proposal' : 'ready');
+       setMessages(previous => [...previous, { role: 'assistant', content: String(data.message || '') }]);
+       const autonomousRequested = Boolean((data.autonomous_requested || isAutonomousInstruction(content)) && data.proposal);
+       const blockedByExecution = autonomousRequested && executionState !== null;
+       setProposal(blockedByExecution || autonomousRequested ? null : data.proposal || null);
+       setWorkflowState(blockedByExecution || autonomousRequested ? 'ready' : data.proposal ? 'proposal' : 'ready');
+       if (blockedByExecution) {
+         setMessages(previous => [...previous, { role: 'assistant', content: 'He recibido la orden, pero SolidWorks ya está ejecutando otra prueba. No iniciaré una segunda modificación simultánea; puedes seguir preguntándome por el estado y la dejaré pendiente.' }]);
+       } else if (autonomousRequested) {
+         void execute(data.proposal as AssistantProposal, true);
+       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'No se pudo enviar el mensaje.');
     } finally {
-      setBusy(false);
+       setChatBusy(false);
     }
   };
 
-  const execute = async (approved: AssistantProposal) => {
+  const execute = async (approved: AssistantProposal, autonomous = false) => {
     setProposal(null);
     setWorkflowState('ready');
     setError('');
-    setMessages(previous => [...previous, { role: 'user', content: `Apruebo ejecutar: ${approved.title}.` }]);
-    setBusy(true);
+    setMessages(previous => [...previous, { role: 'user', content: autonomous ? `Ejecución autónoma: ${approved.title}.` : `Apruebo ejecutar: ${approved.title}.` }]);
     try {
       const completion = await onExecuteProposal(approved);
       setMessages(previous => [...previous, { role: 'assistant', content: completion }]);
@@ -155,7 +174,7 @@ function OptimizerDialogue({ context, onExecuteProposal, executionState }: { con
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'No se pudo ejecutar la propuesta CAD.');
       setWorkflowState('blocked');
-    } finally { setBusy(false); }
+    }
   };
   const approve = () => {
     if (!proposal) return;
@@ -164,11 +183,11 @@ function OptimizerDialogue({ context, onExecuteProposal, executionState }: { con
 
   return <section className="optimizer-dialogue">
     <div className="dialogue-head"><div><span className="eyebrow">COPILOTO ÓPTICO / DIÁLOGO</span><h3>Discutir la siguiente mejora</h3></div><small>aprobar ejecuta una candidata</small></div>
-    <div className={`dialogue-workflow ${executionState === 'autonomous' ? 'running' : workflowState}`}><div><strong>{executionState === 'autonomous' ? 'EJECUTANDO CANDIDATA CAD' : workflowState === 'proposal' ? 'PROPUESTA LISTA PARA EJECUTAR' : workflowState === 'completed' ? 'ÚLTIMA PRUEBA COMPLETADA' : workflowState === 'blocked' ? 'EJECUCIÓN BLOQUEADA' : 'EN ESPERA DE INSTRUCCIÓN'}</strong><span>{executionState === 'autonomous' ? 'SolidWorks está reconstruyendo, trazando rayos y optimizando la calzada.' : workflowState === 'proposal' ? 'La aplicación no calcula hasta ejecutar esta propuesta.' : workflowState === 'completed' ? 'Revisa ANTES/DESPUÉS o indica el siguiente cambio.' : workflowState === 'blocked' ? 'Revisa el aviso de error antes de proponer otra prueba.' : context.selected_surface_index == null ? 'Selecciona una cara en el visor o escribe una instrucción.' : `Cara ${context.selected_surface_index + 1} seleccionada. Esperando una acción.`}</span></div><button type="button" className="dialogue-run-proposal" disabled={busy || !proposal} title={proposal ? 'Ejecutar la propuesta actual' : 'Primero genera una propuesta con el copiloto'} onClick={() => void approve()}>{proposal ? 'EJECUTAR PRUEBA' : 'SIN PROPUESTA'} <span>→</span></button></div>
-    <div className="dialogue-messages" aria-live="polite">{messages.map((item, index) => <div className={`dialogue-message ${item.role}`} key={`${item.role}-${index}`}><span>{item.role === 'assistant' ? 'OPTIMIZADOR' : 'TÚ'}</span><p>{item.content}</p>{item.image && <img className="dialogue-image" src={item.image.dataUrl} alt={`Croquis adjunto: ${item.image.name}`} />}</div>)}{busy && <div className="dialogue-message assistant"><span>OPTIMIZADOR</span><p className="dialogue-thinking">Analizando estrategia…</p></div>}</div>
-    <div className="dialogue-quick-actions"><button type="button" disabled={busy} onClick={() => void sendMessage('¿Qué estás haciendo?')}>VER ESTADO</button><button type="button" disabled={busy} onClick={() => void sendMessage('Analiza la cara seleccionada')}>ANALIZAR CARA</button><button type="button" disabled={busy} onClick={() => void sendMessage('Prueba la cuña del croquis nuevo')}>PROBAR CUÑA</button><button type="button" disabled={busy} onClick={() => void sendMessage('Corregir salida hacia calzada')}>CORREGIR SALIDA</button></div>
-    {proposal && <div className="dialogue-proposal"><div className="dialogue-proposal-head"><span>PROPUESTA</span><b>{proposal.requires_new_file ? 'NUEVA CANDIDATA CAD' : 'SOLO DIAGNÓSTICO'}</b></div><h4>{proposal.title}</h4><p>{proposal.summary}</p><small>{proposal.rationale}</small><ol>{proposal.steps.map(step => <li key={step}>{step}</li>)}</ol><div className="dialogue-proposal-actions"><button type="button" disabled={busy} onClick={() => void approve()}>EJECUTAR PRUEBA</button><button type="button" disabled={busy} onClick={() => setProposal(null)}>DESCARTAR</button></div></div>}
-    <div className="dialogue-composer">{image && <div className="dialogue-image-preview"><img src={image.dataUrl} alt={`Croquis pendiente: ${image.name}`} /><span>{image.name}</span><button type="button" onClick={() => setImage(null)} aria-label="Quitar croquis">×</button></div>}<textarea value={draft} onPaste={event => { const file = Array.from(event.clipboardData.files).find(item => item.type.startsWith('image/')); if (file) { event.preventDefault(); attachImage(file); } }} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} placeholder="Ej.: prueba una cuña verde en la cara 7…" rows={2} /><input ref={imageInputRef} className="dialogue-image-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; if (file) attachImage(file); event.currentTarget.value = ''; }} /><button type="button" className="dialogue-attach" onClick={() => imageInputRef.current?.click()} disabled={busy}>ADJUNTAR CROQUIS</button><button type="button" disabled={busy || (!draft.trim() && !image)} onClick={() => void sendMessage()}>ENVIAR <span>→</span></button></div>
+     <div className={`dialogue-workflow ${executionState === 'autonomous' ? 'running' : workflowState}`}><div><strong>{executionState === 'autonomous' ? 'EJECUTANDO CANDIDATA CAD' : workflowState === 'proposal' ? 'PROPUESTA LISTA PARA EJECUTAR' : workflowState === 'completed' ? 'ÚLTIMA PRUEBA COMPLETADA' : workflowState === 'blocked' ? 'EJECUCIÓN BLOQUEADA' : 'EN ESPERA DE INSTRUCCIÓN'}</strong><span>{executionState === 'autonomous' ? 'SolidWorks está reconstruyendo y trazando el LDT; las corrientes están en espera.' : workflowState === 'proposal' ? 'La aplicación no calcula hasta ejecutar esta propuesta.' : workflowState === 'completed' ? 'Revisa ANTES/DESPUÉS o indica el siguiente cambio.' : workflowState === 'blocked' ? 'Revisa el aviso de error antes de proponer otra prueba.' : context.selected_surface_index == null ? 'Selecciona una cara en el visor o escribe una instrucción.' : `Cara ${context.selected_surface_index + 1} seleccionada. Esperando una acción.`}</span></div><button type="button" className="dialogue-run-proposal" disabled={chatBusy || executionState !== null || !proposal} title={proposal ? 'Ejecutar la propuesta actual' : 'Primero genera una propuesta con el copiloto'} onClick={() => void approve()}>{proposal ? 'EJECUTAR PRUEBA' : 'SIN PROPUESTA'} <span>→</span></button></div>
+     <div className="dialogue-messages" aria-live="polite">{messages.map((item, index) => <div className={`dialogue-message ${item.role}`} key={`${item.role}-${index}`}><span>{item.role === 'assistant' ? 'OPTIMIZADOR' : 'TÚ'}</span><p>{item.content}</p>{item.image && <img className="dialogue-image" src={item.image.dataUrl} alt={`Croquis adjunto: ${item.image.name}`} />}</div>)}{chatBusy && <div className="dialogue-message assistant"><span>OPTIMIZADOR</span><p className="dialogue-thinking">Analizando estrategia…</p></div>}</div>
+     <div className="dialogue-quick-actions"><button type="button" disabled={chatBusy} onClick={() => void sendMessage('¿Qué estás haciendo?')}>VER ESTADO</button><button type="button" disabled={chatBusy} onClick={() => void sendMessage('Analiza la cara seleccionada')}>ANALIZAR CARA</button><button type="button" disabled={chatBusy} onClick={() => void sendMessage('Prueba la cuña del croquis nuevo')}>PROBAR CUÑA</button><button type="button" disabled={chatBusy} onClick={() => void sendMessage('Corregir salida hacia calzada')}>CORREGIR SALIDA</button></div>
+     {proposal && <div className="dialogue-proposal"><div className="dialogue-proposal-head"><span>PROPUESTA</span><b>{proposal.requires_new_file ? 'NUEVA CANDIDATA CAD' : 'SOLO DIAGNÓSTICO'}</b></div><h4>{proposal.title}</h4><p>{proposal.summary}</p><small>{proposal.rationale}</small><ol>{proposal.steps.map(step => <li key={step}>{step}</li>)}</ol><div className="dialogue-proposal-actions"><button type="button" disabled={chatBusy || executionState !== null} onClick={() => void approve()}>EJECUTAR PRUEBA</button><button type="button" disabled={chatBusy} onClick={() => setProposal(null)}>DESCARTAR</button></div></div>}
+     <div className="dialogue-composer">{image && <div className="dialogue-image-preview"><img src={image.dataUrl} alt={`Croquis pendiente: ${image.name}`} /><span>{image.name}</span><button type="button" onClick={() => setImage(null)} aria-label="Quitar croquis">×</button></div>}<textarea value={draft} onPaste={event => { const file = Array.from(event.clipboardData.files).find(item => item.type.startsWith('image/')); if (file) { event.preventDefault(); attachImage(file); } }} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void sendMessage(); } }} placeholder="Ej.: prueba una cuña verde en la cara 7…" rows={2} /><input ref={imageInputRef} className="dialogue-image-input" type="file" accept="image/*" onChange={event => { const file = event.target.files?.[0]; if (file) attachImage(file); event.currentTarget.value = ''; }} /><button type="button" className="dialogue-attach" onClick={() => imageInputRef.current?.click()}>ADJUNTAR CROQUIS</button><button type="button" disabled={chatBusy || (!draft.trim() && !image)} onClick={() => void sendMessage()}>ENVIAR <span>→</span></button></div>
     {error && <p className="dialogue-error">{error}</p>}
   </section>;
 }
@@ -248,19 +267,24 @@ function App() {
 
   useEffect(() => {
     let active = true;
-    void fetch(`${API_URL}/api/default-resources`)
-      .then(async response => {
-        if (!response.ok) throw new Error('No se pudieron cargar los recursos predeterminados.');
-        return response.json() as Promise<DefaultResources>;
-      })
-      .then(resources => {
-        if (!active) return;
-        setStepFile(previous => previous || { name: resources.cad.name, base64: '' });
-        setRaysetFile(previous => previous || { name: resources.rayset.name, base64: '' });
-        setRtable(previous => previous || { name: resources.rtable.name, base64: resources.rtable.base64 });
-        setRtableName('C2');
-      })
-      .catch(() => undefined);
+    const loadResources = async () => {
+      for (let attempt = 0; attempt < 6 && active; attempt += 1) {
+        try {
+          const response = await fetch(`${API_URL}/api/default-resources`);
+          if (!response.ok) throw new Error('No se pudieron cargar los recursos predeterminados.');
+          const resources = await response.json() as DefaultResources;
+          if (!active) return;
+          setStepFile(previous => previous || { name: resources.cad.name, base64: '' });
+          setRaysetFile(previous => previous || { name: resources.rayset.name, base64: '' });
+          setRtable(previous => previous || { name: resources.rtable.name, base64: resources.rtable.base64 });
+          setRtableName('C2');
+          return;
+        } catch {
+          if (attempt < 5) await new Promise(resolve => window.setTimeout(resolve, 1000));
+        }
+      }
+    };
+    void loadResources();
     return () => { active = false; };
   }, []);
 
@@ -443,15 +467,6 @@ function App() {
         await fetch(`${API_URL}/api/cad/close`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ session_id: solidworksSessionId, parameter_values: {} }) }).catch(() => undefined);
         setSolidworksSessionId(null);
       }
-      let activeRtable = rtable;
-      if (!activeRtable) {
-        const defaults = await fetch(`${API_URL}/api/default-resources`);
-        const resources = await defaults.json().catch(() => ({}));
-        if (!defaults.ok || !resources.rtable?.base64) throw new Error('No se pudo cargar automáticamente la tabla C2 necesaria para optimizar la calzada.');
-        activeRtable = { name: resources.rtable.name, base64: resources.rtable.base64 };
-        setRtable(activeRtable);
-        setRtableName('C2');
-      }
       const exploration = await fetch(`${API_URL}/api/cad/optimize-road-target`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
           cad_base64: stepFile.base64,
@@ -460,7 +475,7 @@ function App() {
           height_m: height,
           carriageway_width_m: width * lanes,
            edge_offset_m: edgeOffset,
-           focus_recent_feature: proposal?.strategy === 'wedge_surface_trial' || proposal?.strategy === 'face_alignment',
+            focus_recent_feature: proposal?.strategy === 'wedge_surface_trial' || proposal?.strategy === 'face_alignment' || proposal?.strategy === 'autonomous_cad_exploration',
            show_in_solidworks: true,
            keep_solidworks_open: true,
          }),
@@ -481,32 +496,13 @@ function App() {
       setCadMeshPreview(null);
       setTraceView('current');
       setShowMeshOverlay(false);
-      const calculationBody = requestBody(autonomous.geometry_trace.ldt_base64, activeRtable, { luminaireMode: detectedLuminaireMode, ledsPerModule: detectedLedCount });
-      const optimization = await fetch(`${API_URL}/api/optimize`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(calculationBody),
-      });
-      const optimized = await optimization.json().catch(() => ({}));
-      if (!optimization.ok) {
-        const fallback = await fetch(`${API_URL}/api/road/calculate`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(calculationBody),
-        });
-        const evaluated = await fallback.json().catch(() => ({}));
-        if (!fallback.ok) throw new Error(`${optimized.detail || 'No se pudo optimizar la calzada.'} Tampoco se pudo evaluar la candidata: ${evaluated.detail || 'error desconocido'}.`);
-        setResult(evaluated);
-        setActivePanel('road');
-        return `${autonomous.objective.improved ? 'La candidata CAD se calculó correctamente.' : 'La lente base se calculó correctamente.'} La optimización de corrientes no terminó (${optimized.detail || 'error no especificado'}), pero muestro el LDT de luminaria y los mapas con las corrientes actuales.`;
-      }
-      setResult(optimized);
-      if (optimized.currents_ma) setCurrents(optimized.currents_ma);
-      if (typeof optimized.tilt_deg === 'number') setTilt(optimized.tilt_deg);
-      setActivePanel('road');
       const change = autonomous.objective.improved
         ? `Acepté una candidata con dirección hacia calzada de ${(autonomous.objective.baseline_score * 100).toFixed(1)} a ${(autonomous.objective.best_score * 100).toFixed(1)} puntos.`
         : 'Ninguna candidata superó la lente base; mantengo el diseño original.';
       const wedgeLimit = proposal?.strategy === 'wedge_surface_trial'
         ? ' La prueba ha priorizado las cotas del feature más reciente del SLDPRT, donde está definida la cuña añadida.'
         : '';
-      return `${change} SolidWorks permanece abierto con la mejor candidata aplicada. He recalculado el LDT y optimizado Uo/Ul y la escala de corrientes. Revisa ANTES/DESPUÉS en el visor.${wedgeLimit}`;
+      return `${change} SolidWorks permanece abierto con la mejor candidata aplicada. He recalculado únicamente el LDT y trazado los rayos; todavía no he ajustado corrientes ni calculado la calzada.${wedgeLimit}`;
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : 'No se pudo completar la optimización autogestionada.';
       setError(message);
@@ -571,7 +567,7 @@ function App() {
            {modelMode === 'ldt' ? <div className="file-grid"><FileDrop label="LDT del grupo" hint="LED(s) + lente / EULUMDAT" file={ldt} accept=".ldt" onFile={handleLdt} /><FileDrop label="LDT completo de referencia" hint="Luminaria completa / DIALux" file={referenceLdt} accept=".ldt" onFile={handleReferenceLdt} /></div> : <>
             <div className="file-grid"><FileDrop label="CAD nativo: lente + LED(s)" hint="SLDPRT, SLDASM o ZIP/RAR" file={stepFile} accept=".sldprt,.sldasm,.zip,.rar" onFile={handleStepFile} /><FileDrop label="Ray file TM-25" hint="fuente LED / .tm25ray" file={raysetFile} defaultName={DEFAULT_RAYSET_NAME} accept=".tm25ray,.tm25,.ray" onFile={setRaysetFile} /></div>
                 <div className="geometry-controls"><label className="field"><span>Rayos calculados por LED</span><select value={rayCount} onChange={event => setRayCount(Number(event.target.value))}><option value={10000}>10.000 · rápido</option><option value={100000}>100.000 · validación</option><option value={1000000}>1.000.000 · LDT final</option><option value={5000000}>5.000.000 · máxima precisión</option></select></label><NumberField label="Índice de refracción" value={lensIndex} onChange={setLensIndex} suffix="n" step={0.001} min={1.0} max={3.0} /><div><p className="geometry-note">Teselación nativa SolidWorks · Embree · sin STEP intermedio · visor hasta {MAX_PREVIEW_RAYS.toLocaleString('es-ES')}</p><button type="button" className="geometry-run" onClick={runGeometryTrace} disabled={busy}>{activeCalculation === 'trace' ? 'Abriendo CAD y trazando…' : 'Calcular LDT desde la lente'} <span>→</span></button></div></div>
-                <section className="autonomous-design"><div><span>OPTIMIZACIÓN AUTOGESTIONADA</span><h3>Forma óptica → LDT → calzada</h3><p>Analiza variaciones CAD, conserva la mejor distribución hacia la calzada y después maximiza Uo y Ul antes de escalar corrientes para alcanzar la luminancia requerida.</p></div><div className="autonomous-actions"><button type="button" onClick={() => void runAutonomousDesign().catch(() => undefined)} disabled={busy}>{activeCalculation === 'autonomous' ? 'Analizando candidatas…' : 'Optimizar lente y calzada'} <span>→</span></button><small>Exploración interactiva: hasta 8 candidatas de 500 rayos · validación: 20.000 rayos</small></div></section>
+                 <section className="autonomous-design"><div><span>OPTIMIZACIÓN AUTOGESTIONADA</span><h3>Forma óptica → LDT</h3><p>Analiza variaciones CAD, conserva la mejor distribución y valida el LDT de la lente. El ajuste de corrientes y la calzada se ejecutarán en una fase posterior.</p></div><div className="autonomous-actions"><button type="button" onClick={() => void runAutonomousDesign().catch(() => undefined)} disabled={busy}>{activeCalculation === 'autonomous' ? 'Analizando candidatas…' : 'Optimizar lente y LDT'} <span>→</span></button><small>Exploración interactiva: hasta 8 candidatas de 500 rayos · validación: 20.000 rayos</small></div></section>
                 {autonomousRun && <div className={`autonomous-history${autonomousRun.objective.improved ? '' : ' unchanged'}`}><div><strong>{autonomousRun.objective.improved ? 'CANDIDATA MEJORADA ACEPTADA' : 'LA LENTE BASE SIGUE SIENDO LA MEJOR'}</strong><small>Dirección hacia calzada: {(autonomousRun.objective.baseline_score * 100).toFixed(1)} → {(autonomousRun.objective.best_score * 100).toFixed(1)} · transmisión: {autonomousRun.objective.baseline_transmission_pct.toFixed(1)}% → {autonomousRun.objective.best_transmission_pct.toFixed(1)}%</small></div><span>{autonomousRun.history.filter(item => item.accepted).length} mejoras en {autonomousRun.history.length} pruebas</span></div>}
                 {autonomousRun && result?.luminaire_ldt_metadata && <div className="autonomous-luminaire-ldt"><strong>LDT DE LUMINARIA CALCULADO</strong><span>{result.luminaire_ldt_metadata.name} · {result.luminaire_ldt_metadata.flux_lm.toFixed(0)} lm · {result.luminaire_ldt_metadata.power_w.toFixed(1)} W · {result.currents_ma.length} corrientes optimizadas</span></div>}
                 {autonomousRun?.save_warning && <p className="autonomous-save-warning">La candidata se calculó y se muestra en el visor, pero SolidWorks no pudo guardar su copia nativa: {autonomousRun.save_warning}</p>}
@@ -896,21 +892,22 @@ function GeometryTraceView({ data, meshPreview, comparisonData, comparisonRayLim
      controls.enableZoom = true;
      controls.screenSpacePanning = true;
      controls.zoomToCursor = true;
-     controls.rotateSpeed = .65;
+      controls.rotateSpeed = .9;
      controls.zoomSpeed = 1.1;
-     // Keep the left button free for picking. OrbitControls cannot bind a
-     // modifier directly, so Ctrl/Cmd + middle is switched to pan during the
-     // pointer event and restored when the gesture ends.
-     controls.mouseButtons.LEFT = null;
-     controls.mouseButtons.MIDDLE = THREE.MOUSE.ROTATE;
-     controls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
-     const handleControlPointerDown = (event: globalThis.PointerEvent) => {
-       if (event.button === 1 && (event.ctrlKey || event.metaKey)) controls.mouseButtons.MIDDLE = THREE.MOUSE.PAN;
-     };
-     const restoreMiddleOrbit = () => { controls.mouseButtons.MIDDLE = THREE.MOUSE.ROTATE; };
-     renderer.domElement.addEventListener('pointerdown', handleControlPointerDown, true);
-     window.addEventListener('pointerup', restoreMiddleOrbit, true);
-     window.addEventListener('pointercancel', restoreMiddleOrbit, true);
+      // Keep the left button free for picking. OrbitControls handles
+      // Ctrl/Cmd + middle as pan when the middle button is configured to orbit.
+      controls.mouseButtons.LEFT = null;
+      controls.mouseButtons.MIDDLE = THREE.MOUSE.ROTATE;
+      controls.mouseButtons.RIGHT = THREE.MOUSE.PAN;
+       const preventMiddleAutoScroll = (event: globalThis.PointerEvent) => {
+         if (event.button === 1) event.preventDefault();
+       };
+       const preventMiddleAuxClick = (event: MouseEvent) => {
+         if (event.button === 1) event.preventDefault();
+       };
+       const nonPassivePointerOptions: AddEventListenerOptions = { capture: true, passive: false };
+       renderer.domElement.addEventListener('pointerdown', preventMiddleAutoScroll, nonPassivePointerOptions);
+       renderer.domElement.addEventListener('auxclick', preventMiddleAuxClick, nonPassivePointerOptions);
     scene.add(new THREE.HemisphereLight(0xdcebd7, 0x153b34, 2.2));
     const keyLight = new THREE.DirectionalLight(0xffffff, 2.6);
     keyLight.position.set(25, -35, 45);
@@ -983,11 +980,11 @@ function GeometryTraceView({ data, meshPreview, comparisonData, comparisonRayLim
        const bounds = new THREE.Box3().setFromObject(modelGroup);
        const center = bounds.getCenter(new THREE.Vector3());
        const size = bounds.getSize(new THREE.Vector3());
-       const radius = Math.max(size.x, size.y, size.z, 1);
-       modelCenter.copy(center);
-       modelRadius = radius;
-       camera.position.copy(center).add(new THREE.Vector3(radius * 2.4, -radius * 2.55, radius * 1.75));
-       camera.near = radius / 100;
+        const radius = Math.max(size.x, size.y, size.z, 1);
+        modelCenter.copy(center);
+        modelRadius = radius;
+        camera.position.copy(center).add(new THREE.Vector3(radius * 2.4, -radius * 2.55, radius * 1.75));
+        camera.near = radius / 100;
        camera.far = radius * 30;
        camera.updateProjectionMatrix();
        controls.target.copy(center);
@@ -1009,7 +1006,7 @@ function GeometryTraceView({ data, meshPreview, comparisonData, comparisonRayLim
      viewAxisRef.current = (axis: ViewAxis) => {
        const direction = axis === 'x' ? new THREE.Vector3(1, 0, 0) : axis === 'y' ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, 1);
        const targetUp = axis === 'z' ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, 1);
-         const targetPosition = modelCenter.clone().add(direction.multiplyScalar(modelRadius * 4.0));
+         const targetPosition = modelCenter.clone().add(direction.multiplyScalar(modelRadius * 3.0));
         const targetCamera = new THREE.Object3D();
         targetCamera.position.copy(targetPosition);
         targetCamera.up.copy(targetUp);
@@ -1154,11 +1151,11 @@ function GeometryTraceView({ data, meshPreview, comparisonData, comparisonRayLim
       if (recordIndex != null) setSelectedRayIndex(recordIndex);
     };
     renderer.domElement.addEventListener('click', handleClick);
-    const resize = () => {
-      const width = Math.max(container.clientWidth, 260);
-      const height = Math.max(container.clientHeight, 360);
-      camera.aspect = width / height;
-      camera.updateProjectionMatrix();
+      const resize = () => {
+       const width = Math.max(container.clientWidth, 260);
+       const height = Math.max(container.clientHeight, 360);
+       camera.aspect = width / height;
+       camera.updateProjectionMatrix();
       renderer.setSize(width, height, false);
       window.dispatchEvent(new Event('resize'));
     };
@@ -1192,10 +1189,9 @@ function GeometryTraceView({ data, meshPreview, comparisonData, comparisonRayLim
     return () => {
       cameraPoseRef.current = { position: camera.position.clone(), target: controls.target.clone(), up: camera.up.clone() };
       window.cancelAnimationFrame(animationFrame);
-       observer.disconnect();
-       renderer.domElement.removeEventListener('pointerdown', handleControlPointerDown, true);
-       window.removeEventListener('pointerup', restoreMiddleOrbit, true);
-       window.removeEventListener('pointercancel', restoreMiddleOrbit, true);
+        observer.disconnect();
+        renderer.domElement.removeEventListener('pointerdown', preventMiddleAutoScroll, nonPassivePointerOptions);
+        renderer.domElement.removeEventListener('auxclick', preventMiddleAuxClick, nonPassivePointerOptions);
        renderer.domElement.removeEventListener('click', handleClick);
       controls.dispose();
       disposeThreeObject(scene);

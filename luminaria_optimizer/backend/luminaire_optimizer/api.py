@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import base64
+import logging
 import os
 import re
 import shutil
 import subprocess
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -18,7 +20,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from .composition import compose_luminaire, scale_ldt_runtime
-from .assistant import advise
+from .assistant import AssistantServiceError, advise
 from .geometry import GeometryError, load_step_geometry
 from .hl2x import HL2X_MAX_INPUT_POWER_W, Hl2xModel, calculate_luminaire_operating_point
 from .ldt import ldt_diagnostic, ldt_text, parse_ldt_text
@@ -30,6 +32,7 @@ from .road import RoadScenario, calculate_reference_road, calculate_road, photom
 from .r_tables import load_rtable
 from .solidworks_session import SolidWorksError, SolidWorksSessionManager
 
+LOGGER = logging.getLogger("salvi.luminaria_optimizer")
 app = FastAPI(title="SALVI Luminaria Optimizer", version="0.1.0")
 cad_sessions = SolidWorksSessionManager()
 app.add_middleware(
@@ -302,6 +305,8 @@ def _trace_geometry_paths(step_path: Path, rayset_path: Path, request: GeometryT
 
 def _trace_geometry(geometry, rayset_path: Path, request: GeometryTraceRequest) -> dict[str, object]:
     """Trace any geometry implementing the lens-mesh contract."""
+    started = time.perf_counter()
+    LOGGER.info("LDT: comienza trazado de %s rayos por LED", request.sample_count)
     ray_set = parse_tm25(rayset_path)
     try:
         trace = trace_tm25(
@@ -314,6 +319,7 @@ def _trace_geometry(geometry, rayset_path: Path, request: GeometryTraceRequest) 
             c_mirror=request.c_mirror,
             c_offset_deg=request.c_offset_deg,
         )
+        LOGGER.info("LDT: ray tracing terminado en %.1f s", time.perf_counter() - started)
         photometry = rays_to_ldt(
             trace,
             c_step_deg=5.0,
@@ -322,6 +328,7 @@ def _trace_geometry(geometry, rayset_path: Path, request: GeometryTraceRequest) 
             c_mirror=request.c_mirror,
             enforce_c_symmetry=True,
         )
+        LOGGER.info("LDT: generado en %.1f s totales", time.perf_counter() - started)
         preview = trace.transmitted_rays
         if len(preview) > request.preview_ray_count:
             indices = np.linspace(0, len(preview) - 1, request.preview_ray_count, dtype=int)
@@ -462,7 +469,9 @@ def optimizer_chat(request: OptimizerChatRequest):
             "image_attached": bool(request.image_base64),
             "image_name": request.image_name or "croquis adjunto",
         }
-        return advise(request.message, context)
+        return advise(request.message, context, request.history, request.image_base64, request.image_name)
+    except AssistantServiceError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
     except (TypeError, ValueError, KeyError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -537,7 +546,8 @@ def _cad_open(request: CadOpenRequest, *, visible: bool = False):
 @app.post("/api/cad/open")
 def cad_open(request: CadOpenRequest):
     """Open a native SLDPRT/SLDASM package in a persistent SolidWorks session."""
-    return _cad_open(request)
+    LOGGER.info("CAD: abriendo %s", request.cad_filename)
+    return _cad_open(request, visible=True)
 
 
 @app.post("/api/cad/update")
@@ -717,6 +727,7 @@ def cad_close(request: CadUpdateRequest):
 
 @app.post("/api/cad/preview")
 def cad_preview(request: CadPreviewRequest):
+    LOGGER.info("CAD: inicia preview con %s rayos por LED", request.sample_count)
     try:
         if request.parameter_values:
             cad_sessions.update(request.session_id, request.parameter_values)
@@ -758,7 +769,13 @@ def close_cad_sessions() -> None:
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "service": "salvi-luminaria-optimizer"}
+    provider = os.environ.get("SALVI_AI_PROVIDER") or ("anthropic" if os.environ.get("ANTHROPIC_API_KEY") else "local")
+    return {
+        "status": "ok",
+        "service": "salvi-luminaria-optimizer",
+        "assistant_version": "vision-staged-v11",
+        "assistant_mode": provider,
+    }
 
 
 @app.get("/api/default-resources")

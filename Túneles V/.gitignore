@@ -1,0 +1,112 @@
+# Entorno Virtual
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Archivos de Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Archivos temporales
+*.tmp
+*.bak
+*.swp
+*.swo
+~*
+
+# Logs
+*.log
+logs/
+
+# Archivos de ambiente
+.env
+.env.local
+.env.*.local
+
+# Archivos de base de datos
+*.db
+*.sqlite
+*.sqlite3
+
+# Archivos cargados (uploads)
+uploads/*
+!uploads/.gitkeep
+
+# Archivos generados (downloads)
+# Mantener vacío pero dejar la carpeta
+downloads/*
+!downloads/.gitkeep
+
+# Archivos de sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor de texto
+.vimrc
+.editorconfig
+
+# Pytest
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Distribución
+dist/
+build/
+*.egg-info/
+
+# Virtual environment
+.venv
+venv
+ENV
+
+# IDEs
+*.sublime-workspace
+*.sublime-project
+
+# OS
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Archivos específicos del proyecto
+*.xlsx~
+*.xls~
+fotometrico.db
+fotometrico_backup_*.tar.gz

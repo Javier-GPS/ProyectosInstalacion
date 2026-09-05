@@ -1,0 +1,133 @@
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                                                                           ║
+║                  ¡IMPORTANTE! - LEE ESTO PRIMERO                         ║
+║                                                                           ║
+║          He arreglado el problema de descargas. Ahora deberías            ║
+║          ver tus archivos descargados correctamente.                      ║
+║                                                                           ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+
+QUÉ CAMBIÉ
+═════════════════════════════════════════════════════════════════════════════
+
+✓ Mejoré el manejo de descargas en el frontend (JavaScript)
+✓ Agregué debugging detallado en el backend (Python)
+✓ Creé un panel de diagnóstico: http://localhost:5000/debug
+✓ Mejoré los mensajes de error para saber qué pasó
+
+
+CÓMO PROBAR AHORA
+═════════════════════════════════════════════════════════════════════════════
+
+1. REINICIA LA APLICACIÓN:
+   - Cierra CORRER.bat (Ctrl+C en la terminal)
+   - Espera 2 segundos
+   - Abre CORRER.bat nuevamente
+   - Espera a ver: "Running on http://127.0.0.1:5000"
+
+2. ABRE EN TU NAVEGADOR:
+   http://localhost:5000
+
+3. LLENA SOLO LO BÁSICO para hacer prueba rápida:
+
+   Sección 1 (Proyecto/Cliente):
+   - Nombre: "Prueba"
+   - Cliente: "Prueba"
+   - Localización: "Prueba"
+   - Proyectista: (Javier Elizalde - ya está)
+   - Fecha: (Hoy - selecciona del calendario)
+   - Norma: EN 13201:2015 (ya está)
+
+   Sección 2 (Geometría):
+   - Identificador: "MODELO1"
+   - Disposición: "Lineal"
+   - Altura: 6
+   - Interdistancia: 15
+   - Saliente: 0.5
+
+   Sección 3 (Luminarias): (ya hay una por defecto)
+   - Modelo: "KRONOS"
+   - Óptica: "F151"
+   - Potencia: 35
+
+   Sección 4 (Energía):
+   - Horas: 3650
+   - Tarifa: 0.15
+   - CO2: 0.4
+   - Zona: E1
+   - ULOR: 5
+
+   Sección 5: (Deja todo marcado)
+
+4. HACE CLIC EN "CALCULAR & GENERAR"
+
+5. VE QUÉ PASA:
+   a) Si ves "✓ Excel generado correctamente":
+      → El archivo debería descargarse automáticamente en tu Descargas
+      → Revisa la carpeta Descargas en tu PC
+
+   b) Si aparece un error (mensaje rojo):
+      → Abre http://localhost:5000/debug
+      → Mira qué está mal
+      → Cópiame el error exacto
+
+
+PANEL DE DIAGNÓSTICO
+═════════════════════════════════════════════════════════════════════════════
+
+Abre esto en tu navegador si algo no funciona:
+
+   http://localhost:5000/debug
+
+Verás:
+✓ Si el servidor está corriendo
+✓ Si las carpetas existen
+✓ Si los archivos se están generando
+✓ Qué archivos hay en descargas
+✓ Si la plantilla y LDTs están disponibles
+
+
+CONSOLA DEL NAVEGADOR
+═════════════════════════════════════════════════════════════════════════════
+
+Para ver más detalles técnicos:
+
+1. Presiona F12 en el navegador
+2. Ve a la pestaña "Console"
+3. Intenta generar el archivo nuevamente
+4. Mira qué dice la consola (errores en rojo)
+5. Si hay error, cópialo
+
+
+SI SIGUE SIN FUNCIONAR
+═════════════════════════════════════════════════════════════════════════════
+
+1. Toma una captura del panel de debug:
+   http://localhost:5000/debug
+
+2. Toma una captura de la consola (F12):
+   Muestra los errores rojos si hay
+
+3. Envía:
+   📧 Email: elizalde@salvi.es
+   Asunto: "Error en descargas - Necesito ayuda"
+   Incluye las capturas
+
+4. O puedes ver el archivo DIAGNOSTICAR_DESCARGAS.txt
+   para más opciones de solución
+
+
+RESUMEN
+═════════════════════════════════════════════════════════════════════════════
+
+Las descargas deberían funcionar ahora. Si no:
+
+→ Panel de debug: http://localhost:5000/debug
+→ Consola del navegador: F12
+→ Email: elizalde@salvi.es
+
+
+¡Prueba ahora!
+
+═════════════════════════════════════════════════════════════════════════════

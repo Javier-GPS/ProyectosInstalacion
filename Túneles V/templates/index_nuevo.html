@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SalviLux - Cálculo Fotométrico</title>
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #333;
+            background: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            background: #1a1a1a;
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 { margin: 0; font-size: 28px; }
+        .form-wrapper { padding: 30px; }
+        .section {
+            background: white;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .section-header {
+            background: #f8f9fa;
+            padding: 15px 20px;
+            margin: -20px -20px 20px -20px;
+            border-bottom: 2px solid #333333;
+            border-radius: 8px 8px 0 0;
+        }
+        .section-header h2 {
+            margin: 0;
+            font-size: 18px;
+            color: #333333;
+        }
+        .section-content {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 20px;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .form-group.full {
+            grid-column: 1 / -1;
+        }
+        label {
+            font-weight: 500;
+            font-size: 13px;
+            color: #333;
+        }
+        input, select, textarea {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #333;
+            box-shadow: 0 0 0 3px rgba(51,51,51,0.1);
+        }
+        .btn {
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .btn-primary {
+            background: #0066cc;
+            color: white;
+            margin-top: 10px;
+        }
+        .btn-primary:hover { background: #0052a3; }
+        .info-box {
+            background: #f0f8ff;
+            padding: 15px;
+            border-radius: 6px;
+            border-left: 4px solid #0066cc;
+            margin-bottom: 20px;
+        }
+        .luminaria-card {
+            background: #e3f2fd;
+            border: 2px solid #0066cc;
+            padding: 15px;
+            border-radius: 6px;
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        .hidden { display: none !important; }
+        #resultados {
+            background: #f0f8f0;
+            padding: 20px;
+            border-radius: 8px;
+            margin-top: 20px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>💡 SalviLux - Cálculo Fotométrico</h1>
+            <p>Entrada de Datos de Proyecto</p>
+        </div>
+
+        <div class="form-wrapper">
+            <form id="mainForm">
+                <!-- SECCIÓN 1: PROYECTO -->
+                <div class="section">
+                    <div class="section-header">
+                        <h2>1. Proyecto / Cliente</h2>
+                    </div>
+                    <div class="section-content">
+                        <div class="form-group">
+                            <label>Nombre del proyecto</label>
+                            <input type="text" name="nombre_proyecto" placeholder="Ej: Iluminación Calle Principal">
+                        </div>
+                        <div class="form-group">
+                            <label>Cliente final</label>
+                            <input type="text" name="cliente_final" placeholder="Ej: CNEL">
+                        </div>
+                        <div class="form-group">
+                            <label>Localización</label>
+                            <input type="text" name="localizacion" placeholder="Ej: Quito, Ecuador">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SECCIÓN 2: GEOMETRÍA -->
+                <div class="section">
+                    <div class="section-header">
+                        <h2>2. Geometría</h2>
+                    </div>
+                    <div class="section-content">
+                        <div class="form-group">
+                            <label>Ancho vía (m)</label>
+                            <input type="number" name="ancho_via" placeholder="10" min="0" step="0.5">
+                        </div>
+                        <div class="form-group">
+                            <label>Largo vía (m)</label>
+                            <input type="number" name="largo_via" placeholder="100" min="0" step="0.5">
+                        </div>
+                        <div class="form-group">
+                            <label>Altura luminarias (m)</label>
+                            <input type="number" name="altura_luminarias" placeholder="8" min="0" step="0.5">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SECCIÓN 3: LUMINARIAS -->
+                <div class="section">
+                    <div class="section-header">
+                        <h2>3. Luminarias</h2>
+                    </div>
+
+                    <div class="info-box">
+                        <div class="form-group full">
+                            <label style="font-weight: 600;">Seleccionar luminaria de biblioteca</label>
+                            <select id="ldt-selector" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px;">
+                                <option value="">-- Cargando luminarias... --</option>
+                            </select>
+                            <p style="font-size: 12px; color: #666; margin-top: 8px;">
+                                Selecciona una luminaria para auto-llenar los datos fotométricos
+                            </p>
+                        </div>
+                    </div>
+
+                    <div id="luminarias-container"></div>
+                </div>
+
+                <!-- SECCIÓN 4: ENERGÍA -->
+                <div class="section">
+                    <div class="section-header">
+                        <h2>4. Energía y Sostenibilidad</h2>
+                    </div>
+                    <div class="section-content">
+                        <div class="form-group">
+                            <label>Horas funcionamiento anual [h/año]</label>
+                            <input type="number" name="horas_funcionamiento" placeholder="3650" min="0" step="100" value="3650">
+                        </div>
+                        <div class="form-group">
+                            <label>Tarifa eléctrica [€/kWh]</label>
+                            <input type="number" name="tarifa_electrica" placeholder="0.15" min="0" step="0.01" value="0.15">
+                        </div>
+                        <div class="form-group">
+                            <label>Factor CO₂ [kg/kWh]</label>
+                            <input type="number" name="factor_co2" placeholder="0.4" min="0" step="0.01" value="0.4">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- BOTONES DE ACCIÓN -->
+                <div style="display: flex; gap: 10px; justify-content: center; margin-top: 30px;">
+                    <button type="button" class="btn btn-primary" onclick="calcularFotometria()" style="background: #0066cc;">
+                        CALCULAR
+                    </button>
+                    <button type="button" class="btn btn-primary" onclick="generarInformes()" style="background: #cc0000;">
+                        GENERAR INFORMES
+                    </button>
+                </div>
+
+                <!-- RESULTADOS -->
+                <div id="resultados">
+                    <h3>Resultados del Cálculo Fotométrico</h3>
+                    <div id="resultados-content"></div>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        let luminariasDisponibles = [];
+        let datosFormulario = {};
+        let resultadosCalculo = {};
+
+        // CARGAR LUMINARIAS AL INICIAR
+        function cargarLuminarias() {
+            const selector = document.getElementById('ldt-selector');
+            if (!selector) {
+                console.warn('⚠️ Selector no encontrado');
+                return;
+            }
+
+            console.log('📚 Cargando luminarias...');
+
+            fetch('/api/luminarias')
+                .then(response => {
+                    console.log('Response:', response.status);
+                    return response.json();
+                })
+                .then(data => {
+                    console.log('Datos recibidos:', data);
+
+                    if (data.success && data.luminarias && data.luminarias.length > 0) {
+                        luminariasDisponibles = data.luminarias;
+                        selector.innerHTML = '<option value="">-- Seleccionar luminaria --</option>';
+
+                        data.luminarias.forEach(lum => {
+                            const option = document.createElement('option');
+                            option.value = lum.id;
+                            option.textContent = lum.label;
+                            selector.appendChild(option);
+                        });
+
+                        console.log('✓ ' + data.total + ' luminarias cargadas');
+                    } else {
+                        console.warn('⚠️ Error:', data.error);
+                        selector.innerHTML = '<option value="">-- Error cargando --</option>';
+                    }
+                })
+                .catch(error => {
+                    console.error('❌ Error:', error);
+                    selector.innerHTML = '<option value="">-- Error de conexión --</option>';
+                });
+        }
+
+        // SELECCIONAR LUMINARIA
+        function seleccionarLuminaria() {
+            const selector = document.getElementById('ldt-selector');
+            const id_lum = selector.value;
+
+            if (!id_lum) return;
+
+            const luminaria = luminariasDisponibles.find(l => l.id === id_lum);
+            if (!luminaria) return;
+
+            const container = document.getElementById('luminarias-container');
+
+            const card = document.createElement('div');
+            card.className = 'luminaria-card';
+            card.innerHTML = `
+                <div class="form-group">
+                    <label>Modelo</label>
+                    <input type="text" value="${luminaria.nombre || luminaria.label}" placeholder="Modelo">
+                </div>
+                <div class="form-group">
+                    <label>Óptica</label>
+                    <input type="text" value="${luminaria.fabricante || ''}" placeholder="Óptica">
+                </div>
+                <div class="form-group">
+                    <label>Potencia (W)</label>
+                    <input type="number" value="35" placeholder="Potencia">
+                </div>
+                <div class="form-group">
+                    <label>Lúmenes (lm)</label>
+                    <input type="number" value="${luminaria.flujo || 0}" placeholder="Lúmenes">
+                </div>
+                <div class="form-group">
+                    <label>Objetivo</label>
+                    <select>
+                        <option>Calzada principal</option>
+                        <option>Calzada secundaria</option>
+                        <option>Acera</option>
+                        <option>Plaza</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>&nbsp;</label>
+                    <button type="button" class="btn" style="background: #cc0000; color: white;" onclick="this.parentElement.parentElement.remove()">
+                        Quitar
+                    </button>
+                </div>
+            `;
+
+            container.appendChild(card);
+            console.log('✓ Tarjeta creada');
+        }
+
+        // CALCULAR FOTOMETRÍA
+        function calcularFotometria() {
+            console.log('Calculando...');
+            alert('Funcionalidad de cálculo en desarrollo');
+        }
+
+        // GENERAR INFORMES
+        function generarInformes() {
+            console.log('Generando informes...');
+            alert('Funcionalidad de generación en desarrollo');
+        }
+
+        // EVENTO DE CAMBIO EN SELECTOR
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('Página cargada');
+            cargarLuminarias();
+
+            const selector = document.getElementById('ldt-selector');
+            if (selector) {
+                selector.addEventListener('change', seleccionarLuminaria);
+            }
+        });
+    </script>
+</body>
+</html>

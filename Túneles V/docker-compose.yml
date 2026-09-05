@@ -1,0 +1,38 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      FLASK_ENV: production
+      TUNNEL_PROJECTS_DB: /app/data/tunnel_projects.sqlite3
+    volumes:
+      - tunnel_data:/app/data
+      - tunnel_uploads:/app/uploads
+      - tunnel_downloads:/app/downloads
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  legacy:
+    build:
+      context: ..
+      dockerfile: Túneles V/Dockerfile.legacy
+    environment:
+      FLASK_ENV: production
+    ports:
+      - "5001:5000"
+    restart: unless-stopped
+
+volumes:
+  tunnel_data:
+  tunnel_uploads:
+  tunnel_downloads:

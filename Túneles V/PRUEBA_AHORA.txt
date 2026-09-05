@@ -1,0 +1,148 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                    ✅ LDTs CARGADOS - PRUEBA AHORA                          ║
+║                                                                            ║
+║  27 luminarias disponibles de Salvi y LTI Optics                          ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+
+🚀 PASOS RÁPIDOS PARA PROBAR
+═════════════════════════════════════════════════════════════════════════════
+
+1. ABRE TEST_APP.bat
+   (Presiona doble clic en TEST_APP.bat)
+
+   Deberías ver:
+   ✓ "Cargando biblioteca de luminarias..."
+   ✓ "27 luminarias cargadas"
+   ✓ Flask listening on http://127.0.0.1:5000
+
+
+2. ABRE TU NAVEGADOR
+   http://localhost:5000
+
+   Espera 2-3 segundos para que cargue completamente
+
+
+3. VE A LA SECCIÓN 3 "LUMINARIAS"
+
+   ¿Ves el dropdown azul que dice:
+   "-- Cargando luminarias..."?
+
+   Espera 1-2 segundos más...
+
+   ¿Ahora dice:
+   "-- Seleccionar luminaria --"?
+
+   ¿Y hay una lista de opciones?
+
+
+4. SELECCIONA UNA LUMINARIA
+   Ejemplo: "SALVI (1) - 100010 lm"
+
+   ¿Se crea automáticamente una tarjeta azul con:
+   - Modelo: (rellenado con el nombre)
+   - Óptica: (rellenado con fabricante)
+   - Potencia: (número)
+   - Lúmenes: (rellenado desde el LDT)
+   - Objetivo: (dropdown)
+   - Quitar: (botón)?
+
+
+5. PRUEBA LOS CÁLCULOS
+   Rellena el formulario con datos de ejemplo:
+   - Sección 1: Datos del Proyecto (proyecto demo)
+   - Sección 2: Geometría (ancho 10m, largo 50m, altura 8m)
+   - Sección 3: Selecciona una luminaria del dropdown
+   - Sección 4: Energía (deja valores por defecto)
+   - Sección 5: Entregables (marca Excel, PDF)
+
+   Presiona el botón AZUL "CALCULAR"
+
+
+6. ¿VES LOS RESULTADOS?
+   Deberías ver:
+   ✓ Nueva sección "RESULTADOS DEL CÁLCULO FOTOMÉTRICO"
+   ✓ Valores calculados (Em, Uo, Ul, TI, SR, etc.)
+   ✓ Indicadores ✓ o ✗ si cumplen norma
+   ✓ Dos imágenes con isocurvas (iluminancia y luminancia)
+
+
+7. GENERA LOS INFORMES
+   Presiona el botón ROJO "GENERAR INFORMES"
+
+   Deberías obtener:
+   ✓ Descarga de Excel (con todos los datos + resultados)
+   ✓ Descarga de PDF (con tablas + gráficos de isocurvas)
+
+
+═════════════════════════════════════════════════════════════════════════════
+
+✅ LUMINARIAS DISPONIBLES
+═════════════════════════════════════════════════════════════════════════════
+
+SALVI (27 modelos):
+  • CLAP_M_C42_30K_F151_VDR_SPUW_150W - 200W
+  • CLAP_M_C42_30K_F2M2_VDR_SPUW_150W - 200W
+  • KRONOS_28C_40K_F151_VDR_SPUW_25W - 70W
+  • KRONOS_42C_40K_F151_VDR_SPUW_60W - 70W
+  • SIL_L48_32K_30K_F151_PMMA_S_60W - 120W
+  • SIL_M12_S24_30K_F151_PMMA_S_14W - 20W
+  ... (22 más)
+
+LTI OPTICS FRANCESCO ULTIMA (5 modelos):
+  • PHOTOPIA 2
+  • PHOTOPIA 3
+  • PHOTOPIA CORTE PARABOLA
+  • PHOTOPIA UN LED
+  • PHOTOPIA UN LED PMMA GENERICO
+
+
+═════════════════════════════════════════════════════════════════════════════
+
+❓ SI ALGO NO FUNCIONA
+═════════════════════════════════════════════════════════════════════════════
+
+❌ "No veo el dropdown"
+   → Presiona F12 (consola)
+   → ¿Hay errores rojos?
+   → Copia el error y comparte
+
+❌ "El dropdown no tiene opciones"
+   → Abre: http://localhost:5000/api/luminarias
+   → ¿Ves JSON con luminarias?
+   → Si "success": false, copia el error
+
+❌ "Selecciono pero no aparece tarjeta"
+   → F12 → Console
+   → ¿Dice "Error al seleccionar"?
+   → Comparte el error
+
+❌ "Calculo pero no veo resultados"
+   → Abre: http://localhost:5000/api/debug/ldts
+   → ¿ldts_cache_loaded: true?
+   → ¿success en ldts_cache: true?
+
+❌ "Excel/PDF no se descargan"
+   → Abre: http://localhost:5000
+   → F12 → Network
+   → Presiona GENERAR INFORMES
+   → ¿Ves petición POST a /api/submit-form?
+   → ¿Código 200?
+
+
+═════════════════════════════════════════════════════════════════════════════
+
+📞 INFORMACIÓN PARA REPORTAR
+═════════════════════════════════════════════════════════════════════════════
+
+Si algo falla, proporciona:
+
+1. Qué pasos seguiste
+2. Qué esperabas ver
+3. Qué viste en su lugar
+4. Error en consola (F12) si lo hay
+5. Respuesta de API (Network tab)
+
+¡PRUEBA AHORA! 🚀
+
+═════════════════════════════════════════════════════════════════════════════

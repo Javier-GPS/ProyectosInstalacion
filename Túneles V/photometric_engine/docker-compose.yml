@@ -1,0 +1,44 @@
+version: "3.9"
+
+services:
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: salvi
+      POSTGRES_PASSWORD: salvi
+      POSTGRES_DB: photometric_engine
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U salvi -d photometric_engine"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://salvi:salvi@db:5432/photometric_engine
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data        # LDT files persisted on host
+    command: >
+      uvicorn photometric_engine.api.main:app
+        --host 0.0.0.0
+        --port 8080
+        --workers 2
+        --log-level info
+
+volumes:
+  pg_data:

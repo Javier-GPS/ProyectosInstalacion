@@ -1,0 +1,109 @@
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                                                                           ║
+║              PRUEBA SIMPLE - SIN EL FORMULARIO COMPLEJO                  ║
+║                                                                           ║
+║    Los LDTs funcionan, pero el formulario no muestra mensaje verde.      ║
+║    He creado una versión SÚPER SIMPLE para diagnosticar.                 ║
+║                                                                           ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+
+🧪 NUEVA RUTA PARA PRUEBAS SIMPLES
+═════════════════════════════════════════════════════════════════════════════
+
+TEST_APP.bat sigue abierto, pero ahora abre una nueva URL:
+
+   http://localhost:5000/test-simple
+
+Esta página tiene:
+✓ 2 campos solamente (Nombre y Cliente)
+✓ 1 botón para generar
+✓ Panel de DEBUG que muestra toda la comunicación
+
+
+PASOS
+═════════════════════════════════════════════════════════════════════════════
+
+1. TEST_APP.bat sigue abierto (no cierres)
+
+2. Abre en tu navegador:
+   http://localhost:5000/test-simple
+
+3. Verás una página simple con:
+   - Nombre del Proyecto: TEST (ya está lleno)
+   - Cliente Final: TEST (ya está lleno)
+   - Botón: "📄 Generar Excel"
+
+4. HAZ CLIC EN "📄 Generar Excel"
+
+5. MIRA EL PANEL DE DEBUG en la parte de abajo
+   Verás exactamente qué está pasando:
+
+   📤 Enviando solicitud...
+   Nombre: TEST
+   Cliente: TEST
+   Conectando a /api/submit-form...
+   📨 Respuesta status: 200
+   📋 JSON: {...}
+
+6. MIRA ARRIBA
+   Deberías ver el mensaje:
+   ✓ Excel generado correctamente!
+   Archivo: estudio_20260516_153045.xlsx
+
+
+QUÉ VAS A VER EN EL DEBUG
+═════════════════════════════════════════════════════════════════════════════
+
+Si FUNCIONA:
+   📤 Enviando solicitud...
+   Nombre: TEST
+   Cliente: TEST
+   Conectando a /api/submit-form...
+   📨 Respuesta status: 200
+   📋 JSON: {
+     "success": true,
+     "message": "✓ Excel generado correctamente (5842 bytes)",
+     "download_url": "/api/download/estudio_...",
+     "filename": "estudio_..."
+   }
+
+Si FALLA:
+   Verás exactamente qué error da
+
+
+MIRA TAMBIÉN LA TERMINAL
+═════════════════════════════════════════════════════════════════════════════
+
+En la ventana de TEST_APP.bat, verás logs como:
+
+   DEBUG: Datos recibidos: ['modo', 'nombre_proyecto', 'cliente_final', ...]
+   DEBUG: nombre_proyecto = TEST
+   DEBUG: cliente_final = TEST
+   ✓ Validación pasada. Nombre: TEST, Cliente: TEST
+   DEBUG: Creando archivo en: /ruta/descargas/estudio_...
+   DEBUG: Guardando en: /ruta/descargas/estudio_...
+   ✓ Archivo creado exitosamente!
+   ✓ Nombre: estudio_...
+   ✓ Tamaño: XXXX bytes
+
+Si hay error, lo verás con ❌ en rojo.
+
+
+DESPUÉS DE ESTA PRUEBA
+═════════════════════════════════════════════════════════════════════════════
+
+1. Si FUNCIONA con test-simple:
+   - El problema está en el formulario index.html (demasiado complejo)
+   - Podemos simplificarlo basándonos en test_simple.html
+
+2. Si NO FUNCIONA con test-simple:
+   - El problema está en test_app.py o en cómo se envían los datos
+   - Necesitamos debuggear más
+
+
+═════════════════════════════════════════════════════════════════════════════
+
+¡AHORA! Ve a: http://localhost:5000/test-simple
+
+═════════════════════════════════════════════════════════════════════════════

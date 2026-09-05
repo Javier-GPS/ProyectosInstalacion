@@ -1,0 +1,23 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+COPY ["Diseño tuneles legacy/requirements.txt", "/app/requirements.txt"]
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+COPY ["Diseño tuneles legacy/app.py", "/app/app.py"]
+COPY ["Diseño tuneles legacy/config.py", "/app/config.py"]
+COPY ["Diseño tuneles legacy/modules", "/app/modules"]
+COPY ["Diseño tuneles legacy/templates", "/app/templates"]
+COPY ["Diseño tuneles legacy/static", "/app/static"]
+COPY ["Diseño tuneles legacy/assets", "/app/assets"]
+COPY ["Diseño tuneles legacy/photometric_engine", "/app/photometric_engine"]
+COPY ["Diseño tuneles legacy/APHEX S-ES.pdf", "/app/APHEX S-ES.pdf"]
+COPY ["Diseño tuneles legacy/APHEX M-ES.pdf", "/app/APHEX M-ES.pdf"]
+COPY ["Diseño tuneles legacy/APHEX L-ES.pdf", "/app/APHEX L-ES.pdf"]
+
+RUN mkdir -p /app/uploads /app/downloads
+EXPOSE 5000
+CMD ["python", "app.py"]

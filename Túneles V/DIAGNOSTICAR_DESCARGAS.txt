@@ -1,0 +1,140 @@
+╔═══════════════════════════════════════════════════════════════════════════╗
+║                                                                           ║
+║                    DIAGNOSTICAR PROBLEMA DE DESCARGAS                    ║
+║                           SalviLux v1.0                                  ║
+║                                                                           ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+
+
+PROBLEMA: Cuando hago clic en "CALCULAR & GENERAR", el archivo no se descarga
+═════════════════════════════════════════════════════════════════════════════
+
+
+PASO 1: VERIFICAR QUE LA APLICACIÓN ESTÁ CORRIENDO
+───────────────────────────────────────────────────
+
+1. En la terminal/PowerShell, deberías ver algo como:
+
+   "WARNING in app.run() ... use a production WSGI server instead."
+   "Running on http://127.0.0.1:5000"
+
+2. El navegador debería mostrar la aplicación en:
+   http://localhost:5000
+
+3. Si no ves la aplicación, ejecuta CORRER.bat nuevamente
+
+
+PASO 2: ABRIR EL PANEL DE DIAGNÓSTICO
+──────────────────────────────────────
+
+1. En tu navegador, abre:
+   http://localhost:5000/debug
+
+2. Verás información sobre:
+   ✓ Estado del servidor
+   ✓ Carpetas (descargas, subidas, assets)
+   ✓ Archivos generados recientemente
+   ✓ Archivos subidos
+
+3. Busca esto:
+   - "Download folder: ... ✓" (debe estar en verde)
+   - "Assets folder: ... ✓" (debe estar en verde)
+   - La plantilla y LDTs deben mostrar "✓ Encontrada"
+
+
+PASO 3: INTENTAR GENERAR ARCHIVO NUEVAMENTE
+─────────────────────────────────────────────
+
+1. Vuelve a http://localhost:5000
+
+2. Llena el formulario:
+   - Nombre del proyecto: "Test"
+   - Cliente final: "Test"
+   - Localización: "Test"
+   - Proyectista: Javier Elizalde (ya está)
+   - Fecha: Hoy (selecciona en el calendario)
+   - Norma aplicable: EN 13201:2015 (ya está)
+
+3. En Sección 2 (Geometría):
+   - Identificador: "MODELO 1"
+   - Disposición: "Lineal"
+   - Altura: 6
+   - Interdistancia: 15
+   - Saliente: 0.5
+
+4. En Sección 3 (Luminarias):
+   - Modelo: "KRONOS 14G"
+   - Óptica LDT: "F151"
+   - Potencia: 35
+   - Objetivo: Calzada
+
+5. En Sección 4 (Energía):
+   - Horas funcionamiento: 3650
+   - Tarifa: 0.15
+   - Factor CO2: 0.4
+   - Zona ambiental: E1
+   - ULOR máximo: 5
+
+6. Sección 5: Deja todo seleccionado
+
+7. Haz clic en "CALCULAR & GENERAR"
+
+
+PASO 4: VERIFICAR CONSOLA Y ERRORES
+────────────────────────────────────
+
+1. Abre la CONSOLA DEL NAVEGADOR:
+   - Presiona F12
+   - Ve a la pestaña "Console"
+
+2. Busca mensajes de error:
+   - Si ves errores ROJOS: copia el mensaje exacto
+
+3. Si viste "✓ Excel generado correctamente":
+   - Significa que el archivo SÍ se generó en el servidor
+   - Pero el navegador no lo descargó automáticamente
+
+4. Vuelve a http://localhost:5000/debug
+   - Busca "Archivos Descargados Recientes"
+   - Si ves un archivo con nombre como "estudio_20260516_153045.xlsx"
+   - ¡EL ARCHIVO SÍ SE GENERÓ!
+
+
+PASO 5: SI EL ARCHIVO SE GENERÓ PERO NO SE DESCARGÓ
+────────────────────────────────────────────────────
+
+Significa que es un problema de navegador. Intenta:
+
+1. OPCIÓN A - Descargar manualmente:
+   - En el panel de debug, vuelve a http://localhost:5000/debug
+   - Mira el nombre del archivo generado
+   - Ve a http://localhost:5000/api/download/[NOMBRE_DEL_ARCHIVO]
+   - Ejemplo: http://localhost:5000/api/download/estudio_20260516_153045.xlsx
+   - El navegador debería descargar el archivo
+
+2. OPCIÓN B - Cambiar navegador:
+   - Si usas Edge, prueba con Chrome o Firefox
+   - Si usas Chrome, prueba con Firefox
+
+3. OPCIÓN C - Revisar configuración de descargas:
+   - En tu navegador, mira si hay un popup pidiendo dónde guardar el archivo
+   - O revisa la carpeta Descargas de tu PC
+
+
+SI NADA FUNCIONA - INFORMACIÓN PARA SOPORTE
+──────────────────────────────────────────────
+
+Toma una captura de pantalla de:
+
+1. El panel de debug (http://localhost:5000/debug)
+2. La consola del navegador (F12 → Console) con los errores
+3. La ventana de la terminal/PowerShell con los logs
+
+Y envía:
+   📧 Email: elizalde@salvi.es
+   Asunto: "Problema de descargas en SalviLux"
+
+
+═════════════════════════════════════════════════════════════════════════════
+¡Ayúdame a resolver esto!
+═════════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,296 @@
+SALVI STUDIO · TUNNEL ENGINE
+Especificación funcional y técnicapara la entrada de geometría de bocas de túnel mediante imágenes
+Documento de implementación para Claude
+Versión 1.0 · Julio 2026
+1. Objeto del documento
+Definir con el máximo nivel de detalle la implementación del módulo de entrada de geometría de una boca de túnel. El usuario debe poder elegir entre introducir manualmente los valores conocidos o cargar una o dos imágenes de la misma boca para que el sistema proponga automáticamente los datos geométricos. Los datos calculados por imagen no son definitivos hasta que el usuario los valida.
+La filosofía debe ser coherente con la importación desde OpenStreetMap en Salvi Studio: el sistema facilita y propone; el técnico revisa, puede editar y finalmente valida.
+2. Alcance funcional
+El módulo debe cubrir, como mínimo, los siguientes datos:
+Número de carriles y anchura de cada carril.
+Anchura del arcén izquierdo y derecho.
+Anchura total de la calzada.
+Anchura interior de la boca en la línea de suelo.
+Anchura interior máxima, cuando sea distinta.
+Altura máxima interior del túnel.
+Altura libre útil.
+Tipo de sección: rectangular, circular, semicircular, bóveda rebajada, elíptica, herradura, mixta o libre.
+Altura de hastiales y puntos de arranque de la bóveda.
+Número de filas de luminarias.
+Altura de montaje de cada fila de luminarias.
+Distancia transversal de cada fila respecto al eje de la calzada.
+Distancia de cada fila al hastial más próximo.
+Presencia y dimensiones de aceras, pasos técnicos, bordillos o medianas.
+Desplazamiento entre el eje geométrico del túnel y el eje de la calzada.
+3. Modos de entrada
+3.1. Modo manual
+El usuario introduce directamente los valores conocidos procedentes de planos, levantamientos, mediciones de obra u otra documentación fiable. Los valores introducidos manualmente se consideran validados desde el momento en que el usuario confirma el formulario, salvo que se decida mantener una confirmación final global.
+3.2. Modo asistido por imágenes
+El usuario carga una o dos imágenes de la misma boca. El sistema analiza las imágenes conjuntamente y rellena automáticamente los campos del formulario. Todos los valores obtenidos por visión artificial quedan inicialmente en estado Propuesto.
+3.3. Modo mixto
+El usuario puede introducir uno o varios valores conocidos y cargar imágenes para completar el resto. Los valores manuales bloqueados deben utilizarse como restricciones de calibración y no deben ser sobrescritos por el motor de análisis.
+4. Estados de los datos
+Solo existirán dos estados visibles en la interfaz:
+<w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:type="auto" w:w="0"/><w:jc w:val="center"/><w:tblLook w:firstColumn="1" w:firstRow="1" w:lastColumn="0" w:lastRow="0" w:noHBand="0" w:noVBand="1" w:val="04A0"/></w:tblPr><w:tblGrid><w:gridCol w:w="3324"/><w:gridCol w:w="3324"/><w:gridCol w:w="3324"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:vAlign w:val="center"/><w:shd w:fill="D9E2F3"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b/></w:rPr><w:t>Estado
+<w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:vAlign w:val="center"/><w:shd w:fill="D9E2F3"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b/></w:rPr><w:t>Definición
+<w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:vAlign w:val="center"/><w:shd w:fill="D9E2F3"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b/></w:rPr><w:t>Comportamiento
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Propuesto
+<w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Valor generado por el sistema o valor editado pendiente de confirmación.
+<w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>No se considera definitivo. Puede editarse y debe validarse antes de utilizarse como geometría final.
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Validado
+<w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Valor aceptado expresamente por el usuario, con o sin edición.
+<w:tcPr><w:tcW w:type="dxa" w:w="3324"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Se utiliza en el cálculo fotométrico y queda registrado como dato definitivo de la geometría.
+Si un valor validado se modifica posteriormente, debe volver automáticamente a estado Propuesto. El usuario deberá validarlo de nuevo.
+No se distinguirá visualmente entre valores aceptados sin cambios y valores modificados. Esa diferencia puede conservarse únicamente en el historial interno de auditoría.
+5. Flujo de usuario
+El usuario crea o edita una boca de túnel.
+Elige “Introducir valores” o “Obtener desde imágenes”.
+Si elige imágenes, carga una o dos fotografías de la misma boca.
+El sistema verifica que las imágenes son compatibles y pertenecen a la misma boca.
+El usuario confirma la línea de suelo de la boca en cada imagen.
+El usuario confirma los límites del carril de referencia y su anchura real, por defecto 3,50 m.
+El sistema analiza conjuntamente las imágenes, rectifica la perspectiva y genera una propuesta de geometría.
+La propuesta se muestra simultáneamente sobre las imágenes, sobre una vista frontal rectificada y en una sección transversal vectorial.
+El usuario revisa, edita si es necesario y valida los valores individualmente, por grupos o mediante “Validar toda la geometría”.
+El sistema no permite cerrar la geometría ni ejecutar el cálculo fotométrico mientras queden parámetros críticos sin validar.
+6. Requisitos de las imágenes
+6.1. Una imagen
+Debe aceptarse una sola imagen. Es suficiente para una primera propuesta, especialmente de anchuras, número de carriles, arcenes, eje y tipo general de sección. Las alturas y la posición de luminarias pueden tener menor fiabilidad.
+6.2. Dos imágenes
+Dos imágenes son la opción recomendada. Deben analizarse como un único conjunto, no como dos mediciones independientes. Es preferible que estén tomadas a distinta distancia y con un pequeño desplazamiento lateral para generar paralaje.
+Las dos imágenes deben mostrar la misma boca y conservar suficientes puntos comunes.
+Una imagen puede ser más lejana y aportar carriles, eje y perspectiva; la otra puede ser más próxima y aportar contorno y luminarias.
+No es obligatorio que el usuario clasifique cuál es la imagen próxima o lejana.
+Evitar zoom digital y focales extremas.
+Conservar metadatos EXIF si están disponibles.
+La captura debe realizarse siempre desde una posición segura; la aplicación no debe inducir al usuario a situarse en la calzada.
+7. Definiciones geométricas obligatorias
+7.1. Línea de suelo de la boca
+La línea de suelo se define exclusivamente como la intersección entre el plano de la calzada y el plano transversal de entrada de la boca del túnel. No debe confundirse con una línea horizontal de la imagen ni con el borde inferior visible del revestimiento.
+7.2. Carril de referencia
+El usuario debe confirmar dos límites de un carril sobre el plano de la boca o proyectados hasta dicha línea. La anchura por defecto será 3,50 m, pero debe poder editarse.
+7.3. Ejes
+Se distinguirán el eje de la calzada y el eje geométrico de la sección. Ambos pueden coincidir o estar desplazados. La distancia transversal de las luminarias se medirá respecto al eje de la calzada, salvo configuración expresa en contrario.
+8. Pipeline de visión artificial y reconstrucción
+8.1. Preprocesado
+Lectura de EXIF, corrección de orientación, normalización de exposición, reducción de ruido y corrección de distorsión de lente si se conoce el modelo de cámara.
+8.2. Comprobación de compatibilidad
+Detección de correspondencias visuales entre imágenes. Si la coincidencia es insuficiente, mostrar aviso y permitir continuar con una sola imagen.
+8.3. Detección de estructura vial
+Detectar marcas de carril, bordes de calzada, biondas, bordillos, aceras y líneas convergentes. Calcular el punto de fuga y el eje longitudinal.
+8.4. Detección del plano de la boca
+Localizar el contorno de entrada, los dos puntos de intersección con la línea de suelo, hastiales y zona superior de la sección.
+8.5. Calibración métrica
+Usar el carril de referencia y los datos manuales bloqueados. Con dos imágenes, usar correspondencias y geometría epipolar para mejorar la estimación de alturas y profundidad.
+8.6. Rectificación frontal
+Generar una vista ortorrectificada aproximada del plano de la boca para facilitar la medición y la revisión por el usuario.
+8.7. Ajuste de sección
+Probar modelos rectangular, circular, semicircular, elíptico, arco rebajado, herradura, mixto y spline libre. Seleccionar el modelo de menor error compatible con restricciones físicas.
+8.8. Detección de luminarias
+Detectar luminarias, bandejas o soportes visibles. Agruparlas por filas y estimar altura y desplazamiento transversal.
+8.9. Consolidación
+Fusionar la información de ambas imágenes, resolver incoherencias y obtener una única geometría propuesta por boca.
+8.10. Cálculo de confianza
+Asignar confianza por parámetro. La confianza es información auxiliar y no constituye un tercer estado.
+9. Datos de salida propuestos
+<w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:type="auto" w:w="0"/><w:jc w:val="center"/><w:tblLook w:firstColumn="1" w:firstRow="1" w:lastColumn="0" w:lastRow="0" w:noHBand="0" w:noVBand="1" w:val="04A0"/></w:tblPr><w:tblGrid><w:gridCol w:w="2493"/><w:gridCol w:w="2493"/><w:gridCol w:w="2493"/><w:gridCol w:w="2493"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/><w:shd w:fill="D9E2F3"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b/></w:rPr><w:t>Grupo
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/><w:shd w:fill="D9E2F3"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b/></w:rPr><w:t>Campo
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/><w:shd w:fill="D9E2F3"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b/></w:rPr><w:t>Unidad/tipo
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/><w:shd w:fill="D9E2F3"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b/></w:rPr><w:t>Crítico
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Calzada
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Número de carriles
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>entero
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Sí
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Calzada
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Anchura de cada carril
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>m
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Sí
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Calzada
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Arcén izquierdo/derecho
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>m
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Sí
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Calzada
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Anchura total
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>m
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Sí
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Calzada
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Eje de calzada
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>coordenada
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Sí
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Sección
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Tipo de sección
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>enum
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Sí
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Sección
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Anchura interior en suelo
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>m
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Sí
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Sección
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Anchura máxima
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>m
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>No
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Sección
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Altura máxima
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>m
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Sí
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Sección
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Altura libre
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>m
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Sí
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Sección
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Altura de hastiales
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>m
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>No
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Sección
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Contorno vectorial
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>polilínea/spline
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Sí
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Luminarias
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Número de filas
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>entero
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Sí
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Luminarias
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Altura por fila
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>m
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Sí
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Luminarias
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Distancia al eje
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>m con signo
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Sí
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Luminarias
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Distancia al hastial
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>m
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>No
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Luminarias
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Posición de montaje
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>techo/hastial/bandeja
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>No
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Elementos
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Aceras/pasos técnicos
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>boolean + m
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>No
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Elementos
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Bordillos/mediana
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>boolean + m
+<w:tcPr><w:tcW w:type="dxa" w:w="2493"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>No
+10. Interfaz de revisión y validación
+La pantalla debe incluir cuatro áreas coordinadas:
+Visor de imágenes originales con superposición de líneas, puntos, cotas y luminarias detectadas.
+Vista frontal rectificada de la boca.
+Sección transversal vectorial editable.
+Formulario de datos geométricos con valor, unidad, estado y confianza.
+Al seleccionar un campo del formulario, deben resaltarse en las imágenes y en la sección los elementos usados para calcularlo.
+Acciones mínimas por campo: editar, validar y restaurar propuesta automática. Acciones globales: validar grupo, validar toda la geometría y recalcular.
+11. Confianza y avisos
+La confianza se mostrará de forma simple como Alta, Media o Baja, o mediante un porcentaje interno convertido a esas categorías. No debe confundirse con el estado Propuesto/Validado.
+Confianza baja en un campo crítico: impedir validación global sin confirmación expresa del usuario.
+Imagen muy oblicua: avisar de posible error en alturas.
+Luminarias con poca resolución o interior subexpuesto: avisar de detección incompleta.
+Incoherencia entre dos imágenes: mostrar las diferencias y pedir confirmación.
+Falta de segundo punto de vista: permitir continuar, pero bajar confianza de alturas y curvatura.
+12. Reglas de validación
+Para considerar la geometría completa como validada deben estar validados, como mínimo:
+Número y anchura de carriles.
+Anchuras de arcenes y anchura total.
+Tipo y contorno de la sección.
+Altura máxima y altura libre.
+Número de filas de luminarias.
+Altura y distancia al eje de cada fila.
+El botón “Continuar al cálculo” permanecerá deshabilitado mientras exista algún campo crítico en estado Propuesto.
+13. Modelo de datos sugerido
+Ejemplo conceptual. Claude puede adaptarlo a la arquitectura real de Salvi Studio:
+TunnelPortalGeometry- id- project_id- portal_name- input_mode: manual | image | mixed- status: proposed | validated- reference_lane_width_m- ground_line_per_image[]- images[]- road_geometry- section_geometry- luminaire_rows[]- auxiliary_elements[]- confidence_by_field{}- source_by_field{}- validation_metadata- original_proposal_snapshot- version- created_at / updated_at
+Cada campo relevante debe almacenar como mínimo: value, unit, status, confidence, source, last_modified_by, validated_by y validated_at.
+14. Servicios y API sugeridos
+<w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:type="auto" w:w="0"/><w:tblLook w:firstColumn="1" w:firstRow="1" w:lastColumn="0" w:lastRow="0" w:noHBand="0" w:noVBand="1" w:val="04A0"/></w:tblPr><w:tblGrid><w:gridCol w:w="4986"/><w:gridCol w:w="4986"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/><w:shd w:fill="D9E2F3"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b/></w:rPr><w:t>Endpoint
+<w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/><w:shd w:fill="D9E2F3"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b/></w:rPr><w:t>Función
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>POST /tunnel-portals/{id}/images
+<w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Subir una o dos imágenes y devolver identificadores.
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>POST /tunnel-portals/{id}/analyze
+<w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Ejecutar análisis conjunto de imágenes.
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>GET /tunnel-portals/{id}/proposal
+<w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Obtener propuesta geométrica y confianza por campo.
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>PATCH /tunnel-portals/{id}/geometry
+<w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Editar uno o varios campos; los modificados pasan a Propuesto.
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>POST /tunnel-portals/{id}/validate
+<w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Validar campos, grupos o geometría completa.
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>POST /tunnel-portals/{id}/recalculate
+<w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Reprocesar respetando valores manuales bloqueados.
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>GET /tunnel-portals/{id}/audit
+<w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Consultar histórico de propuesta, ediciones y validaciones.
+15. Recomendaciones técnicas
+Frontend: React + TypeScript, integrado en el design system de Salvi Studio.
+Backend: Python, preferiblemente FastAPI para los servicios de análisis y geometría.
+Procesamiento de imagen: OpenCV como base; modelos de segmentación/detección opcionales para boca, carriles y luminarias.
+Reconstrucción multivista: feature matching, homografía, matriz fundamental/esencial, triangulación y bundle adjustment cuando existan dos imágenes adecuadas.
+Persistencia: PostgreSQL; PostGIS si se relaciona la boca con el módulo GIS.
+Almacenamiento de imágenes: object storage compatible S3, conservando originales y derivados.
+Tareas pesadas: cola asíncrona con Celery/RQ o equivalente y actualización de progreso en frontend.
+Formato geométrico interno: coordenadas métricas 2D en el plano transversal, con posibilidad de exportar a DXF/SVG/JSON.
+16. Casos límite y tratamiento de errores
+Las dos imágenes no corresponden a la misma boca.
+No se ve uno de los hastiales.
+La boca está parcialmente oculta por vehículos, vegetación o señalización.
+El interior está completamente negro y no se detectan luminarias.
+El carril de referencia no llega claramente hasta el plano de entrada.
+La boca es curva en planta o la calzada entra con fuerte pendiente.
+La sección no coincide con ninguna familia paramétrica.
+La imagen procede de Street View y presenta stitching, compresión o correcciones de perspectiva.
+Existe más de una calzada o dos tubos visibles en la misma imagen.
+El usuario sustituye una imagen después de validar datos.
+En todos estos casos el sistema debe permitir continuar manualmente, degradar la confianza y evitar inventar valores no sustentados.
+17. Trazabilidad, seguridad y privacidad
+Guardar imagen original, imagen procesada, puntos confirmados y versión del algoritmo.
+Registrar quién valida cada geometría y cuándo.
+Conservar la propuesta automática original aunque el usuario la modifique.
+No utilizar imágenes de proyectos privados para entrenamiento externo sin autorización expresa.
+Permitir eliminar imágenes manteniendo, si procede, la geometría validada y el histórico mínimo.
+18. Plan de pruebas
+18.1. Pruebas unitarias
+Conversión de coordenadas imagen-métrica.
+Gestión de estados Propuesto/Validado.
+Invalidación automática al editar.
+Bloqueo de valores manuales.
+Cálculo de anchuras y offsets.
+18.2. Pruebas de integración
+Carga de una imagen.
+Carga de dos imágenes compatibles.
+Dos imágenes incompatibles.
+Edición y validación parcial.
+Validación completa y paso al motor fotométrico.
+Reprocesado conservando valores bloqueados.
+18.3. Dataset de validación
+Crear un conjunto de bocas con geometría real conocida procedente de planos o levantamientos. Debe incluir secciones rectangulares, circulares, elípticas, herradura, mixtas, imágenes frontales, oblicuas, diurnas, nocturnas, con diferentes resoluciones y con una o dos imágenes.
+19. Criterios de aceptación
+El usuario puede elegir claramente entre entrada manual, imágenes o modo mixto.
+El sistema acepta una o dos imágenes por boca.
+Con dos imágenes, el análisis es conjunto y produce una única geometría consolidada.
+La línea de suelo y el carril de referencia pueden confirmarse y corregirse.
+Todos los valores automáticos aparecen como Propuestos.
+Un valor editado y validado queda simplemente como Validado.
+Un valor validado que se modifica vuelve a Propuesto.
+El sistema muestra imágenes, vista rectificada, sección vectorial y formulario sincronizados.
+No se puede iniciar el cálculo con campos críticos sin validar.
+Existe trazabilidad de propuesta, edición y validación.
+La geometría validada puede consumirse directamente por el motor fotométrico del túnel.
+20. Fases recomendadas de implementación
+<w:tblPr><w:tblStyle w:val="TableGrid"/><w:tblW w:type="auto" w:w="0"/><w:tblLook w:firstColumn="1" w:firstRow="1" w:lastColumn="0" w:lastRow="0" w:noHBand="0" w:noVBand="1" w:val="04A0"/></w:tblPr><w:tblGrid><w:gridCol w:w="4986"/><w:gridCol w:w="4986"/></w:tblGrid><w:tr><w:tc><w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/><w:shd w:fill="D9E2F3"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b/></w:rPr><w:t>Fase
+<w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/><w:shd w:fill="D9E2F3"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b/></w:rPr><w:t>Contenido
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Fase 1
+<w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Interfaz manual, modelo de datos, estados Propuesto/Validado, carga de imágenes y marcado manual de línea de suelo/carril.
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Fase 2
+<w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Detección automática de carriles, punto de fuga, contorno de boca y propuesta básica con una imagen.
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Fase 3
+<w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Análisis conjunto de dos imágenes, correspondencias, mejora de alturas y rectificación frontal.
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Fase 4
+<w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Detección y agrupación de luminarias, estimación de alturas y offsets.
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Fase 5
+<w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Ajuste avanzado de secciones, spline libre, confianza por campo y reglas de incoherencia.
+<w:tc><w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Fase 6
+<w:tcPr><w:tcW w:type="dxa" w:w="4986"/><w:vAlign w:val="center"/></w:tcPr><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r/><w:r><w:rPr><w:b w:val="0"/></w:rPr><w:t>Dataset real, calibración de errores, endurecimiento, auditoría y conexión definitiva con el motor fotométrico.
+21. Instrucción directa para Claude
+Implementar este módulo dentro de la arquitectura existente de Salvi Studio sin crear una aplicación independiente. Antes de programar, revisar el modelo de datos, componentes de interfaz, servicios backend y convenciones del proyecto actual. Mantener el flujo simple para el usuario y no añadir estados adicionales a Propuesto y Validado.
+Priorizar primero una solución robusta y editable frente a una automatización opaca. Todo resultado automático debe ser visible, justificable gráficamente y corregible. Cuando el algoritmo no tenga evidencia suficiente, debe reducir la confianza o dejar el campo sin completar, nunca inventar una medida.
+Entregar la implementación por fases, acompañada de migraciones de base de datos, contratos API, componentes frontend, pruebas automatizadas y documentación técnica. No conectar definitivamente con el cálculo fotométrico hasta que la validación de campos críticos esté implementada.
+22. Resumen funcional definitivo
+Entrada manual o carga de una/dos imágenes → propuesta automática → revisión y posible edición → validación → geometría definitiva → cálculo fotométrico.

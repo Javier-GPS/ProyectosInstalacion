@@ -1,0 +1,222 @@
+{
+  "success": true,
+  "luminarias": [
+    {
+      "id": "LDT_FRANCESCO ULTIMA PHOTOPIA 2",
+      "label": "LTI Optics - www.ltioptics.com/ies EULUMDAT/2 (1) - 20260 lm",
+      "flujo": 20260,
+      "nombre": "LTI Optics - www.ltioptics.com/ies EULUMDAT/2",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "LDT_FRANCESCO ULTIMA PHOTOPIA 3",
+      "label": "LTI Optics - www.ltioptics.com/ies EULUMDAT/2 (1) - 20260 lm",
+      "flujo": 20260,
+      "nombre": "LTI Optics - www.ltioptics.com/ies EULUMDAT/2",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "LDT_FRANCESCO ULTIMA PHOTOPIA_CORTE PARABOLA",
+      "label": "LTI Optics - www.ltioptics.com/ies EULUMDAT/2 (1) - 20260 lm",
+      "flujo": 20260,
+      "nombre": "LTI Optics - www.ltioptics.com/ies EULUMDAT/2",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "LDT_FRANCESCO ULTIMA PHOTOPIA_UN LED",
+      "label": "LTI Optics - www.ltioptics.com/ies EULUMDAT/2 (1) - 20260 lm",
+      "flujo": 20260,
+      "nombre": "LTI Optics - www.ltioptics.com/ies EULUMDAT/2",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "LDT_FRANCESCO ULTIMA PHOTOPIA_UN LED_PMMA GENERICO",
+      "label": "LTI Optics - www.ltioptics.com/ies EULUMDAT/2 (1) - 20260 lm",
+      "flujo": 20260,
+      "nombre": "LTI Optics - www.ltioptics.com/ies EULUMDAT/2",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "SIL_L48_K32_30K_F151_PMMA_S_60W",
+      "label": "SALVI (1) - 100010 lm",
+      "flujo": 100010,
+      "nombre": "SALVI",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "KRONOS_42C_40K_F151_VDR_SPUW_60W",
+      "label": "SALVI (1) - 101240 lm",
+      "flujo": 101240,
+      "nombre": "SALVI",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "KRONOS_42C_40K_F151_VDR_SPUW_70W",
+      "label": "SALVI (1) - 116440 lm",
+      "flujo": 116440,
+      "nombre": "SALVI",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "SIL_L48_K32_30K_F2MD_PMMA_S_80W",
+      "label": "SALVI (1) - 122280 lm",
+      "flujo": 122280,
+      "nombre": "SALVI",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "SIL_L48_K32_30K_F151_PMMA_S_80W",
+      "label": "SALVI (1) - 130090 lm",
+      "flujo": 130090,
+      "nombre": "SALVI",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "SIL_L48_32K_30K_F2MD_PMMA_S_90W",
+      "label": "SALVI (1) - 136030 lm",
+      "flujo": 136030,
+      "nombre": "SALVI",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "SIL_L48_32K_30K_F151_PMMA_S_90W",
+      "label": "SALVI (1) - 144710 lm",
+      "flujo": 144710,
+      "nombre": "SALVI",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "SIL_L48_K32_30K_F2MD_PMMA_S_100W",
+      "label": "SALVI (1) - 149160 lm",
+      "flujo": 149160,
+      "nombre": "SALVI",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "SIL_L48_K32_30K_F151_PMMA_S_100W",
+      "label": "SALVI (1) - 158680 lm",
+      "flujo": 158680,
+      "nombre": "SALVI",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "SIL_L48_K32_30K_F2MD_PMMA_S_120W",
+      "label": "SALVI (1) - 174620 lm",
+      "flujo": 174620,
+      "nombre": "SALVI",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "SIL_L48_K32_30K_F151_PMMA_S_120W",
+      "label": "SALVI (1) - 185770 lm",
+      "flujo": 185770,
+      "nombre": "SALVI",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "CLAP_M_C42_30K_F2MD_VDR_SPUW_150W",
+      "label": "SALVI (1) - 208070 lm",
+      "flujo": 208070,
+      "nombre": "SALVI",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "CLAP_M_C42_30K_F2M2_VDR_SPUW_150W",
+      "label": "SALVI (1) - 221350 lm",
+      "flujo": 221350,
+      "nombre": "SALVI",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "CLAP_M_C42_30K_F2MD_VDR_SPUW_200W",
+      "label": "SALVI (1) - 258950 lm",
+      "flujo": 258950,
+      "nombre": "SALVI",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "CLAP_M_C42_30K_F151_VDR_SPUW_200W",
+      "label": "SALVI (1) - 275480 lm",
+      "flujo": 275480,
+      "nombre": "SALVI",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "CLAP_M_C42_30K_F2M2_VDR_SPUW_200W",
+      "label": "SALVI (1) - 275480 lm",
+      "flujo": 275480,
+      "nombre": "SALVI",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "KRONOS_28D_40K_F151_VDR_SPUW_25W",
+      "label": "SALVI (1) - 50500 lm",
+      "flujo": 50500,
+      "nombre": "SALVI",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "SIL_M12_S24_30K_F151_PMMA_S_14W",
+      "label": "SALVI (1) - 50500 lm",
+      "flujo": 50500,
+      "nombre": "SALVI",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "SIL_M12_S24_30K_F151_PMMA_S_20W",
+      "label": "SALVI (1) - 50500 lm",
+      "flujo": 50500,
+      "nombre": "SALVI",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "KRONOS_28C_40K_F151_VDR_SPUW_30W",
+      "label": "SALVI (1) - 52100 lm",
+      "flujo": 52100,
+      "nombre": "SALVI",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "KRONOS_28C_40K_F151_VDR_SPUW_45W",
+      "label": "SALVI (1) - 75870 lm",
+      "flujo": 75870,
+      "nombre": "SALVI",
+      "fabricante": "1",
+      "tipo": "0"
+    },
+    {
+      "id": "SIL_L48_K32_30K_F2MD_PMMA_S_60W",
+      "label": "SALVI (1) - 94010 lm",
+      "flujo": 94010,
+      "nombre": "SALVI",
+      "fabricante": "1",
+      "tipo": "0"
+    }
+  ],
+  "total": 27
+}

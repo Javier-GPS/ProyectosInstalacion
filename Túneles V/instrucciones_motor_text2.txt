@@ -1,0 +1,221 @@
+LUXSTUDIO · MOTOR DE TÚNELES
+Especificación técnica para el nuevo motor de eficiencia Aphex
+LUXEON 5050 HE Plus · cálculo por flujo, corriente, tensión y temperatura de soldadura (Ts)
+Documento de implementación para ClaudeVersión consolidada con los criterios térmicos definitivos: cálculo con Ts, límite Ts ≤ 90 °C, sin penalización adicional por Tj y driver alojado en caja independiente.
+Salvi Lighting · Salvi Studio / LuxStudio
+Julio de 2026
+0. Cambios definitivos respecto a la versión anterior
+La resistencia térmica cuerpo–ambiente de Aphex M se fija en 0,077 °C/W.
+El motor trabajará con la temperatura de soldadura o solder point, Ts, como temperatura térmica de control de la luminaria.
+No se aplicará una penalización adicional de flujo por temperatura de unión Tj. El efecto térmico se controlará mediante Ts y el límite del sistema óptico.
+No se permitirá ningún punto de funcionamiento con Ts superior a 90 °C, porque las lentes de PMMA constituyen el límite térmico del conjunto aunque el LED soporte temperaturas superiores.
+Las pérdidas eléctricas del driver no se sumarán a la carga térmica de la luminaria, porque el driver está alojado en una caja independiente.
+La potencia térmica usada para calcular Ts será exclusivamente la potencia DC disipada por los LEDs dentro del cuerpo óptico, según el modelo conservador definido en este documento.
+1. Objetivo general
+Modificar el motor fotométrico y de selección de luminarias de LuxStudio – módulo de túneles para sustituir las tablas cerradas de potencia y flujo de las luminarias Aphex por un modelo paramétrico basado en el LED, la corriente, la tensión, la temperatura de soldadura y las pérdidas ópticas y eléctricas.
+Calcular la corriente por LED necesaria para alcanzar el flujo solicitado.
+Calcular la tensión directa y la potencia DC del conjunto LED.
+Calcular Ts a partir de la potencia LED y la resistencia térmica del cuerpo.
+Calcular el flujo útil de salida y la eficacia de la luminaria.
+Calcular la potencia absorbida de red teniendo en cuenta el rendimiento del driver.
+Seleccionar automáticamente la variante Aphex más pequeña que cumpla los requisitos fotométricos, eléctricos y térmicos.
+2. LED de referencia y alcance
+La primera implementación utilizará exclusivamente el LED Lumileds LUXEON 5050 HE Plus – 6 V
+No mezclar las curvas de LUXEON 5050 Round LES, Square LES o HE con la variante HE Plus, salvo cuando el datasheet declare explícitamente una curva común aplicable al HE Plus.
+CRI disponibles en la interfaz: 70 y 80.
+CCT disponibles: 2200 K, 2700 K, 3000 K, 4000 K y 5000 K.
+La arquitectura de datos debe quedar preparada para añadir CRI 90, otros CCT, otros LEDs y nuevas familias de luminaria.
+3. Separación entre fotometría, flujo y potencia
+3.1 Distribución espacial
+Los archivos LDT F151, F2MD y F2M2 definirán exclusivamente la distribución espacial de la luz. El flujo total del LDT no fijará la potencia ni el flujo operativo de la luminaria.
+Normalizar internamente cada fotometría a 1.000 lm o a flujo unitario.
+Conservar la matriz de intensidades normalizada.
+Escalar la matriz al flujo útil calculado por el nuevo motor.
+Ireal(C,γ) = Inormalizada(C,γ) × Φlum / 1000
+3.2 Flujo y potencia
+El flujo y la potencia se calcularán a partir de CCT, CRI, corriente, tensión directa, número de LEDs, Ts, pérdidas ópticas, rendimiento del driver y límites de cada variante Aphex.
+4. Datos nominales del LUXEON 5050 HE Plus
+Parámetro | Valor
+Tensión nominal | 6 V
+Corriente nominal de referencia | 640 mA
+Tensión directa típica a 25 °C | 5,85 V
+Coeficiente térmico de Vf | −3 mV/°C
+Resistencia térmica unión–solder pad | 1,10 °C/W
+Corriente máxima DC absoluta | 1.200 mA
+Temperatura máxima de unión del LED | 125 °C
+Temperatura térmica de control del sistema | Ts
+Límite de diseño de Ts | 90 °C máximo
+La temperatura máxima de unión del LED no será el criterio operativo principal. El límite efectivo del producto será Ts ≤ 90 °C por protección de las lentes de PMMA.
+5. Rendimiento nominal por CCT y CRI
+5.1 CRI 70
+CCT | Flujo típico por LED | Eficacia típica
+2200 K | 626 lm | 167 lm/W
+2700 K | 687 lm | 183 lm/W
+3000 K | 708 lm | 189 lm/W
+4000 K | 746 lm | 199 lm/W
+5000 K | 737 lm | 197 lm/W
+5.2 CRI 80
+CCT | Flujo típico por LED | Eficacia típica
+2200 K | 541 lm | 144 lm/W
+2700 K | 624 lm | 167 lm/W
+3000 K | 645 lm | 172 lm/W
+4000 K | 684 lm | 183 lm/W
+5000 K | 690 lm | 184 lm/W
+6. Modelización de CCT y CRI
+Crear una curva cuadrática de mínimos cuadrados independiente para CRI 70 y CRI 80.
+Cuando el CCT coincida con uno de los cinco valores soportados, utilizar siempre el dato tabulado exacto.
+Usar la curva únicamente para interpolaciones futuras entre valores de CCT.
+No extrapolar fuera de 2200–5000 K.
+No interpolar entre CRI 70 y CRI 80 en la interfaz estándar; usar la tabla correspondiente al CRI seleccionado.
+Φref(CCT, CRI) = aCRI·CCT² + bCRI·CCT + cCRI
+7. Curva de flujo frente a corriente
+Digitalizar la curva normalizada de flujo frente a corriente aplicable al LUXEON 5050 HE Plus de 6 V y almacenarla como puntos versionados. Ajustar inicialmente una cuadrática, conservando la posibilidad de sustituirla por PCHIP si el error supera los límites definidos.
+FI(I) = aI·I² + bI·I + cI
+FI(0,640 A) = 1
+ΦLED(I,CCT,CRI) = Φref(CCT,CRI) × FI(I)
+No permitir corrientes negativas.
+No permitir corrientes superiores a 1.200 mA.
+Definir un límite recomendado configurable inferior al máximo absoluto.
+Las soluciones por encima del límite recomendado no se seleccionarán automáticamente.
+8. Curva tensión–corriente
+Digitalizar la curva específica de tensión directa del HE Plus y convertirla a una función Vf = f(I).
+Vf,25(I) = aV·I² + bV·I + cV
+Vf(I,Ts) = Vf,25(I) − 0,003·(Ts − 25)
+Para la corrección de tensión se empleará Ts como aproximación térmica operativa. No se calculará una penalización adicional de flujo por Tj.
+PLED,unit = I × Vf
+PLED,total = NLED × I × Vf
+9. Modelo térmico basado en Ts
+9.1 Resistencias térmicas cuerpo–ambiente
+Familia | Rθ cuerpo–ambiente
+Aphex S | 0,1088 °C/W (mostrar 0,11)
+Aphex M | 0,077 °C/W
+Aphex L | 0,0595 °C/W (mostrar 0,060)
+9.2 Ecuación térmica
+La temperatura de soldadura se calculará a partir de la temperatura ambiente y de la potencia DC total de los LEDs alojados en el cuerpo óptico:
+Ts = Ta + Rθ,lum × PLED,total
+No incluir las pérdidas del driver en la carga térmica de la luminaria.
+El driver está instalado en una caja independiente y sus pérdidas se disipan fuera del cuerpo óptico.
+No utilizar la potencia absorbida de red para calcular Ts.
+El límite duro de validez será Ts ≤ 90 °C.
+Cuando Ts calculada sea superior a 90 °C, la solución se marcará como INVALID y se descartará automáticamente.
+9.3 No aplicación de penalización por Tj
+El motor no aplicará la curva de reducción de flujo frente a temperatura de unión. Se desprecia esa pérdida de rendimiento en esta versión. El flujo del LED dependerá de CCT, CRI y corriente; la temperatura se usará como restricción de diseño y para la corrección de Vf.
+ΦLED = Φref(CCT,CRI) × FI(I)
+10. Pérdidas ópticas y eléctricas
+Componente | Rendimiento | Tratamiento térmico
+Lente | 95 % | Pérdida óptica; no modifica Ts
+Vidrio ultrawhite antirreflex | 97 % | Pérdida óptica; no modifica Ts
+Driver | 90 % | Afecta a la potencia de red; no se añade al calor de la luminaria
+ηóptica = 0,95 × 0,97 = 0,9215
+Φlum = NLED × ΦLED × 0,9215
+Pinput = PLED,total / 0,90
+ηlum = Φlum / Pinput
+11. Nueva gama de modelos Aphex
+Modelo | LEDs | Driver | Pot. máx. luminaria | Ta ref. | Ts ref.
+Aphex S 75W | 25 | OSRAM 75 W | 75 W | 35 °C | 43,16 °C
+Aphex S 100W | 25 | OSRAM 100 W | 100 W | 35 °C | 45,88 °C
+Aphex S 165W | 50 | OSRAM 165 W | 165 W | 35 °C | 52,95 °C
+Aphex S 240W | 50 | Inventronics EUR 240 W | 240 W | 35 °C | 61,11 °C
+Aphex S 300W | 50 | Inventronics EUR 320 W | 320 W | 35 °C | 69,82 °C
+Aphex M 200W × 2 | 100 | 2 × Inventronics EUR 200 W | 400 W | 35 °C | 65,77 °C
+Aphex M 240W × 2 | 100 | 2 × Inventronics EUR 240 W | 480 W | 35 °C | 71,96 °C calc.
+Aphex L 320W × 2 | 150 | 2 × Inventronics EUR 320 W | 640 W | 35 °C | 73,08 °C
+Aphex L 480W × 2 | 150 | 2 × Inventronics EUR 480 W | 800 W | 35 °C | 82,59 °C
+La denominación completa del modelo será obligatoria en la interfaz, los informes y los resultados. No volver a mostrar únicamente Aphex S, M o L.
+12. Observaciones específicas de catálogo
+Aphex S 300W conserva ese nombre comercial, aunque el driver y el límite operativo indicado sean 320 W.
+Aphex M 240W × 2 se configura inicialmente con 480 W y Ts de referencia calculada a partir de 0,077 °C/W.
+Aphex L 480W × 2 dispone de 960 W nominales de driver, pero la luminaria se limita a 800 W.
+Guardar por separado el nombre comercial, la potencia nominal total de drivers y la potencia máxima autorizada de la luminaria.
+13. Estructura de datos recomendada
+LuminaireVariant
+interface LuminaireVariant {  id: string;  commercialName: string;  family: "APHEX_S" | "APHEX_M" | "APHEX_L";  ledType: "LUXEON_5050_HE_PLUS_6V";  ledCount: number;  driverManufacturer: string;  driverModel: string;  driverCount: number;  driverRatedPowerEachW: number;  driverRatedPowerTotalW: number;  driverEfficiency: number;  luminaireMaxInputPowerW: number;  thermalResistanceBodyAmbientCPerW: number;  maxSolderPointTemperatureC: 90;  supportedOptics: string[];  supportedCctK: number[];  supportedCri: number[];  active: boolean;  version: number;}
+14. Definición de potencias y límites
+PLED,total: potencia DC total suministrada a los LEDs.
+Pinput: potencia absorbida de red.
+Pdriver,rated: potencia nominal total del conjunto de drivers.
+Plum,max: potencia máxima autorizada para la variante de luminaria.
+Pinput = PLED,total / ηdriver
+Pinput ≤ min(Pdriver,rated, Plum,max)
+La potencia usada en el cálculo térmico será PLED,total. Las pérdidas del driver no incrementarán Ts.
+15. Procedimiento de cálculo para un modelo
+Recibir flujo útil requerido, modelo Aphex, óptica, CCT, CRI y temperatura ambiente.
+Proponer una corriente candidata I.
+Calcular Vf,25(I) con la curva digitalizada.
+Calcular PLED,total = NLED × I × Vf.
+Calcular Ts = Ta + Rθ,lum × PLED,total.
+Corregir Vf por Ts mediante −3 mV/°C y repetir potencia y Ts hasta convergencia.
+Rechazar inmediatamente el punto si Ts > 90 °C.
+Calcular ΦLED = Φref × FI(I), sin factor de reducción por Tj.
+Calcular Φlum aplicando lente y vidrio.
+Calcular Pinput aplicando el rendimiento del driver.
+Calcular eficacias, márgenes y estado final.
+|Ts(n) − Ts(n−1)| < 0,01 °C
+|Vf(n) − Vf(n−1)| < 0,0001 V
+Máximo recomendado: 30 iteraciones. Si no converge, devolver error numérico y no aceptar la solución.
+16. Resolución inversa de la corriente
+El motor recibirá un flujo necesario y resolverá la corriente que satisface la ecuación:
+g(I) = Φlum(I) − Φrequired = 0
+Usar preferentemente el método de Brent; bisección como alternativa.
+No usar Newton-Raphson como único método.
+Limitar el rango por corriente máxima, potencia máxima y Ts máxima.
+Criterio de convergencia de flujo: máximo entre 1 lm y 0,1 % del flujo requerido.
+17. Selección automática del modelo óptimo
+Ordenar las variantes activas por capacidad creciente.
+Resolver la corriente necesaria para cada variante.
+Comprobar corriente, potencia, Ts, rango del driver y flujo alcanzable.
+Descartar soluciones inválidas.
+Seleccionar la solución válida de menor potencia instalada y menor tamaño de luminaria.
+Evitar saltos grandes entre familias cuando una variante intermedia resuelva el punto con mejor ajuste.
+Orden inicial de evaluación: Aphex S 75W, S 100W, S 165W, S 240W, S 300W, M 200W × 2, M 240W × 2, L 320W × 2 y L 480W × 2.
+18. Regulación y variantes de flujo
+Para cada nivel de regulación se recalcularán corriente, tensión, potencia, Ts, flujo y eficacia. No se asumirá una relación lineal simple entre porcentaje de flujo y porcentaje de potencia.
+100 %.
+Nivel nocturno.
+Nivel de emergencia.
+Escalones de regulación.
+Perfiles dinámicos.
+19. Salida del motor
+interface LuminaireOperatingPoint {  luminaireName: string;  opticId: string;  cctK: number;  cri: number;  requiredLuminaireFluxLm: number;  calculatedLuminaireFluxLm: number;  ledCount: number;  currentPerLedA: number;  voltagePerLedV: number;  totalLedPowerW: number;  inputPowerW: number;  ambientTemperatureC: number;  solderPointTemperatureC: number;  ledEfficacyLmW: number;  luminaireEfficacyLmW: number;  powerMarginW: number;  thermalMarginC: number;  status: "VALID" | "WARNING" | "INVALID";  warnings: string[];  calculationVersion: string;}
+20. Interfaz y trazabilidad
+Mostrar siempre el nombre completo del modelo.
+Mostrar óptica, CCT, CRI, flujo requerido y calculado, corriente, tensión, número de LEDs, potencia DC, potencia de red, Ta, Ts, eficacia LED, eficacia luminaria, margen de potencia y margen térmico.
+Crear un desplegable “Detalle del punto de funcionamiento”.
+Mostrar factores aplicados, iteraciones térmicas, límites comprobados y motivos de descarte de alternativas.
+Registrar versión del motor, versión de curvas, fecha y parámetros de cálculo.
+21. Curvas y versionado
+Almacenar los puntos digitalizados y los coeficientes de ajuste.
+Identificar fabricante, familia, variante exacta, datasheet, revisión, figura de origen, rango válido, error RMS y error máximo.
+Conservar la posibilidad de cambiar el método de ajuste sin modificar el núcleo del motor.
+No leer ni digitalizar el PDF durante cada ejecución.
+22. Validación y pruebas obligatorias
+22.1 Pruebas nominales
+A 640 mA y condiciones de referencia, 4000 K CRI 70 debe producir aproximadamente 746 lm por LED.
+A 640 mA y condiciones de referencia, 4000 K CRI 80 debe producir aproximadamente 684 lm por LED.
+Vf debe ser próxima a 5,85 V en el punto nominal.
+22.2 Pruebas térmicas
+Verificar Ts con 25, 50, 100 y 150 LEDs.
+Verificar que las pérdidas del driver no alteran Ts.
+Verificar que cualquier Ts > 90 °C invalida la solución.
+Verificar los valores de referencia de cada variante a Ta = 35 °C.
+22.3 Pruebas de límites
+Rechazar corriente > 1.200 mA.
+Rechazar potencia de entrada superior al límite del modelo.
+Rechazar flujo imposible de alcanzar.
+Rechazar CCT o CRI no soportados.
+Rechazar uso de curvas fuera de rango.
+Rechazar Ts > 90 °C.
+23. Compatibilidad con proyectos anteriores
+Mantener los resultados antiguos como legacyCalculation.
+No recalcular silenciosamente proyectos cerrados.
+Ofrecer conservar, duplicar y recalcular, o recalcular con confirmación expresa.
+Registrar la versión del motor y la tabla de modelos utilizada.
+24. Criterios de aceptación de la implementación
+Los LDT definen únicamente la distribución espacial.
+El flujo y la potencia se calculan desde el LED y el punto de funcionamiento.
+El motor trabaja con Ts y aplica un límite duro de 90 °C.
+No se aplica reducción de flujo por Tj.
+Las pérdidas del driver afectan a Pinput, pero no al calor de la luminaria.
+La selección automática evalúa las nueve variantes Aphex.
+Todos los resultados son trazables, versionados y reproducibles.
+La arquitectura permite incorporar nuevos LEDs, drivers y luminarias sin reescribir el núcleo matemático.

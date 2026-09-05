@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Debug - SalviLux</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: #333;
+            background: #f5f5f5;
+            margin: 0;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            padding: 30px;
+        }
+
+        h1 {
+            color: #1a1a1a;
+            margin-top: 0;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .section {
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f9fafb;
+            border-left: 4px solid #333333;
+            border-radius: 4px;
+        }
+
+        .section h2 {
+            margin-top: 0;
+            color: #333;
+        }
+
+        .status-good {
+            color: #28a745;
+            font-weight: bold;
+        }
+
+        .status-bad {
+            color: #dc3545;
+            font-weight: bold;
+        }
+
+        .status-info {
+            color: #0066cc;
+            font-weight: bold;
+        }
+
+        .file-list {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            margin-top: 10px;
+        }
+
+        .file-item {
+            padding: 8px;
+            border-bottom: 1px solid #eee;
+            font-family: monospace;
+            font-size: 13px;
+        }
+
+        .file-item:last-child {
+            border-bottom: none;
+        }
+
+        button {
+            background: #333333;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-top: 15px;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            transition: background 0.2s;
+        }
+
+        button:hover {
+            background: #555555;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top: 2px solid white;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .code-block {
+            background: #f5f5f5;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 12px;
+            overflow-x: auto;
+            margin-top: 10px;
+        }
+
+        .code-block code {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>
+            <i class="fas fa-bug"></i>
+            Panel de Diagnóstico - SalviLux
+        </h1>
+
+        <p style="color: #666; margin-bottom: 30px;">
+            Esta página verifica el estado de los archivos y carpetas del servidor.
+        </p>
+
+        <!-- Estado del servidor -->
+        <div class="section">
+            <h2><i class="fas fa-server"></i> Estado del Servidor</h2>
+            <p id="server-status">Verificando...</p>
+            <button onclick="checkHealth()">
+                <i class="fas fa-sync-alt"></i> Recargar
+            </button>
+        </div>
+
+        <!-- Estado de carpetas -->
+        <div class="section">
+            <h2><i class="fas fa-folder"></i> Carpetas</h2>
+            <div id="folders-status">Cargando...</div>
+        </div>
+
+        <!-- Archivos generados -->
+        <div class="section">
+            <h2><i class="fas fa-file"></i> Archivos Descargados Recientes</h2>
+            <div id="download-files">Cargando...</div>
+            <button onclick="refreshDownloads()">
+                <i class="fas fa-redo"></i> Actualizar lista
+            </button>
+        </div>
+
+        <!-- Archivos subidos -->
+        <div class="section">
+            <h2><i class="fas fa-cloud-upload-alt"></i> Archivos Subidos</h2>
+            <div id="upload-files">Cargando...</div>
+            <button onclick="refreshUploads()">
+                <i class="fas fa-redo"></i> Actualizar lista
+            </button>
+        </div>
+
+        <!-- Assets -->
+        <div class="section">
+            <h2><i class="fas fa-archive"></i> Assets (Plantilla y LDTs)</h2>
+            <div id="assets-status">Cargando...</div>
+        </div>
+
+        <!-- Volver al inicio -->
+        <div style="margin-top: 30px; text-align: center;">
+            <a href="/" style="color: #333; text-decoration: none; padding: 12px 24px; background: #f0f0f0; border-radius: 4px; display: inline-block;">
+                <i class="fas fa-home"></i> Volver a la aplicación
+            </a>
+        </div>
+    </div>
+
+    <script>
+        async function loadDebugInfo() {
+            try {
+                const response = await fetch('/api/debug/files');
+                const data = await response.json();
+
+                // Estado del servidor
+                document.getElementById('server-status').innerHTML =
+                    '<span class="status-good">✓ Servidor respondiendo correctamente</span>';
+
+                // Carpetas
+                let foldersHtml = '<ul>';
+                foldersHtml += `<li><strong>Base dir:</strong> <code>${data.base_dir}</code></li>`;
+                foldersHtml += `<li><strong>Download folder:</strong> <code>${data.download_folder}</code>
+                    ${data.download_folder_exists ? '<span class="status-good">✓</span>' : '<span class="status-bad">✗</span>'}</li>`;
+                foldersHtml += `<li><strong>Upload folder:</strong> <code>${data.upload_folder}</code>
+                    ${data.upload_folder_exists ? '<span class="status-good">✓</span>' : '<span class="status-bad">✗</span>'}</li>`;
+                foldersHtml += `<li><strong>Assets folder:</strong> <code>${data.assets_folder}</code>
+                    ${data.assets_exists ? '<span class="status-good">✓</span>' : '<span class="status-bad">✗</span>'}</li>`;
+                foldersHtml += '</ul>';
+                document.getElementById('folders-status').innerHTML = foldersHtml;
+
+                // Archivos descargados
+                let downloadHtml = '<div class="file-list">';
+                if (data.files_in_downloads && data.files_in_downloads.length > 0) {
+                    data.files_in_downloads.forEach(file => {
+                        if (file !== '.gitkeep') {
+                            downloadHtml += `<div class="file-item"><span class="status-good">✓</span> ${file}</div>`;
+                        }
+                    });
+                    if (downloadHtml === '<div class="file-list">') {
+                        downloadHtml += '<div class="file-item"><em>Solo .gitkeep (no hay archivos generados aún)</em></div>';
+                    }
+                } else {
+                    downloadHtml += '<div class="file-item"><em>Carpeta vacía</em></div>';
+                }
+                downloadHtml += '</div>';
+                document.getElementById('download-files').innerHTML = downloadHtml;
+
+                // Archivos subidos
+                let uploadHtml = '<div class="file-list">';
+                if (data.files_in_uploads && data.files_in_uploads.length > 0) {
+                    data.files_in_uploads.forEach(file => {
+                        uploadHtml += `<div class="file-item"><span class="status-info">📄</span> ${file}</div>`;
+                    });
+                } else {
+                    uploadHtml += '<div class="file-item"><em>Ningún archivo subido</em></div>';
+                }
+                uploadHtml += '</div>';
+                document.getElementById('upload-files').innerHTML = uploadHtml;
+
+                // Assets
+                let assetsHtml = '<ul>';
+                assetsHtml += `<li><strong>Plantilla:</strong> ${data.template_exists ?
+                    '<span class="status-good">✓ Encontrada</span>' :
+                    '<span class="status-bad">✗ No encontrada</span>'}</li>`;
+                assetsHtml += `<li><strong>LDTs:</strong> ${data.ldts_exists ?
+                    '<span class="status-good">✓ Encontrada</span>' :
+                    '<span class="status-bad">✗ No encontrada</span>'}</li>`;
+                if (data.files_in_assets && data.files_in_assets.length > 0) {
+                    assetsHtml += '<li><strong>Archivos en assets:</strong><ul>';
+                    data.files_in_assets.forEach(file => {
+                        assetsHtml += `<li>${file}</li>`;
+                    });
+                    assetsHtml += '</ul></li>';
+                }
+                assetsHtml += '</ul>';
+                document.getElementById('assets-status').innerHTML = assetsHtml;
+
+            } catch (error) {
+                console.error('Error cargando debug info:', error);
+                document.getElementById('server-status').innerHTML =
+                    `<span class="status-bad">✗ Error: ${error.message}</span>`;
+            }
+        }
+
+        function checkHealth() {
+            const btn = event.target;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Verificando...';
+
+            setTimeout(() => {
+                loadDebugInfo();
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-sync-alt"></i> Recargar';
+            }, 1000);
+        }
+
+        function refreshDownloads() {
+            const btn = event.target;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Actualizando...';
+
+            setTimeout(() => {
+                loadDebugInfo();
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-redo"></i> Actualizar lista';
+            }, 1000);
+        }
+
+        function refreshUploads() {
+            refreshDownloads();
+        }
+
+        // Cargar info al abrir la página
+        window.addEventListener('load', loadDebugInfo);
+    </script>
+</body>
+</html>

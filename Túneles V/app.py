@@ -936,7 +936,7 @@ def tunnel_portal_analyze():
     Recibe 1-2 imagenes de una boca de tunel (multipart/form-data, campo
     'images') + 'lane_width_ref_m' opcional, y devuelve una propuesta de
     geometria via vision de Claude. Ver
-    Especificacion_implementacion_geometria_tuneles_desde_imagenes.docx.
+    docs/especificaciones/Especificacion_implementacion_geometria_tuneles_desde_imagenes.docx.
 
     Los valores devueltos son SIEMPRE "Propuestos" — la validacion final
     la hace el usuario en el frontend, nunca este endpoint.

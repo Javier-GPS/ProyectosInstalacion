@@ -40,6 +40,7 @@ BODY_FONT   = "Exposure[+10]"
 TITLE_FONT  = "Exposure[-50]"
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_APHEX_ASSET_DIR = _PROJECT_ROOT / "assets" / "productos" / "aphex"
 _APHEX_CATALOG = {
     "APHEX_S": {
         "product": "Aphex S Lira", "pdf": "APHEX S-ES.pdf", "dimensions_mm": (472, 400, 90),
@@ -1963,7 +1964,7 @@ def _build_luminaire_catalog(doc: Document, luminaire: Any) -> None:
         try:
             import fitz
             from PIL import Image
-            pdf_path = _PROJECT_ROOT / str(catalog.get("pdf", ""))
+            pdf_path = _APHEX_ASSET_DIR / str(catalog.get("pdf", ""))
             if pdf_path.exists():
                 pdf = fitz.open(pdf_path)
                 page = pdf[0]

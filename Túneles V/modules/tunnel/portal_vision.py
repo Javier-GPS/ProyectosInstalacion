@@ -2,7 +2,7 @@
 Analisis de geometria de boca de tunel a partir de 1-2 imagenes, usando
 la vision de Claude (Anthropic API) en vez de un pipeline clasico de
 vision artificial (homografia/bundle adjustment) — ver
-"Especificacion_implementacion_geometria_tuneles_desde_imagenes.docx".
+"docs/especificaciones/Especificacion_implementacion_geometria_tuneles_desde_imagenes.docx".
 
 Cada campo de salida se ajusta al modelo minimo del documento:
 {value, unit, confidence, source}. El estado (Propuesto/Validado) NO se

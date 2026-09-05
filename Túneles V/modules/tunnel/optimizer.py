@@ -81,7 +81,8 @@ def _reach_for(optic: str, h: float) -> float:
 
 # ── Motor de eficiencia LUXEON 5050 HE Plus — reemplaza el catalogo cerrado
 #    S/M/L por un modelo parametrico de 9 variantes Aphex. Ver
-#    Instrucciones_motor_eficiencia_Aphex_LuxStudio.docx y modules/tunnel/led_engine.py ──
+#    docs/especificaciones/Instrucciones_motor_eficiencia_Aphex_LuxStudio.docx
+#    y modules/tunnel/led_engine.py ──
 from modules.tunnel import led_engine as _led
 
 CHAIN_ORDER = list(_led._VARIANT_ORDER)   # 9 variantes, orden de capacidad creciente

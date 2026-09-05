@@ -7,14 +7,14 @@ tension directa, potencia DC, temperatura de soldadura (Ts) y perdidas
 opticas/electricas, con seleccion automatica de la variante mas pequena
 que cumpla los requisitos fotometricos, electricos y termicos.
 
-Ver "Instrucciones_motor_eficiencia_Aphex_LuxStudio.docx" (version
+Ver "docs/especificaciones/Instrucciones_motor_eficiencia_Aphex_LuxStudio.docx" (version
 consolidada, julio 2026) para la especificacion completa.
 
 Curvas digitalizadas por analisis de pixel directo sobre las graficas
 del datasheet (no OCR/lectura visual aproximada):
-  - DS174_LUXEON 5050.pdf, Figura 3b (flujo normalizado vs. corriente,
+  - assets/productos/aphex/DS174_LUXEON 5050.pdf, Figura 3b (flujo normalizado vs. corriente,
     HE Plus - 6V, Tj=25 C) -> FI(I).
-  - DS174_LUXEON 5050.pdf, Figura 4a (corriente vs. tension directa,
+  - assets/productos/aphex/DS174_LUXEON 5050.pdf, Figura 4a (corriente vs. tension directa,
     HE Plus - 6V, Tj=25 C) -> Vf,25(I).
 Ambas curvas se validaron contra el punto de referencia del propio
 datasheet (640 mA / 5,85 V): FI(640)=1.002, Vf25(640)=5.81 V.

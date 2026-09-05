@@ -22,16 +22,6 @@ services:
       - backend
     restart: unless-stopped
 
-  legacy:
-    build:
-      context: ..
-      dockerfile: Túneles V/Dockerfile.legacy
-    environment:
-      FLASK_ENV: production
-    ports:
-      - "5001:5000"
-    restart: unless-stopped
-
 volumes:
   tunnel_data:
   tunnel_uploads:
